@@ -1,6 +1,6 @@
 [Unit]
 Description=aerial-lock idle and session-lock daemon
-Documentation=https://github.com/alexindigo/aerial-lock
+Documentation=https://github.com/atmosphera-dev/aerial-lock
 PartOf=graphical-session.target
 After=graphical-session.target
 ConditionEnvironment=WAYLAND_DISPLAY
