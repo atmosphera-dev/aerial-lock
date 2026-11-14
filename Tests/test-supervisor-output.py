@@ -13,8 +13,7 @@ from private_runtime import PrivateRuntime
 
 SUPERVISOR = Path(sys.argv.pop(1)).resolve(strict=True)
 
-CHILD = '''#!/usr/bin/python3
-import json, os, socket
+CHILD = '''import json, os, socket
 s = socket.socket(socket.AF_UNIX)
 s.connect(os.environ['OUTPUT_CONTROL'])
 f = s.makefile('rb')
@@ -56,7 +55,7 @@ class SupervisorOutput(unittest.TestCase):
         control.listen(1)
         control.settimeout(15)
         child = self.root / "child"
-        child.write_text(CHILD)
+        child.write_text('#!' + sys.executable + '\n' + CHILD)
         child.chmod(0o700)
         self.bus = subprocess.Popen([
             "dbus-daemon", "--session", "--nofork", "--print-address=1",
