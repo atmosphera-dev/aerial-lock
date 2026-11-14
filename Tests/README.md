@@ -14,6 +14,21 @@ make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 
 ## Portable checks
 
+The `Checks` GitHub workflow runs on pushes and PRs to master. Its separate
+`build-and-test` job uses the same Arch `.devcontainer/Dockerfile` as lint:
+it builds the production targets with `make`, builds `Tests/CMakeLists.txt`,
+runs the portable CTest/Python cases offscreen, both Node suites, and every
+`tst_*.qml` suite with the whole-log zero-QWARN gate below. The container has
+no network and bounded memory, processes, CPU and run time. The checkout is
+read-only; `.devcontainer/test.sh` copies it to the container's writable layer.
+
+CI deliberately excludes `media-fallback-render` (needs a video-rendering
+platform), `owned-instance` (requires an operator-prepared VM manifest), and
+the real-session drivers below: remediation, staged/nested launch, surface
+input, and Quickshell lifecycle/password-limit/release/startup fixtures.
+Those need real session-lock/PAM, niri/Hyprland, native input, display hotplug,
+or an owned VM session; offscreen tests do not prove those outcomes.
+
 ```sh
 bash Scripts/dev/qmllint.sh .
 node --test Tests/theme-selection.test.cjs Tests/theme-attribution.test.cjs

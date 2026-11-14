@@ -1,7 +1,10 @@
 FROM docker.io/library/archlinux:base-devel
 
+ENV TMPDIR=/var/tmp
+
 RUN pacman -Syu --noconfirm --needed \
-        qt6-declarative qt6-5compat quickshell mpv git cmake shellcheck \
+        qt6-declarative qt6-5compat qt6-svg quickshell mpv git cmake shellcheck \
+        ninja python nodejs dbus systemd wayland-protocols ttf-dejavu \
     && useradd --create-home builder \
     && for package in qt6-mpvqml qt6-niriqml; do \
         install -d -o builder -g builder "/var/tmp/$package" \

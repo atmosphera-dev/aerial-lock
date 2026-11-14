@@ -1,4 +1,4 @@
-name: QML Lint
+name: Checks
 
 on:
   push:
@@ -15,11 +15,13 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout repository
+        timeout-minutes: 2
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Build the shared Arch lint image
+        timeout-minutes: 25
         run: |
           # BuildKit runs inside a resource-limited Docker container.
           timeout 60s docker buildx create --name aerial-lint --driver docker-container \
@@ -32,8 +34,36 @@ jobs:
             --load -t aerial-lock-lint:ci .devcontainer
 
       - name: Run the shared checks offline
+        timeout-minutes: 6
         run: |
           timeout 5m docker run --rm --pull=never --network=none \
             --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
             aerial-lock-lint:ci bash .devcontainer/check.sh
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        timeout-minutes: 2
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the shared Arch image
+        timeout-minutes: 25
+        run: |
+          # Podman has no build --pids-limit; bound the entire build scope.
+          timeout 20m sudo systemd-run --scope --quiet \
+            -p MemoryMax=4G -p MemorySwapMax=0 -p TasksMax=256 -p CPUQuota=200% \
+            podman build --pull=always --no-cache --memory=4g --memory-swap=4g \
+            --cpu-period=100000 --cpu-quota=200000 -t aerial-lock-ci:ci .devcontainer
+
+      - name: Build and run portable suites offline
+        timeout-minutes: 35
+        run: |
+          timeout 34m sudo podman run --rm --pull=never --network=none \
+            --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
+            aerial-lock-ci:ci bash .devcontainer/test.sh
