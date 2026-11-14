@@ -106,7 +106,7 @@ static void releaseSignalHandler(int)
 static void logLine(const QString &msg)
 {
     QTextStream out(stderr);
-    out << "aerial-lock-supervisor: " << msg << "\n";
+    out << "aerial-lock-supervisor: lock-state: " << msg << "\n";
     out.flush();
 }
 
@@ -262,7 +262,7 @@ private:
         // A new attempt has confirmed nothing yet, whatever an earlier one did.
         closeReport();
         m_reportAccepted = false;
-        setState(LockState::Engaging);
+        setState(LockState::Engaging, QStringLiteral("launch"));
         m_video = nextVideo();
 
         // On Hyprland a respawned locker is refused without the
@@ -347,7 +347,7 @@ private:
         // A locker that is gone confirms nothing; the next attempt must report anew.
         closeReport();
         if (m_state == LockState::Locked)
-            setState(LockState::Engaging);
+            setState(LockState::Engaging, QStringLiteral("child-exit"));
 
         // Ordering guard (load-bearing): compositor death is checked FIRST.
         // When the compositor dies the locker dies too, and the two signals
@@ -436,7 +436,8 @@ private:
     void finishEpisode(int code)
     {
         closeReport();
-        setState(code == 0 ? LockState::Ended : LockState::Failed);
+        setState(code == 0 ? LockState::Ended : LockState::Failed,
+                 QStringLiteral("exit-code-%1").arg(code));
         if (m_hyprFlagSet) {
             setHyprlandRestoreFlag(false);
             m_hyprFlagSet = false;
@@ -444,11 +445,13 @@ private:
         QCoreApplication::exit(code);
     }
 
-    void setState(LockState state)
+    void setState(LockState state, const QString &reason)
     {
         if (m_state == state) return;
+        const QString old = stateName(m_state);
         m_state = state;
-        log(QStringLiteral("state: %1").arg(stateName(state)));
+        log(QStringLiteral("state: %1 (supervisor %2 -> %1 reason=%3)")
+                .arg(stateName(state), old, reason));
     }
 
     // ---- engagement channel -------------------------------------------------
@@ -600,7 +603,7 @@ private:
             if (m_reportBuffer == ENGAGEMENT_LOCKED_REPORT) {
                 m_episodeEngaged = true;
                 log(QStringLiteral("attempt %1: the locker confirmed the session lock").arg(m_attempt));
-                setState(LockState::Locked);
+                setState(LockState::Locked, QStringLiteral("compositor-confirmed"));
                 deliverRelease();
                 if (m_reportFd < 0) return;
             }
@@ -612,7 +615,7 @@ private:
         log(QStringLiteral("attempt %1: %2").arg(m_attempt).arg(reason));
         closeReport();
         if (m_state == LockState::Locked)
-            setState(LockState::Engaging);
+            setState(LockState::Engaging, reason);
     }
 
     void closeReport()

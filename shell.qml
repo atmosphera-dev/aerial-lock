@@ -86,7 +86,10 @@ ShellRoot {
         id: deferredQuit
         interval: 0
         repeat: false
-        onTriggered: Qt.exit(root.exitCode)
+        onTriggered: {
+            Services.Logger.i("lock-state", "locker running -> exiting reason=exit-code-" + root.exitCode)
+            Qt.exit(root.exitCode)
+        }
     }
 
     function maybeLock() {

@@ -5,6 +5,12 @@ Notable user-facing changes are recorded here, following
 
 ## [Unreleased]
 
+### Added
+
+- Always-on `lock-state:` logs for lock, authentication, unlock and exit
+  transitions, with reasons and supervisor retry/release details, without
+  password material.
+
 ### Changed
 
 - Locker stdout and stderr reach the supervisor's output and journal directly

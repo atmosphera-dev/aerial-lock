@@ -202,9 +202,6 @@ automatically when `.devcontainer/` changes. GitHub CI builds the same container
 and runs the same QML lint offline with the repository mounted read-only;
 the hook additionally checks staged whitespace.
 
-The supervisor forwards locker stdout and stderr directly to its own sinks;
-it does not retain an unread log buffer during long locks.
-
 Run from the repo during development:
 
 ```
@@ -246,6 +243,24 @@ repo. Both flags land in the build-generated, root-owned
 bypass is enabled. Release builds (`make`) always set both flags `false`;
 **user configuration cannot enable the bypass.** For a chatty build without
 the bypass: `make DEBUG_VERBOSE=1`.
+
+### Lock-state logs
+
+Operational transitions are logged at info level, even without
+`AERIAL_LOCK_VERBOSE=1`. Filter the launcher's captured output with
+`grep 'lock-state:'`, or use `journalctl --user -g 'lock-state:'` for locks
+started by the user manager. Locker lines show `old -> new` and a fixed reason:
+lock request, compositor confirmation, authentication, unlock request, release
+and exit. A watchdog timeout is `auth ... -> error reason=timed-out` in the
+existing auth model. Supervisor lines include spawn/retry attempt numbers,
+state changes, release source (`D-Bus` or `SIGUSR1`) and child exit codes.
+The locker reports the shared channel as `external-release`; the supervisor
+identifies which external caller route requested it.
+
+State logs never include passwords, response lengths, prompt answers or key
+events. Verbose logging is separate and retains the existing PAM-stack message
+diagnostics. The supervisor forwards locker stdout and stderr directly to its
+own sinks; it does not retain an unread log buffer during long locks.
 
 ## Configuration
 

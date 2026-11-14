@@ -88,6 +88,14 @@ runner in the disposable VM, with its shell-root loader and bundled imports.
 
 ### Native tests
 
+`python3 Tests/test-lock-state.py` runs the real Quickshell Lock controller
+with synthetic PAM in an owned VM's Wayland session, without engaging a lock.
+Build with `make` first and set `TMPDIR` to the disk-backed workspace. It checks
+the exact prompt/failure/success transition sequence and absence of synthetic
+passwords from the complete output, with verbose logging both off and on.
+Like the lifecycle fixture, this is separate from the portable offscreen gate;
+real PAM and compositor release still need a real-lock cycle.
+
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
 with the tree under test at `$ROOT/src/aerial-lock` and the test build at
 `$ROOT/build/debug/aerial-tests`.

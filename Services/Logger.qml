@@ -17,4 +17,9 @@ QtObject {
     function w(tag, msg) {
         console.warn(tag + ": " + msg)
     }
+
+    // Operational events stay visible in production, without verbose chatter.
+    function i(tag, msg) {
+        console.info(tag + ": " + msg)
+    }
 }

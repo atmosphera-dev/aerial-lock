@@ -53,6 +53,37 @@ Scope {
             || authState === authMaxTries
             || authState === authError
 
+    function authStateName(state) {
+        switch (state) {
+        case root.authIdle: return "idle"
+        case root.authPrompting: return "prompting"
+        case root.authAuthenticating: return "authenticating"
+        case root.authFailed: return "failed"
+        case root.authMaxTries: return "max-tries"
+        case root.authError: return "error"
+        case root.authSuccess: return "success"
+        }
+        return "unknown"
+    }
+
+    // The auth owner emits once, before a synchronous PAM callback can move
+    // it again. Reasons are fixed labels, never prompts, responses or input.
+    function setAuthState(state, reason) {
+        if (root.authState === state)
+            return
+        logger.i("lock-state", "auth " + root.authStateName(root.authState)
+                 + " -> " + root.authStateName(state) + " reason=" + reason)
+        root.authState = state
+    }
+
+    function requestUnlock(reason) {
+        if (!root.locked)
+            return
+        logger.i("lock-state", "lock " + (root.secure ? "engaged" : "requested")
+                 + " -> unlock-requested reason=" + reason)
+        root.locked = false
+    }
+
     readonly property var i18n: config.i18n
 
     // Construct-time test seam (Tests/lock-lifecycle-shell.qml); the
@@ -209,7 +240,7 @@ Scope {
             root.attemptCancelled = true
             root.pamEndpoint.abort()
             logger.d("Lock", "dismiss: setting root.locked = false")
-            root.locked = false
+            root.requestUnlock("dev-dismiss")
         }
     }
 
@@ -222,7 +253,7 @@ Scope {
         root.acceptedResponse = null
         root.unlockInProgress = false
         root.pamEndpoint.abort()
-        root.locked = false
+        root.requestUnlock("external-release")
     }
 
     function updateVideoInfo(path) {
@@ -402,9 +433,11 @@ Scope {
 
     Component.onCompleted: {
         logger.d("Lock", "Component.onCompleted")
+        if (root.locked)
+            logger.i("lock-state", "lock idle -> requested reason=startup")
         root.tryResolvePanel()
         root.stampPreferred()
-        root.enterPrompting("")
+        root.enterPrompting("", "initial-prompt")
     }
 
     // d37: stamp preferredResolution on lock start when outputs are
@@ -526,15 +559,15 @@ Scope {
     // Every auth state is entered through these two, so a state set before
     // a (possibly synchronous) PAM call can never overwrite the state that
     // call's own message/completion produced.
-    function enterPrompting(message) {
+    function enterPrompting(message, reason) {
         root.unlockInProgress = false       // waiting on USER, not PAM
-        root.authState = root.authPrompting
+        root.setAuthState(root.authPrompting, reason || "pam-prompt")
         root.setAuthStatus(message && message.length > 0 ? message : (i18n.prompt || "Enter password"))
     }
 
     function enterAuthenticating() {
         root.unlockInProgress = true
-        root.authState = root.authAuthenticating
+        root.setAuthState(root.authAuthenticating, "submit")
         root.setAuthStatus(i18n.authenticating || "Authenticating...")
         watchdog.restart() // a new PAM call, even if one was already in flight
     }
@@ -594,15 +627,15 @@ Scope {
             root.unlockInProgress = false
             root.acceptedResponse = null
             if (result === PamResult.Success) {
-                root.authState = root.authSuccess
+                root.setAuthState(root.authSuccess, "pam-success")
                 root.setAuthStatus(i18n.unlocked || "Unlocked")
                 logger.d("Lock", "PAM Success: setting root.locked = false")
-                root.locked = false
+                root.requestUnlock("pam-success")
             } else if (result === PamResult.MaxTries) {
-                root.authState = root.authMaxTries
+                root.setAuthState(root.authMaxTries, "pam-max-tries")
                 root.setAuthStatus(i18n.maxTries || "Too many attempts")
             } else {
-                root.authState = root.authFailed
+                root.setAuthState(root.authFailed, "pam-failed")
                 root.setAuthStatus(i18n.authFailed || "Authentication failed")
             }
         }
@@ -615,7 +648,7 @@ Scope {
             }
             root.unlockInProgress = false
             root.acceptedResponse = null
-            root.authState = root.authError
+            root.setAuthState(root.authError, "pam-error")
             root.setAuthStatus(i18n.authError || "Authentication error")
         }
     }
@@ -638,7 +671,7 @@ Scope {
             root.pamEndpoint.abort()
             root.unlockInProgress = false
             root.acceptedResponse = null
-            root.authState = root.authError
+            root.setAuthState(root.authError, "timed-out")
             root.setAuthStatus(i18n.timedOut || "Authentication timed out — try again")
         }
     }
@@ -657,6 +690,7 @@ Scope {
             // Coverage confirmation starts optional theme work; window
             // activation remains the separate keyboard-focus backstop.
             if (sessionLock.secure) {
+                logger.i("lock-state", "lock requested -> engaged reason=compositor-confirmed")
                 root.publishThemeTopics()
                 Qt.callLater(themeHost.focusInput)
             }
@@ -668,6 +702,8 @@ Scope {
                 " unlockHandled=" + root.unlockHandled)
 
             if (!sessionLock.locked && !root.unlockHandled) {
+                logger.i("lock-state", "lock " + (root.locked ? "requested-or-engaged" : "unlock-requested")
+                         + " -> released reason=" + (root.locked ? "compositor-invalidated" : "compositor-unlocked"))
                 if (root.locked) {
                     logger.d("Lock", "external invalidation detected (root.locked still true)")
                     logger.w("aerial-lock", "lock invalidated externally by compositor")
@@ -707,7 +743,7 @@ Scope {
                 watchdog.stop()
                 root.acceptedResponse = null
                 root.unlockInProgress = false
-                root.authState = root.authError
+                root.setAuthState(root.authError, "pam-start-failed")
                 root.setAuthStatus(i18n.authError || "Authentication error")
                 logger.w("aerial-lock", "pam.start() failed for service " + root.pamEndpoint.config)
             }
