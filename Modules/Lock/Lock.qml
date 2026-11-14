@@ -34,7 +34,12 @@ Scope {
             watchdog.stop()
     }
     property bool attemptCancelled: false
-    property string statusMessage: ""
+    property string authStatusMessage: ""
+    property bool responseLimitHint: false
+    readonly property string statusMessage: responseLimitHint
+            ? (i18n.passwordTooLong || "Password too long (maximum %1 characters)")
+                .replace("%1", String(lockContext.auth.maxResponseSize - 1))
+            : authStatusMessage
     property int authState: authIdle
 
     readonly property int authIdle: 0
@@ -121,6 +126,27 @@ Scope {
     Binding { target: lockContext.auth; property: "responseVisible"; value: root.pamEndpoint.active && root.pamEndpoint.responseRequired && root.pamEndpoint.responseVisible }
     Binding { target: lockContext.auth; property: "maxResponseSize"; value: config.pamLimits.maxResponseSize }
     Binding { target: lockContext.auth; property: "dismissAvailable"; value: config.buildFlags.debugAllowDismiss }
+
+    // A hint overlays the current auth status only until the next content
+    // change. Every PAM status update replaces it, even an identical prompt.
+    function setAuthStatus(message) {
+        root.responseLimitHint = false
+        root.authStatusMessage = message
+    }
+
+    Connections {
+        target: lockContext.auth.input
+        function onResponseLimitRejected() {
+            if (lockContext.auth.maxResponseSize > 0 && !root.unlockInProgress)
+                root.responseLimitHint = true
+        }
+        function onTextChanged() { root.responseLimitHint = false }
+    }
+
+    Connections {
+        target: lockContext.auth
+        function onMaxResponseSizeChanged() { root.responseLimitHint = false }
+    }
 
     Binding { target: lockContext.session; property: "outputName"; value: root.panelScreenName }
     Binding { target: lockContext.session; property: "loginName"; value: root.pamEndpoint.user }
@@ -503,13 +529,13 @@ Scope {
     function enterPrompting(message) {
         root.unlockInProgress = false       // waiting on USER, not PAM
         root.authState = root.authPrompting
-        root.statusMessage = message && message.length > 0 ? message : (i18n.prompt || "Enter password")
+        root.setAuthStatus(message && message.length > 0 ? message : (i18n.prompt || "Enter password"))
     }
 
     function enterAuthenticating() {
         root.unlockInProgress = true
         root.authState = root.authAuthenticating
-        root.statusMessage = i18n.authenticating || "Authenticating..."
+        root.setAuthStatus(i18n.authenticating || "Authenticating...")
         watchdog.restart() // a new PAM call, even if one was already in flight
     }
 
@@ -551,7 +577,7 @@ Scope {
                 // Informational (fingerprint "touch the sensor", etc.) —
                 // PAM is still working; field stays disabled. Traffic during
                 // an in-flight call restarts the inactivity watchdog.
-                root.statusMessage = endpoint.message
+                root.setAuthStatus(endpoint.message)
                 if (root.unlockInProgress)
                     watchdog.restart()
             }
@@ -569,15 +595,15 @@ Scope {
             root.acceptedResponse = null
             if (result === PamResult.Success) {
                 root.authState = root.authSuccess
-                root.statusMessage = i18n.unlocked || "Unlocked"
+                root.setAuthStatus(i18n.unlocked || "Unlocked")
                 logger.d("Lock", "PAM Success: setting root.locked = false")
                 root.locked = false
             } else if (result === PamResult.MaxTries) {
                 root.authState = root.authMaxTries
-                root.statusMessage = i18n.maxTries || "Too many attempts"
+                root.setAuthStatus(i18n.maxTries || "Too many attempts")
             } else {
                 root.authState = root.authFailed
-                root.statusMessage = i18n.authFailed || "Authentication failed"
+                root.setAuthStatus(i18n.authFailed || "Authentication failed")
             }
         }
 
@@ -590,7 +616,7 @@ Scope {
             root.unlockInProgress = false
             root.acceptedResponse = null
             root.authState = root.authError
-            root.statusMessage = i18n.authError || "Authentication error"
+            root.setAuthStatus(i18n.authError || "Authentication error")
         }
     }
 
@@ -613,7 +639,7 @@ Scope {
             root.unlockInProgress = false
             root.acceptedResponse = null
             root.authState = root.authError
-            root.statusMessage = i18n.timedOut || "Authentication timed out — try again"
+            root.setAuthStatus(i18n.timedOut || "Authentication timed out — try again")
         }
     }
 
@@ -682,7 +708,7 @@ Scope {
                 root.acceptedResponse = null
                 root.unlockInProgress = false
                 root.authState = root.authError
-                root.statusMessage = i18n.authError || "Authentication error"
+                root.setAuthStatus(i18n.authError || "Authentication error")
                 logger.w("aerial-lock", "pam.start() failed for service " + root.pamEndpoint.config)
             }
         }

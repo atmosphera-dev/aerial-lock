@@ -4,6 +4,7 @@
   "authFailed": "Authentication failed",
   "maxTries": "Too many attempts",
   "authError": "Authentication error",
+  "passwordTooLong": "Password too long (maximum %1 characters)",
   "timedOut": "Authentication timed out — try again",
   "unlocked": "Unlocked",
   "dismissDebug": "Dismiss (debug)"

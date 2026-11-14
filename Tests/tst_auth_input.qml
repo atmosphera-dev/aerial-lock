@@ -399,7 +399,13 @@ Item {
         property var fields: null
         property int submitCount: 0
         property int rejectedCount: 0
+        property int limitRejections: 0
         property var accepted: []
+
+        Connections {
+            target: coreCase.model
+            function onResponseLimitRejected() { coreCase.limitRejections++ }
+        }
 
         Connections {
             target: coreCase.ctx
@@ -424,6 +430,7 @@ Item {
             fields = createTemporaryObject(fieldsComponent, root)
             submitCount = 0
             rejectedCount = 0
+            limitRejections = 0
             accepted = []
         }
 
@@ -710,10 +717,26 @@ Item {
             keyClick(Qt.Key_F)
             compare(model.text, "abcd", "cap is maxResponseSize - 1")
             compare(model.cursorPosition, 4)
+            compare(limitRejections, 2, "each overflowing key reports rejection")
             // Deletion then more typing still agrees at the boundary.
             keyClick(Qt.Key_Backspace)
             keyClick(Qt.Key_Z)
             compare(model.text, "abcz")
+        }
+
+        function test_limit_does_not_reject_exact_fit_or_selection_replacement() {
+            ctx.auth.maxResponseSize = 5
+            var a = mkfield()
+            focused(a)
+            keyClick(Qt.Key_A)
+            keyClick(Qt.Key_B)
+            keyClick(Qt.Key_C)
+            keyClick(Qt.Key_D)
+            compare(limitRejections, 0)
+            keyClick(Qt.Key_Left, Qt.ShiftModifier)
+            keyClick(Qt.Key_Z)
+            compare(model.text, "abcz")
+            compare(limitRejections, 0)
         }
 
         function test_unknown_limit_uses_widget_ceiling() {
@@ -723,6 +746,7 @@ Item {
             keyClick(Qt.Key_A)
             keyClick(Qt.Key_B)
             compare(model.text, "ab")
+            compare(limitRejections, 0)
         }
 
         // d44 phase 2: all presentation seams set at once must not mutate

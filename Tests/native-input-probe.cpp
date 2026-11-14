@@ -444,13 +444,44 @@ int main(int argc, char **argv) {
     settle();
     expect(state()["submits"].toInt() == 1, "p5: submission recovers after busy clears");
 
-    // Known limit: cap is maxResponseSize - 1 at BOTH ends.
+    // Known limit: an overflowing edit is rejected as a whole at BOTH ends.
     call("setMaxResp", 5);
+    clicks("ab");
     QGuiApplication::clipboard()->setText(QStringLiteral("abcdefgh"));
     QTest::keyClick(viewPtr, Qt::Key_V, Qt::ControlModifier);
     settle();
-    expectStr(state()["text"].toString(), "abcd", "p5: over-limit paste capped in model");
-    expectStr(fText(), "abcd", "p5: over-limit paste capped in native editor");
+    expectStr(state()["text"].toString(), "ab", "p5: over-limit paste rejected whole in model");
+    expectStr(fText(), "ab", "p5: over-limit paste rejected whole in native editor");
+    expect(state()["limitRejections"].toInt() == 1, "p5: overflowing paste reports limit attempt");
+    expect(state()["cursor"].toInt() == 2, "p5: overflowing paste restores caret");
+    QGuiApplication::clipboard()->setText(QStringLiteral("cd"));
+    QTest::keyClick(viewPtr, Qt::Key_V, Qt::ControlModifier);
+    settle();
+    expectStr(state()["text"].toString(), "abcd", "p5: exact-fit paste accepted");
+    expect(state()["limitRejections"].toInt() == 1, "p5: exact-fit paste reports no rejection");
+    clicks("x");
+    expectStr(fText(), "abcd", "p5: typing beyond cap restored synchronously");
+    expect(state()["limitRejections"].toInt() == 2, "p5: typing beyond cap reports attempt");
+    QTest::keyClick(viewPtr, Qt::Key_Backspace);
+    settle();
+    ime(QString(), QStringLiteral("xy"));
+    expectStr(state()["text"].toString(), "abc", "p5: overflowing IME commit rejected whole");
+    expectStr(fText(), "abc", "p5: overflowing IME commit native text restored");
+    expect(state()["limitRejections"].toInt() == 3, "p5: overflowing IME commit reports attempt");
+    QTest::keyClick(viewPtr, Qt::Key_Return);
+    settle();
+    expect(state()["accepted"].toArray().last().toString() == "abc", "p5: submit sees only restored draft");
+
+    clicks("abcd");
+    if (QObject *o = focusInput())
+        QMetaObject::invokeMethod(o, "select", Q_ARG(int, 3), Q_ARG(int, 1));
+    settle();
+    QGuiApplication::clipboard()->setText(QStringLiteral("oversized"));
+    QTest::keyClick(viewPtr, Qt::Key_V, Qt::ControlModifier);
+    settle();
+    expectStr(fText(), "abcd", "p5: overflowing replacement restores whole draft");
+    expect(state()["cursor"].toInt() == 1 && state()["anchor"].toInt() == 3,
+           "p5: overflowing replacement restores selection direction");
 
     // Unknown limit (0): the widget ceiling applies, no PAM guessing.
     call("newRig", 0, 0);
@@ -460,6 +491,7 @@ int main(int argc, char **argv) {
     settle();
     expectStr(state()["text"].toString(), "abcdefgh", "p5: unknown limit keeps full paste");
     expectStr(fText(), "abcdefgh", "p5: native editor agrees");
+    expect(state()["limitRejections"].toInt() == 0, "p5: unknown limit reports no rejection");
 
     // ---------------- Phase 6: d44 presentation seams ----------------
     call("newRig", 0, 0);

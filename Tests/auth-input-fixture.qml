@@ -55,10 +55,16 @@ Item {
             property alias fieldA: primaryField
             property alias fieldB: secondaryField
             property int submitCount: 0
+            property int limitRejections: 0
             property var accepted: []
             property bool rigReady: false
 
             Services.LockContext { id: ctx }
+
+            Connections {
+                target: ctx.auth.input
+                function onResponseLimitRejected() { rigRoot.limitRejections++ }
+            }
 
             Connections {
                 target: ctx
@@ -160,6 +166,7 @@ Item {
             rigPolicy: rig.policy,
             rigReady: rig.rigReady,
             submits: rig.submitCount,
+            limitRejections: rig.limitRejections,
             accepted: rig.accepted,
             aToken: rig.fieldA._token,
             bToken: rig.fieldB._token,

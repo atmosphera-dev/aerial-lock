@@ -72,6 +72,9 @@ QtObject {
     signal handoffAborted()
     signal focusFlushRequested()
     signal focusTransferRequested(int writer)
+    // Editors report rejected insertion without exposing password contents.
+    // Presentation belongs to the lock controller, not this shared record.
+    signal responseLimitRejected()
 
     // ---- Activity bookkeeping (reported by the active core) ----
     // Handoff readiness reflects live composition/gesture state, NOT a

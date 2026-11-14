@@ -95,6 +95,47 @@ ShellRoot {
             var lock = fixture.lock
             if (phase === 0) {
                 check(Quickshell.env("AERIAL_LOCK_CONNECTION_GUARD_PID") === String(Quickshell.processId), "guard PID matches")
+                const input = lock.context.auth.input
+                const cap = lock.context.auth.maxResponseSize - 1
+                check(cap >= 0, "fixture has a known build-time PAM limit")
+                if (typeof input.responseLimitRejected === "function") {
+                    const prompt = lock.statusMessage
+                    input.responseLimitRejected()
+                    check(lock.context.auth.status === "Password too long (maximum " + cap + " characters)", "limit message reaches theme status")
+                    const originalI18n = fixtureConfig.i18n
+                    check(originalI18n.passwordTooLong === "Password too long (maximum %1 characters)", "shipped hint translation loaded")
+                    fixtureConfig.i18n = ({ passwordTooLong: "Synthetic limit: %1 units" })
+                    check(lock.context.auth.status === "Synthetic limit: " + cap + " units", "translated hint substitutes actual cap")
+                    fixtureConfig.i18n = ({})
+                    check(lock.context.auth.status === "Password too long (maximum " + cap + " characters)", "missing translation uses substituted fallback")
+                    fixtureConfig.i18n = originalI18n
+                    draft("synthetic")
+                    check(lock.context.auth.status === prompt, "changed draft clears limit hint")
+                    input.responseLimitRejected()
+                    endpoint.message = "Real PAM prompt"
+                    endpoint.responseRequired = true
+                    endpoint.pamMessage()
+                    check(lock.context.auth.status === endpoint.message, "PAM prompt replaces limit hint")
+                    draft("next")
+                    check(lock.context.auth.status === endpoint.message, "edit cannot erase replacement PAM prompt")
+                    input.responseLimitRejected()
+                    endpoint.error(1)
+                    check(lock.context.auth.status === lock.context.labels.authError, "PAM error replaces limit hint")
+                    draft("changed")
+                    check(lock.context.auth.status === lock.context.labels.authError, "edit cannot erase replacement PAM error")
+                    const knownLimit = fixtureConfig.pamLimits.maxResponseSize
+                    fixtureConfig.pamLimits.maxResponseSize = 0
+                    input.responseLimitRejected()
+                    check(lock.context.auth.status === lock.context.labels.authError, "unknown limit never shows hint")
+                    fixtureConfig.pamLimits.maxResponseSize = knownLimit
+                    input.consume()
+                    input.unregisterWriter(writer)
+                    writer = -1
+                    endpoint.abort()
+                    lock.enterPrompting("")
+                } else {
+                    check(false, "editor rejection callback exists")
+                }
                 lock.tryUnlock() // empty initial response: expose prompt, never queue an answer
                 check(endpoint.starts === 1 && endpoint.responses === 0, "empty initial starts without queued answer")
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "synchronous empty request visibly prompting")

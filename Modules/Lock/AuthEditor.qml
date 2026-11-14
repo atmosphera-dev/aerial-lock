@@ -417,7 +417,9 @@ Item {
         passwordMaskDelay: 0
         persistentSelection: true
         enabled: !root.inputBusy
-        maximumLength: root.maxResponseSize > 0 ? root.maxResponseSize - 1 : 32767
+        // One extra UTF-16 unit makes overflow observable for every native
+        // insertion path, including paste and IME. Never publish that unit.
+        maximumLength: root.maxResponseSize > 0 ? root.maxResponseSize : 32767
         // Declarative focus from construction: forceActiveFocus alone
         // races the compositor's keyboard-focus grant to the surface and
         // drops first keys (d40 flake).
@@ -438,6 +440,14 @@ Item {
             if (!root._active || root._syncing)
                 return
             var model = root.input
+            if (root.maxResponseSize > 0 && field.length > root.maxResponseSize - 1) {
+                // The authoritative record is still the pre-edit snapshot.
+                // Password-mode undo cannot restore it. Re-pull synchronously
+                // before any submit/flush can observe a truncated password.
+                root.pull()
+                model.responseLimitRejected()
+                return
+            }
             root._publishing = true
             var accepted = model.applyEdit(root._token, root._appliedRevision,
                                            field.text, field.cursorPosition, field.cursorPosition)

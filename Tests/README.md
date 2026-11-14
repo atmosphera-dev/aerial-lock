@@ -59,6 +59,18 @@ disposable directory. Auth-input tests fail on warnings, and destroy consumers
 before their context. Theme fidelity includes a markup-bearing PAM message on
 all five themes and the fallback; glyph layout must match plain-text rendering.
 
+Response-limit coverage spans `tst_auth_input.qml` (typing and exact-fit
+replacement), `native-input-probe` (whole-edit paste/IME rejection, exact-fit
+paste and safe submission), and `lock-lifecycle-shell.qml` (the actual status
+projection, clearing and PAM precedence). The editor reserves one native input
+unit beyond the build-derived cap only to detect overflow; that edit is restored
+before publication. Unknown PAM limits leave Qt's default widget ceiling alone
+and never produce a response-limit hint.
+`lock-password-limit-shell.qml` additionally drives native typing, navigation
+and Backspace through the actual editor/controller, checking the projected hint
+and its clearing. Like the lifecycle fixture, run it through the real Quickshell
+runner in the disposable VM, with its shell-root loader and bundled imports.
+
 ### Native tests
 
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
