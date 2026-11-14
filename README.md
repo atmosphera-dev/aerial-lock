@@ -346,6 +346,11 @@ swaylock/hyprlock. A release requested while the locker is still engaging is
 delivered once it confirms the lock. Release disables further respawns;
 the locker takes its normal unlock/teardown path and exits 0.
 
+Killing the locker or supervisor (SIGTERM, `pkill`, `systemctl --user stop`) never unlocks.
+The compositor keeps the session locked; the supervisor retries a killed locker within
+its attempt limit. Killing the supervisor leaves the lock without respawns. Use SIGUSR1
+or `Release()` on the supervisor to unlock without a password, as with swaylock and hyprlock.
+
 **Automatic.** If the locker crashes while the session is locked, the
 supervisor retries within the three-attempt limit. Locker exit `0` means clean unlock / PAM
 refusal / external invalidation, so it does not respawn; anything else is an
