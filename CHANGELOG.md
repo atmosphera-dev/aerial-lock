@@ -3,6 +3,21 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - 2026-11-13
+
+### Fixed
+
+- `aerial-idle` reads bundled defaults from the lock's shell directory and
+  forwards overrides as absolute paths. Locks started through systemd no longer
+  inherit a stale shell directory when no override is set.
+- Password input works on every lock surface, including after reconnecting a
+  monitor. Switching between monitors no longer drops keys.
+- The lock now says when the password reaches the PAM length limit instead of
+  silently ignoring further input.
+- Replacing the input editor no longer forces an input-method composition to
+  commit; the replacement waits for composition to finish naturally.
+- Keys typed before the lock surface gains focus keep their original order.
+
 ## [0.1.0] — 2026-11-02
 
 ### Added
