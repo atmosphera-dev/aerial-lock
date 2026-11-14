@@ -6,6 +6,8 @@ import "Services" as Services
 ShellRoot {
     id: root
     property int exitCode: 0
+    // Construct-time test injection only, never sourced from configuration.
+    property var sessionLockOverride: null
 
     function guardReady() {
         return Quickshell.env("AERIAL_LOCK_CONNECTION_GUARD_PID") === String(Quickshell.processId)
@@ -116,13 +118,22 @@ ShellRoot {
             LockModule.Lock {
                 config: cfg
                 logger: Services.Logger
+                sessionLockOverride: root.sessionLockOverride
+                onUnlockRequested: {
+                    // Arm before native release. A missing completion event must
+                    // fail abnormally, never strand an unlocked episode or lie
+                    // to the supervisor that a still-held lock exited cleanly.
+                    root.exitCode = 1
+                    Services.Logger.i("lock-state", "exit-backstop idle -> armed reason=unlock-requested")
+                    fallbackQuit.restart()
+                }
                 onUnlocked: {
                     Services.Logger.d("shell", "Lock.onUnlocked received")
+                    root.exitCode = 0
                     lockLoader.active = false
                     Services.Logger.d("shell", "lockLoader.active set to false")
                     deferredQuit.start()
-                    fallbackQuit.start()
-                    Services.Logger.d("shell", "deferredQuit and fallbackQuit started")
+                    Services.Logger.d("shell", "deferredQuit started after confirmed release")
                 }
             }
         }
@@ -146,8 +157,13 @@ ShellRoot {
         repeat: false
         onTriggered: {
             Services.Logger.d("shell", "fallbackQuit.onTriggered")
-            Services.Logger.w("aerial-lock", "deferred exit did not complete; retrying quit")
-            Qt.quit()
+            // A final direct observation may confirm release without a signal.
+            if (root.lock !== null)
+                root.lock.observeRelease()
+            Services.Logger.w("lock-state", "locker running -> exiting reason="
+                              + (root.exitCode === 0 ? "release-confirmed-backstop" : "release-unconfirmed")
+                              + " exit-code=" + root.exitCode)
+            Qt.exit(root.exitCode)
         }
     }
 

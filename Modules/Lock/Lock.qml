@@ -11,11 +11,22 @@ Scope {
     required property Logger logger
 
     signal unlocked()
+    signal unlockRequested()
 
     property bool locked: true
     property bool unlockHandled: false
     // The compositor's ext-session-lock `locked` confirmation for this lock.
-    readonly property bool secure: sessionLock.secure
+    readonly property bool secure: root.lockEndpoint.secure
+    // Construct-time native boundary seam; normal shells use WlSessionLock.
+    property var sessionLockOverride: null
+    readonly property var lockEndpoint: root.sessionLockOverride || sessionLock
+
+    Binding {
+        target: root.lockEndpoint
+        property: "locked"
+        value: root.locked
+        when: root.sessionLockOverride !== null
+    }
 
     // d43: the response accepted from the shared draft, queued for PAM's
     // first prompt. null = no queued response (distinct from an empty
@@ -81,7 +92,24 @@ Scope {
             return
         logger.i("lock-state", "lock " + (root.secure ? "engaged" : "requested")
                  + " -> unlock-requested reason=" + reason)
+        root.unlockRequested()
         root.locked = false
+        // Read the native getters after the setter returns, even if it omitted
+        // its notify signal (Quickshell 0.3.2). Also escape a setter that is
+        // still realizing its target; notifications can arrive reentrantly.
+        Qt.callLater(root.observeRelease)
+        root.observeRelease()
+    }
+
+    function observeRelease() {
+        if (root.unlockHandled || root.lockEndpoint.locked || root.lockEndpoint.secure)
+            return
+        root.unlockHandled = true
+        logger.i("lock-state", "lock " + (root.locked ? "requested-or-engaged" : "unlock-requested")
+                 + " -> released reason=" + (root.locked ? "compositor-invalidated" : "compositor-unlocked"))
+        if (root.locked)
+            logger.w("aerial-lock", "lock invalidated externally by compositor")
+        root.unlocked()
     }
 
     readonly property var i18n: config.i18n
@@ -472,7 +500,7 @@ Scope {
 
     WlSessionLock {
         id: sessionLock
-        locked: root.locked
+        locked: root.sessionLockOverride === null && root.locked
 
         WlSessionLockSurface {
             id: lockSurface
@@ -684,34 +712,27 @@ Scope {
     }
 
     Connections {
-        target: sessionLock
+        target: root.lockEndpoint
         function onSecureStateChanged() {
-            logger.d("Lock", "sessionLock.secure changed: secure=" + sessionLock.secure)
+            logger.d("Lock", "sessionLock.secure changed: secure=" + root.lockEndpoint.secure)
             // Coverage confirmation starts optional theme work; window
             // activation remains the separate keyboard-focus backstop.
-            if (sessionLock.secure) {
+            if (root.lockEndpoint.secure) {
                 logger.i("lock-state", "lock requested -> engaged reason=compositor-confirmed")
                 root.publishThemeTopics()
                 Qt.callLater(themeHost.focusInput)
             }
+            Qt.callLater(root.observeRelease)
+            root.observeRelease()
         }
         function onLockStateChanged() {
-            logger.d("Lock", "sessionLock.locked changed: locked=" + sessionLock.locked +
-                " secure=" + sessionLock.secure +
+            logger.d("Lock", "sessionLock.locked changed: locked=" + root.lockEndpoint.locked +
+                " secure=" + root.lockEndpoint.secure +
                 " ourIntent=" + root.locked +
                 " unlockHandled=" + root.unlockHandled)
 
-            if (!sessionLock.locked && !root.unlockHandled) {
-                logger.i("lock-state", "lock " + (root.locked ? "requested-or-engaged" : "unlock-requested")
-                         + " -> released reason=" + (root.locked ? "compositor-invalidated" : "compositor-unlocked"))
-                if (root.locked) {
-                    logger.d("Lock", "external invalidation detected (root.locked still true)")
-                    logger.w("aerial-lock", "lock invalidated externally by compositor")
-                }
-                root.unlockHandled = true
-                logger.d("Lock", "emitting unlocked()")
-                root.unlocked()
-            }
+            Qt.callLater(root.observeRelease)
+            root.observeRelease()
         }
     }
 

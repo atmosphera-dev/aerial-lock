@@ -96,6 +96,15 @@ passwords from the complete output, with verbose logging both off and on.
 Like the lifecycle fixture, this is separate from the portable offscreen gate;
 real PAM and compositor release still need a real-lock cycle.
 
+`python3 Tests/test-lock-release-state.py` loads the actual production shell and
+Lock controller with an injected native-state boundary. No native lock is
+acquired. Zero, one and duplicate release notifications must each yield one
+unlocked event and natural exit 0. Late state-only release must complete on the
+backstop's direct observation. A still-locked or still-secure boundary must emit
+no unlocked event and exit 1 through the request-armed backstop. The fixture uses
+the guest's login service only for startup validation; it never starts a PAM
+conversation.
+
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
 with the tree under test at `$ROOT/src/aerial-lock` and the test build at
 `$ROOT/build/debug/aerial-tests`.

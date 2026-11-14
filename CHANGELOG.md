@@ -16,6 +16,12 @@ Notable user-facing changes are recorded here, following
 - Locker stdout and stderr reach the supervisor's output and journal directly
   instead of accumulating in unread memory buffers for the lifetime of a lock.
 
+### Fixed
+
+- With Quickshell 0.3.2, the locker now exits after unlocking and the next lock
+  works normally. Release completion uses native state rather than depending
+  on one notification; an unconfirmed release exits abnormally on the backstop.
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed

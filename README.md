@@ -262,6 +262,11 @@ events. Verbose logging is separate and retains the existing PAM-stack message
 diagnostics. The supervisor forwards locker stdout and stderr directly to its
 own sinks; it does not retain an unread log buffer during long locks.
 
+Release completion reads the native lock state as well as observing its
+notifications, including on Quickshell 0.3.2. The exit backstop starts with the
+unlock request. Confirmed release exits normally; a release still unconfirmed
+at the deadline exits abnormally so the supervisor can retry, never as success.
+
 ## Configuration
 
 On first launch, `~/.config/aerial-lock/config.json` is created with defaults.
