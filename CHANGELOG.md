@@ -3,6 +3,13 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Locker stdout and stderr reach the supervisor's output and journal directly
+  instead of accumulating in unread memory buffers for the lifetime of a lock.
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed

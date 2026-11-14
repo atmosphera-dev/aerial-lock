@@ -58,6 +58,9 @@ target_link_libraries(guard-logger-trap PRIVATE Qt6::Core ${CMAKE_DL_LIBS})
 add_test(NAME supervisor-session
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-session.py"
             "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
+add_test(NAME supervisor-output
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-output.py"
+            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
 add_executable(supervisor-terminal-probe supervisor-terminal-probe.cpp)
 target_link_libraries(supervisor-terminal-probe PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
 add_test(NAME supervisor-release

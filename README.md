@@ -202,6 +202,9 @@ automatically when `.devcontainer/` changes. GitHub CI builds the same container
 and runs the same QML lint offline with the repository mounted read-only;
 the hook additionally checks staged whitespace.
 
+The supervisor forwards locker stdout and stderr directly to its own sinks;
+it does not retain an unread log buffer during long locks.
+
 Run from the repo during development:
 
 ```

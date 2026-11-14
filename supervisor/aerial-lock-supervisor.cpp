@@ -280,6 +280,9 @@ private:
                 .arg(m_video.isEmpty() ? QString()
                                        : QStringLiteral(" (video: %1)").arg(m_video)));
         m_child = new QProcess(this);
+        // State/readiness uses the private engagement socket, never stdio.
+        // Inherit the launcher's sinks without retaining a lock-long log buffer.
+        m_child->setProcessChannelMode(QProcess::ForwardedChannels);
         const QByteArray runner = qgetenv("AERIAL_LOCK_RUNNER");
         const QByteArray pluginRoot = qgetenv("AERIAL_LOCK_PLUGIN_ROOT");
         m_child->setProgram(runner.isEmpty() ? QStringLiteral(AERIAL_LOCK_DEFAULT_RUNNER)

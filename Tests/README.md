@@ -136,6 +136,12 @@ completion, without entering `app.exec()`, to check the actual
 there is no product test switch. Offscreen `tst_engagement_report.qml` checks
 the exact command and one-warning policy at the inactive transport boundary.
 
+`supervisor-output` uses a private bus and command-synchronized child to check
+stdout and stderr visibility while the child is alive, direct file-descriptor
+inheritance and supervisor RSS after finite output volumes. The child waits for
+the next command after acknowledging each completed write; neither liveness nor
+the memory assertion depends on a timed output burst.
+
 `idle-config` compares the native reader's `--print-config` output with the
 actual ConfigStore merge/schema methods in QML for shared fixtures: missing,
 partial, full and invalid objects/fields, extra keys and timeout bounds.
