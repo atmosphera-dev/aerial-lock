@@ -1,0 +1,2 @@
+module AerialLock.Native
+typeinfo native.qmltypes

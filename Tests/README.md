@@ -128,6 +128,28 @@ runner in the disposable VM, with its shell-root loader and bundled imports.
 
 ### Native tests
 
+`auth-helper` runs the actual exec worker against a test-only PAM module in a
+private config directory. It covers batched info/error/hidden/visible prompts,
+empty and newline responses, rejection, max tries, errors, abort/EOF, malformed
+and oversized input, crashes and killing a stalled module without account edits.
+`auth-context` drives the production native owner against a process fixture:
+fragmented/malformed/truncated/extra output, success followed by crash, prompt
+and echo state, abort/restart, byte limits (including UTF-8), exec failure and
+child reaping. Neither test substitutes for real pam_unix and installed-locker
+acceptance. See `native/auth-protocol.md` for the transport and security boundary.
+
+`auth-timezone-shell.qml` is the real-session old/new deadlock comparison, not
+a portable/offscreen test. In the owned VM, prepare an auth-only pam_unix service
+named `aerial-auth-timezone` without account lockout, and load the fixture through
+the production runner (the same shell-root Loader pattern as `test-lock-state.py`).
+Preload the test build's `libauth-timezone-hammer.so`. Its four threads hammer
+`localtime_r` only in qs, never in the exec helper. Set
+`AERIAL_TEST_AUTH_BACKEND=old` for PamContext, or `exec` for AuthContext;
+`AERIAL_TEST_AUTH_ITERATIONS` defaults to 100. A rejection must reach QML within
+10 seconds. The fixture aborts its own conversation and exits 3 on a stall;
+all timely rejections exit 0. Preserve the old red run and every new latency,
+then restore the operator's authentication fixture. No lock is acquired.
+
 `python3 Tests/test-lock-state.py` runs the real Quickshell Lock controller
 with synthetic PAM in an owned VM's Wayland session, without engaging a lock.
 Build with `make` first and set `TMPDIR` to the disk-backed workspace. It checks

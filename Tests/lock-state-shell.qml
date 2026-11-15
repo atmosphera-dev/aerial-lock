@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import Quickshell.Services.Pam
+import AerialLock.Native
 import "../Modules/Lock" as LockModule
 import "../Services" as Services
 
@@ -23,7 +23,7 @@ ShellRoot {
         property bool responseVisible: false
         property string user: "synthetic-fixture"
         property string config: "synthetic"
-        property int result: PamResult.Failed
+        property int result: AuthContext.Failed
         signal pamMessage()
         signal completed(int result)
         signal error(int error)
@@ -65,7 +65,7 @@ ShellRoot {
             lock.tryUnlock()
             input.applyEdit(writer, input.revision, "wrong-secret-7e83", 17, 17)
             lock.tryUnlock()
-            endpoint.result = PamResult.Success
+            endpoint.result = AuthContext.Success
             input.applyEdit(writer, input.revision, "right-secret-91ab", 17, 17)
             lock.tryUnlock()
             input.unregisterWriter(writer)

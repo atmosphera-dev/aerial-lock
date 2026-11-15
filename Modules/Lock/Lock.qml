@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import Quickshell.Services.Pam
+import AerialLock.Native
 import Quickshell.Wayland
 import "../../Services"
 
@@ -604,7 +604,7 @@ Scope {
         watchdog.restart() // a new PAM call, even if one was already in flight
     }
 
-    PamContext {
+    AuthContext {
         id: pam
         config: root.config.pamService
         configDirectory: "/etc/pam.d"
@@ -651,19 +651,19 @@ Scope {
         function onCompleted(result) {
             watchdog.stop()
             if (root.attemptCancelled) {
-                logger.d("Lock", "PamContext.onCompleted ignored: attempt cancelled")
+                logger.d("Lock", "AuthContext.onCompleted ignored: attempt cancelled")
                 return
             }
-            logger.d("Lock", "PamContext.onCompleted: result=" + result +
-                " (Success=" + PamResult.Success + ")")
+            logger.d("Lock", "AuthContext.onCompleted: result=" + result +
+                " (Success=" + AuthContext.Success + ")")
             root.unlockInProgress = false
             root.acceptedResponse = null
-            if (result === PamResult.Success) {
+            if (result === AuthContext.Success) {
                 root.setAuthState(root.authSuccess, "pam-success")
                 root.setAuthStatus(i18n.unlocked || "Unlocked")
                 logger.d("Lock", "PAM Success: setting root.locked = false")
                 root.requestUnlock("pam-success")
-            } else if (result === PamResult.MaxTries) {
+            } else if (result === AuthContext.MaxTries) {
                 root.setAuthState(root.authMaxTries, "pam-max-tries")
                 root.setAuthStatus(i18n.maxTries || "Too many attempts")
             } else {
@@ -675,7 +675,7 @@ Scope {
         function onError(error) {
             watchdog.stop()
             if (root.attemptCancelled) {
-                logger.d("Lock", "PamContext.onError ignored: attempt cancelled")
+                logger.d("Lock", "AuthContext.onError ignored: attempt cancelled")
                 return
             }
             root.unlockInProgress = false

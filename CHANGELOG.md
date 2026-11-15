@@ -3,6 +3,12 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A wrong password could leave the lock on "Authenticating..." for about a minute.
+
 ## [0.1.3] - 2026-11-14
 
 ### Added

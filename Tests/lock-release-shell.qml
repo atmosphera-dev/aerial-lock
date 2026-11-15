@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import Quickshell.Services.Pam
+import AerialLock.Native
 import "../Modules/Lock" as LockModule
 import "../Services" as Services
 
@@ -36,7 +36,7 @@ ShellRoot {
         function abort() {
             aborts++
             active = false
-            completed(PamResult.Success) // cancellation must guard synchronous completion
+            completed(AuthContext.Success) // cancellation must guard synchronous completion
         }
     }
     Loader {

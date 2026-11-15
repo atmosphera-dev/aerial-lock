@@ -1,0 +1,24 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        name: "AuthContext"
+        prototype: "QObject"
+        exports: ["AerialLock.Native/AuthContext 1.0"]
+        Enum { name: "Result"; values: { "Success": 0, "Failed": 1, "Error": 2, "MaxTries": 3 } }
+        Property { name: "config"; type: "QString" }
+        Property { name: "configDirectory"; type: "QString" }
+        Property { name: "user"; type: "QString" }
+        Property { name: "active"; type: "bool"; isReadonly: true }
+        Property { name: "message"; type: "QString"; isReadonly: true }
+        Property { name: "messageIsError"; type: "bool"; isReadonly: true }
+        Property { name: "responseRequired"; type: "bool"; isReadonly: true }
+        Property { name: "responseVisible"; type: "bool"; isReadonly: true }
+        Signal { name: "pamMessage" }
+        Signal { name: "completed"; Parameter { name: "result"; type: "int" } }
+        Signal { name: "error"; Parameter { name: "error"; type: "int" } }
+        Method { name: "start"; type: "bool" }
+        Method { name: "abort" }
+        Method { name: "respond"; Parameter { name: "response"; type: "QString" } }
+    }
+}

@@ -2,7 +2,9 @@
 #define _GNU_SOURCE
 #endif
 #include "surface-input.h"
+#include "auth-context.h"
 #include <QGenericPlugin>
+#include <qqml.h>
 #include <cstdlib>
 #include <dlfcn.h>
 #include <unistd.h>
@@ -34,6 +36,7 @@ public:
         if (authorized()) {
             if (!qGuiApp) ::_exit(72);
             pinModule();
+            qmlRegisterType<AuthContext>("AerialLock.Native", 1, 0, "AuthContext");
             new SurfaceInputFilter(qGuiApp);
             if (!qputenv("AERIAL_LOCK_SURFACE_INPUT_PID", QByteArray::number(getpid()))) ::_exit(72);
         }

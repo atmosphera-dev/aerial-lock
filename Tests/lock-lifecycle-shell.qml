@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import Quickshell.Services.Pam
+import AerialLock.Native
 import "../Modules/Lock" as LockModule
 import "../Services" as Services
 
@@ -56,7 +56,7 @@ ShellRoot {
             active = true
             if (startMode === "inline") prompt()
             else if (startMode === "error") error(1)
-            else if (startMode === "complete") { active = false; completed(PamResult.Success) }
+            else if (startMode === "complete") { active = false; completed(AuthContext.Success) }
             else if (startMode === "silent") {} // in flight, no PAM traffic at all
             else Qt.callLater(endpoint.prompt)
             return true
@@ -71,7 +71,7 @@ ShellRoot {
             else {
                 active = false
                 responseRequired = false
-                completed(PamResult.Success)
+                completed(AuthContext.Success)
             }
         }
     }

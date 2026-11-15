@@ -204,7 +204,7 @@ and writes nothing.
   RSS growth under continuous track changes. Nested Hyprland synthetic input
   also has coverage limits. See [README known limitations](../README.md#known-limitations)
   for symptoms and workarounds.
-- **No PAM account-management phase.** Quickshell's `PamContext` runs
+- **No PAM account-management phase.** The exec-isolated `aerial-lock-auth` runs
   `pam_authenticate` only, so interactive account-management flows (e.g. an
   expired password's "new password/retype" prompt) are unreachable — identical
   to swaylock and hyprlock, which are also auth-only. A plain expired password
@@ -259,7 +259,7 @@ are build constants, not configuration.
 ## Rate limiting and lockout
 
 Throttling is delegated to the PAM stack. `aerial-lock` adds no client-side
-attempt counter: on `PamResult.MaxTries` the UI shows a message but leaves
+attempt counter: on `AuthContext.MaxTries` the UI shows a message but leaves
 the field enabled, and a fresh attempt starts a **new** PAM transaction with
 a reset counter — retries are effectively unlimited from the client's
 perspective.

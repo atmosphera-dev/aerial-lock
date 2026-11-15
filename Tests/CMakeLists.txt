@@ -13,6 +13,18 @@ target_link_libraries(native-input-probe PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 
 enable_testing()
+add_library(auth-pam-fixture MODULE auth-pam-fixture.c)
+add_library(auth-timezone-hammer SHARED auth-timezone-hammer.c)
+target_link_libraries(auth-timezone-hammer PRIVATE pthread)
+target_link_libraries(auth-pam-fixture PRIVATE pam)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/auth-context.h" -o "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/native/auth-context.h")
+add_executable(auth-context-probe auth-context-probe.cpp "${AERIAL_LOCK_SOURCE}/native/auth-context.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc")
+target_include_directories(auth-context-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(auth-context-probe PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME auth-context COMMAND auth-context-probe "${CMAKE_CURRENT_SOURCE_DIR}/auth-fake-helper.py")
 add_test(NAME native-input-probe
     COMMAND native-input-probe "${AERIAL_LOCK_SOURCE}/Tests/auth-input-fixture.qml")
 add_test(NAME native-input-migration
@@ -33,6 +45,8 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME auth-helper COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-auth-helper.py"
+    "${AERIAL_LOCK_SOURCE}/native/aerial-lock-auth" "$<TARGET_FILE:auth-pam-fixture>")
 add_test(NAME surface-input-teardown
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-surface-input-teardown.py")
 # VM integration drivers validate an operator-supplied owned-instance manifest
