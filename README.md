@@ -66,19 +66,8 @@ confirmed transport loss exits abnormally (70); guard monitor failure exits 71
 None of these paths unlocks. Normal PAM unlock still flushes the unlock request
 and exits 0; the supervisor retains its bounded respawn/no-automatic-unlock policy.
 
-Bind a key in your compositor config:
-
-**Niri**
-```kdl
-binds {
-    Mod+L allow-when-locked=true { spawn "aerial-lock"; }
-}
-```
-
-**Hyprland**
-```conf
-bind = SUPER, L, exec, aerial-lock
-```
+See the [setup guide](docs/setup.md) for compositor keybinds (niri, Hyprland
+and sway), idle-policy ownership, and Atmosphera, Noctalia v5 and Omarchy setup.
 
 One supervisor protects each Wayland session. Running `aerial-lock` again for
 a session that is already being locked (a keybinding and an idle daemon, say)
@@ -137,9 +126,8 @@ aerial-idle does not need to have started them.
 ### Alternatives without aerial-idle
 
 Use one idle/session policy owner. With swayidle or hypridle handling these
-events, leave aerial-idle disabled. A shell can set its `lockCommand` to
-`aerial-lock`; turn off the shell's own lock-on-suspend when aerial-idle owns
-that policy, to avoid competing lockers.
+events, leave aerial-idle disabled. For shell-specific locker settings and
+which automatic lock paths to disable, see the [setup guide](docs/setup.md).
 
 For **swayidle** built with logind support:
 
