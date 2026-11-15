@@ -4,7 +4,7 @@ ENV TMPDIR=/var/tmp
 
 RUN pacman -Syu --noconfirm --needed \
         qt6-declarative qt6-5compat qt6-svg quickshell mpv git cmake shellcheck \
-        ninja python nodejs dbus systemd wayland-protocols ttf-dejavu \
+        ninja python nodejs dbus systemd wayland-protocols ttf-dejavu sway mesa \
     && useradd --create-home builder \
     && for package in qt6-mpvqml qt6-niriqml; do \
         install -d -o builder -g builder "/var/tmp/$package" \
@@ -18,5 +18,10 @@ RUN pacman -Syu --noconfirm --needed \
     done \
     && pacman -Scc --noconfirm \
     && rm -rf /home/builder/.cache
+
+COPY build-wtype.sh /usr/local/lib/aerial-ci/build-wtype.sh
+# Headless Sway needs no scheduler privilege. Arch's file capability otherwise
+# makes exec fail under the container's default capability bounding set.
+RUN setcap -r /usr/bin/sway && bash /usr/local/lib/aerial-ci/build-wtype.sh
 
 WORKDIR /workspace

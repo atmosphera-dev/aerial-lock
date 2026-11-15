@@ -67,3 +67,11 @@ jobs:
             --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
             aerial-lock-ci:ci bash .devcontainer/test.sh
+
+      - name: Real session-lock and PAM smoke offline
+        timeout-minutes: 8
+        run: |
+          timeout 7m sudo podman run --rm --pull=never --network=none \
+            --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
+            aerial-lock-ci:ci bash .devcontainer/lock-smoke.sh

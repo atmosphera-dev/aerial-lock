@@ -22,7 +22,39 @@ runs the portable CTest/Python cases offscreen, the Node suites, and every
 no network and bounded memory, processes, CPU and run time. The checkout is
 read-only; `.devcontainer/test.sh` copies it to the container's writable layer.
 
-CI deliberately excludes `media-fallback-render` (needs a video-rendering
+### Real-lock CI smoke
+
+The same job then runs `.devcontainer/lock-smoke.sh` in a fresh offline container
+with the same resource caps and a seven-minute timeout. It builds and installs
+the production targets (debug dismiss and verbose logging off), starts Sway with
+its headless backend/pixman renderer, and launches the real installed `aerial-lock`
+as a new unprivileged throwaway user on a private D-Bus session. No KVM, privileged
+container, host display socket or graphics device is needed.
+The image removes Arch Sway's scheduler file capability; the smoke uses the
+container engine's default capabilities, not an expanded privilege set.
+
+`ci-lock-smoke.py` reuses the remediation driver's filtered process observer.
+Like that driver's Sway setup, it keeps a virtual keyboard alive and checks the
+headless seat's keyboard readiness before starting the locker.
+It requires the actual session-lock protocol confirmation, injects one wrong
+password with wtype, observes `lock-state: auth ... -> failed` while the same
+locker retains the lock, then enters the generated correct password through
+the same native keyboard path and real `pam_unix`. It requires auth success,
+`unlock_and_destroy`, confirmed release, natural locker exit 0 and supervisor
+exit 0 with no respawn. Every wait/subprocess is bounded. The fixture password
+is generated per container, passed only on stdin and never written to a file
+or printed; protocol keyboard/IME traffic is discarded before persistence.
+The image builds checksum-pinned wtype v0.4 with the same TMPDIR-only tempfile
+patch described below, so its keymap files stay on the container's writable
+disk, not a shared temporary directory. Failure never uses debug dismiss or
+an external release to turn a failed authentication cycle into a pass.
+
+This is one short platform smoke, not niri/Hyprland acceptance, media playback,
+physical display, multi-output, IME or suspend coverage. The full VM drivers
+remain separate. To reproduce, use the exact image build and smoke container
+commands from `.github/workflows/qmllint.yml` inside a disposable test VM.
+
+CI still excludes `media-fallback-render` (needs a video-rendering
 platform), `owned-instance` (requires an operator-prepared VM manifest), and
 the real-session drivers below: remediation, staged/nested launch, surface
 input, and Quickshell lifecycle/password-limit/release/startup fixtures.
