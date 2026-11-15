@@ -3,17 +3,21 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.3] - 2026-11-14
 
 ### Added
 
 - Per-key user translation overrides in `$XDG_CONFIG_HOME/aerial-lock/i18n/`,
   falling back to the bundled language and then English.
+- A setup guide, `docs/setup.md`: keybinds for niri, Hyprland and sway, and
+  setup for Atmosphera, Noctalia v5 and Omarchy.
 
 ### Fixed
 
 - Unlocking no longer prints QML context and deferred-call warnings to the
   locker output or journal during release and exit.
+- The README's hypridle example now sets `inhibit_sleep = 3`. Without it,
+  hypridle could let the system suspend before aerial-lock had locked.
 
 ## [0.1.2] - 2026-11-14
 
