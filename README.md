@@ -151,7 +151,7 @@ general {
     lock_cmd = aerial-lock
     unlock_cmd = pkill -USR1 -f '^aerial-lock-supervisor'
     before_sleep_cmd = loginctl lock-session
-    inhibit_sleep = 3   # wait until the session is locked before sleeping
+    inhibit_sleep = 3   # wait until locked; needs hyprland-lock-notify-v1 (Hyprland)
 }
 
 listener {
