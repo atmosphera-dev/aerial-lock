@@ -89,6 +89,10 @@ ShellRoot {
         interval: 0
         repeat: false
         onTriggered: {
+            // Retire the producer only after its release/native-notification
+            // stack returns. Loader deactivation clears the QML context now,
+            // even though the Lock QObject itself is deleted later.
+            lockLoader.active = false
             Services.Logger.i("lock-state", "locker running -> exiting reason=exit-code-" + root.exitCode)
             Qt.exit(root.exitCode)
         }
@@ -130,8 +134,6 @@ ShellRoot {
                 onUnlocked: {
                     Services.Logger.d("shell", "Lock.onUnlocked received")
                     root.exitCode = 0
-                    lockLoader.active = false
-                    Services.Logger.d("shell", "lockLoader.active set to false")
                     deferredQuit.start()
                     Services.Logger.d("shell", "deferredQuit started after confirmed release")
                 }

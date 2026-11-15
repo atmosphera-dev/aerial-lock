@@ -47,12 +47,18 @@ ShellRoot {
         function onUnlocked() {
             fixture.unlocks++
             console.info("RELEASE_FIXTURE unlocked=" + fixture.unlocks)
+            console.info("RELEASE_FIXTURE terminal=" + fixture.productionShell.lock.tearingDown)
         }
     }
     Timer {
         interval: 1
         running: fixture.productionShell !== null && fixture.productionShell.lock !== null
-        onTriggered: fixture.productionShell.lock.release()
+        onTriggered: {
+            fixture.productionShell.lock.release()
+            // The owner must not invalidate the emitting object's context
+            // before its native setter and QML release stack have unwound.
+            console.info("RELEASE_FIXTURE returned live=" + (fixture.productionShell.lock !== null))
+        }
     }
     // No actual native lock was acquired in this fixture.
     Timer { interval: 5000; running: true; onTriggered: Qt.exit(99) }

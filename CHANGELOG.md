@@ -10,6 +10,11 @@ Notable user-facing changes are recorded here, following
 - Per-key user translation overrides in `$XDG_CONFIG_HOME/aerial-lock/i18n/`,
   falling back to the bundled language and then English.
 
+### Fixed
+
+- Unlocking no longer prints QML context and deferred-call warnings to the
+  locker output or journal during release and exit.
+
 ## [0.1.2] - 2026-11-14
 
 ### Added

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
@@ -108,6 +109,11 @@ def session():
         locker.wait_line(lambda line: "locker running -> exiting reason=exit-code-0" in line)
         locker.wait_line(lambda line: "state: ended" in line)
         assert sum("launching locker, attempt" in line for _, line in tuple(locker.lines)) == 1
+        # Read the drained file, not the observer's bounded recent-line buffer.
+        # Include teardown after release and after Qt.exit(), outside callbacks.
+        release_log = locker.log.read_text().split(" -> unlock-requested reason=", 1)[1]
+        warnings = re.findall(r"^\s*(?:WARN|ERROR|CRITICAL|FATAL)\b.*", release_log, re.MULTILINE)
+        assert not warnings, "release/exit must contain no QML warnings: " + repr(warnings)
     finally:
         # Never issue an unlock or kill a failed locker to manufacture success.
         # A failed container is discarded by the caller's bounded podman run.
@@ -123,7 +129,7 @@ def session():
                 raise RuntimeError("fixture credential leaked into retained output")
             print(f"--- {path.name} ---", flush=True)
             print(text, end="", flush=True)
-    print(f"SMOKE PASS: real lock, wrong-password rejection, PAM unlock, locker=0 supervisor=0 ({time.monotonic() - start:.2f}s)")
+    print(f"SMOKE PASS: real lock, wrong-password rejection, PAM unlock, warning-free release, locker=0 supervisor=0 ({time.monotonic() - start:.2f}s)")
     return 0
 
 

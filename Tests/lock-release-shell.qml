@@ -52,8 +52,7 @@ ShellRoot {
                     fixture.unlocks++
                     fixture.check(attemptCancelled && !endpoint.active, "PAM attempt cancelled before unlock")
                     fixture.check(acceptedResponse === null && !unlockInProgress, "pending PAM state cleared")
-                    loader.active = false
-                    finished.start()
+                    retire.start()
                 }
             }
         }
@@ -68,6 +67,14 @@ ShellRoot {
             fixture.lock.release()
             // Idempotence before deferred Loader destruction.
             if (fixture.lock !== null) fixture.lock.release()
+        }
+    }
+    Timer {
+        id: retire
+        interval: 0
+        onTriggered: {
+            loader.active = false
+            finished.start()
         }
     }
     Timer {

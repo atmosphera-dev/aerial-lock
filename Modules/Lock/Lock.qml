@@ -105,6 +105,10 @@ Scope {
         if (root.unlockHandled || root.lockEndpoint.locked || root.lockEndpoint.secure)
             return
         root.unlockHandled = true
+        // Native surfaces can retire before the shell's deferred teardown.
+        // Confirmed release is terminal: do not migrate the panel between
+        // disappearing surfaces while the release stack is still unwinding.
+        root.tearingDown = true
         logger.i("lock-state", "lock " + (root.locked ? "requested-or-engaged" : "unlock-requested")
                  + " -> released reason=" + (root.locked ? "compositor-invalidated" : "compositor-unlocked"))
         if (root.locked)

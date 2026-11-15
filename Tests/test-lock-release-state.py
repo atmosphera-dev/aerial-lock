@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -32,13 +33,19 @@ class ReleaseState(unittest.TestCase):
                     unconfirmed = mode in ("held", "secure-held")
                     self.assertNotIn("Binding loop", result.stdout)
                     self.assertNotIn("TypeError:", result.stdout)
+                    output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+                    release_log = output.split(" -> unlock-requested reason=", 1)[-1]
+                    self.assertNotRegex(release_log, re.compile(
+                        r"^\s*(?:WARN|ERROR|CRITICAL|FATAL)\b(?!.*lock-state:).*", re.MULTILINE))
                     self.assertEqual(result.returncode, 1 if unconfirmed else 0, result.stdout)
                     self.assertIn("exit-backstop idle -> armed reason=unlock-requested", result.stdout)
+                    self.assertIn("RELEASE_FIXTURE returned live=true", result.stdout)
                     if unconfirmed:
                         self.assertNotIn("RELEASE_FIXTURE unlocked=", result.stdout)
                         self.assertIn("reason=release-unconfirmed exit-code=1", result.stdout)
                     else:
                         self.assertEqual(result.stdout.count("RELEASE_FIXTURE unlocked=1"), 1, result.stdout)
+                        self.assertIn("RELEASE_FIXTURE terminal=true", result.stdout)
                         self.assertNotIn("RELEASE_FIXTURE unlocked=2", result.stdout)
                         self.assertIn("-> released reason=compositor-unlocked", result.stdout)
                         self.assertIn("locker running -> exiting reason=" + (

@@ -41,7 +41,10 @@ password with wtype, observes `lock-state: auth ... -> failed` while the same
 locker retains the lock, then enters the generated correct password through
 the same native keyboard path and real `pam_unix`. It requires auth success,
 `unlock_and_destroy`, confirmed release, natural locker exit 0 and supervisor
-exit 0 with no respawn. Every wait/subprocess is bounded. The fixture password
+exit 0 with no respawn, and no warnings from the unlock request through process
+exit (including QML context and deferred-call teardown warnings). The warning
+check reads the complete drained log, not a timed observation or recent-line
+buffer. Every wait/subprocess is bounded. The fixture password
 is generated per container, passed only on stdin and never written to a file
 or printed; protocol keyboard/IME traffic is discarded before persistence.
 The image builds checksum-pinned wtype v0.4 with the same TMPDIR-only tempfile
@@ -140,7 +143,9 @@ unlocked event and natural exit 0. Late state-only release must complete on the
 backstop's direct observation. A still-locked or still-secure boundary must emit
 no unlocked event and exit 1 through the request-armed backstop. The fixture uses
 the guest's login service only for startup validation; it never starts a PAM
-conversation.
+conversation. It also requires the Lock's context to remain live until the
+release call returns, and warning-free release/exit for each notification mode;
+the unconfirmed cases still require the backstop's operational warning.
 
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
 with the tree under test at `$ROOT/src/aerial-lock` and the test build at
