@@ -3,6 +3,13 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Per-key user translation overrides in `$XDG_CONFIG_HOME/aerial-lock/i18n/`,
+  falling back to the bundled language and then English.
+
 ## [0.1.2] - 2026-11-14
 
 ### Added

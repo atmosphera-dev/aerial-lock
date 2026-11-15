@@ -261,6 +261,11 @@ at the deadline exits abnormally so the supervisor can retry, never as success.
 On first launch, `~/.config/aerial-lock/config.json` is created with defaults.
 See [`docs/config.reference.md`](docs/config.reference.md) for available options.
 
+Override individual translated strings in
+`$XDG_CONFIG_HOME/aerial-lock/i18n/<lang>.json` (default `~/.config/...`), where
+`<lang>` is the configured `language`. Missing keys fall back to the bundled
+language, then English. See the [i18n reference](docs/config.reference.md#i18n).
+
 ### Themes
 
 The lock surface is a full-surface QML theme, selected by filename with the

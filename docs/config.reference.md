@@ -121,12 +121,22 @@ their individual defaults with a warning. The companion never rewrites the file.
 
 ## I18n
 
-`Config/i18n/en.json` ships with English strings. Set `"language"` to load a
-different bundled file (`Config/i18n/<lang>.json`). Falls back to `en` if the
-requested file is missing or unparseable.
+`Config/i18n/en.json` ships with English strings. Set `"language"` to choose
+`<lang>.json`. Each key is resolved from
+`$XDG_CONFIG_HOME/aerial-lock/i18n/<lang>.json` (default
+`~/.config/aerial-lock/i18n/<lang>.json`), then the bundled
+`Config/i18n/<lang>.json`, then bundled `en.json`.
 
-User-supplied translation files are **not yet supported** — only the
-installed bundle is read.
+Override only the strings you want to change, for example in `i18n/en.json`:
+
+```json
+{ "prompt": "Your password, please" }
+```
+
+Files must contain a JSON object of nonempty strings. A missing, unreadable
+or broken file logs one warning and leaves the lower layers intact. Invalid
+or blank values are ignored with one warning per file; valid siblings still
+apply. Files are read once at startup, so edits apply on the next lock.
 
 ## Fetching remote sources
 

@@ -17,7 +17,7 @@ make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 The `Checks` GitHub workflow runs on pushes and PRs to master. Its separate
 `build-and-test` job uses the same Arch `.devcontainer/Dockerfile` as lint:
 it builds the production targets with `make`, builds `Tests/CMakeLists.txt`,
-runs the portable CTest/Python cases offscreen, both Node suites, and every
+runs the portable CTest/Python cases offscreen, the Node suites, and every
 `tst_*.qml` suite with the whole-log zero-QWARN gate below. The container has
 no network and bounded memory, processes, CPU and run time. The checkout is
 read-only; `.devcontainer/test.sh` copies it to the container's writable layer.
@@ -31,8 +31,13 @@ or an owned VM session; offscreen tests do not prove those outcomes.
 
 ```sh
 bash Scripts/dev/qmllint.sh .
-node --test Tests/theme-selection.test.cjs Tests/theme-attribution.test.cjs
+node --test Tests/*.test.cjs
 ```
+
+`i18n.test.cjs` executes ConfigStore's actual methods with a fake FileView
+boundary. It checks per-key user/bundle/English precedence, partial overrides,
+user-only languages, and one-warning fallback for missing or broken user files.
+Invalid or blank leaves cannot erase usable lower-layer labels.
 
 ### QML suites
 

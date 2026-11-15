@@ -166,41 +166,38 @@ Scope {
     }
 
     function loadI18n(lang) {
-        i18nFile.path = i18nDir + "/" + lang + ".json"
-        if (!i18nFile.waitForJob()) {
-            Logger.w("ConfigStore", "no load job was queued for " + i18nFile.path)
-        }
-        var raw = i18nFile.text()
-        if (raw && raw.length > 0) {
-            try {
-                root.i18n = JSON.parse(raw)
-                return
-            } catch (e) {
-                Logger.w("ConfigStore", "i18n file parse error for " + lang + " (" + e + ")")
+        var strings = readI18n(i18nDir + "/en.json")
+        if (lang !== "en")
+            strings = deepMerge(strings, readI18n(i18nDir + "/" + lang + ".json"))
+        root.i18n = deepMerge(strings, readI18n(configDir + "/i18n/" + lang + ".json"))
+    }
+
+    // Validate each layer before merging, so a broken override cannot erase a
+    // usable lower-layer label. FileView's own errors are off: warn once here.
+    function readI18n(path) {
+        i18nFile.path = path
+        i18nFile.waitForJob()
+        var strings = ({})
+        try {
+            var raw = i18nFile.text()
+            if (!raw || raw.length === 0)
+                throw new Error("missing, unreadable or empty file")
+            var parsed = JSON.parse(raw)
+            if (!isPlainObject(parsed))
+                throw new Error("expected an object of nonempty strings")
+            var invalid = false
+            for (var key in parsed) {
+                if (typeof parsed[key] === "string" && parsed[key].trim().length > 0)
+                    strings[key] = parsed[key]
+                else
+                    invalid = true
             }
+            if (invalid)
+                Logger.w("ConfigStore", "i18n " + path + ": invalid or blank values; using fallback for those keys")
+        } catch (e) {
+            Logger.w("ConfigStore", "i18n " + path + " (" + e + "); using fallback")
         }
-
-        if (lang === "en") {
-            root.i18n = {}
-            return
-        }
-
-        Logger.w("ConfigStore", "i18n file not found for " + lang + "; trying en fallback")
-        i18nFile.path = i18nDir + "/en.json"
-        if (!i18nFile.waitForJob()) {
-            Logger.w("ConfigStore", "no load job was queued for " + i18nFile.path)
-        }
-        raw = i18nFile.text()
-        if (raw && raw.length > 0) {
-            try {
-                root.i18n = JSON.parse(raw)
-                return
-            } catch (e) {
-                Logger.w("ConfigStore", "en fallback i18n parse error (" + e + ")")
-            }
-        }
-
-        root.i18n = {}
+        return strings
     }
 
     function isPlainObject(v) {
