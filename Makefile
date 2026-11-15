@@ -2,6 +2,7 @@ PREFIX ?= /usr
 DATADIR ?= $(PREFIX)/share/aerial-lock
 BINDIR ?= $(PREFIX)/bin
 LIBEXECDIR ?= $(PREFIX)/libexec/aerial-lock
+AUTH_HELPER = $(LIBEXECDIR)/aerial-lock-auth
 PLUGINROOT ?= $(PREFIX)/lib/aerial-lock/qt-plugins
 PAMDIR ?= /etc/pam.d
 CONFDIR ?= $(DATADIR)/Config
@@ -52,6 +53,7 @@ QT_PIC_FLAGS=$(QT_PIC_FLAGS)
 DATADIR=$(DATADIR)
 BINDIR=$(BINDIR)
 LIBEXECDIR=$(LIBEXECDIR)
+AUTH_HELPER=$(AUTH_HELPER)
 PLUGINROOT=$(PLUGINROOT)
 endef
 
@@ -158,7 +160,7 @@ native/auth-context.moc: native/auth-context.h
 
 $(OBJDIR)/auth-context.o: native/auth-context.cpp native/auth-context.h native/auth-context.moc native/auth-protocol.h $(OBJDIR)/native-config
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< \
-		-DAERIAL_LOCK_AUTH_HELPER='"$(LIBEXECDIR)/aerial-lock-auth"' $$(pkg-config --cflags Qt6Core) -o $@
+		-DAERIAL_LOCK_AUTH_HELPER='"$(AUTH_HELPER)"' $$(pkg-config --cflags Qt6Core) -o $@
 
 $(OBJDIR)/aerial-lock-auth.o: native/aerial-lock-auth.c native/auth-protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -293,5 +295,6 @@ clean:
 
 dev: DEBUG_DISMISS=1
 dev: DEBUG_VERBOSE=1
+dev: AUTH_HELPER=$(CURDIR)/native/aerial-lock-auth
 dev: all
 	bash Scripts/dev/run.sh

@@ -201,7 +201,11 @@ regression for a prepared VM (below).
 it uses a minimal optimized LTO build. This exercises Qt's protected-data-symbol
 contract at final link, as well as compilation, and checks the rebuilt idle
 executable's effective config. Existing path-change, no-op and compiler-flag
-invalidation checks still run first. Staged installs check the unit generated
+invalidation checks still run first. The linked auth consumer must select the
+checkout helper for `make dev`, remain unchanged on another dev build, then
+rebuild with the installed helper path on `make install`. This also exercises
+a checkout path containing spaces; only the copied dev launcher is stubbed in
+the portable fixture. Staged installs check the unit generated
 from `systemd/aerial-idle.service.in` with the default prefix, `/usr/local`,
 and an explicit `BINDIR` override: `ExecStart` must name the installed binary
 without `DESTDIR`, the unit must have mode 644, and uninstall must remove the

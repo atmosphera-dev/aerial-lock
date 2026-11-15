@@ -6,6 +6,10 @@ conversation. PAM runs only after exec, in a single-threaded program linked to
 libpam, not Qt. The supervisor does not participate. No PAM module or libc work
 runs in a fork-only copy of the multithreaded locker.
 
+`make dev` instead compiles the checkout's absolute `native/aerial-lock-auth`
+path into its plugin. The native-config fingerprint tracks that selection, so
+switching back to an installed build rebuilds the consumer with LIBEXECDIR.
+
 The helper receives service, username and PAM configuration directory in argv.
 It runs `pam_start_confdir`, `pam_authenticate`, then `pam_end`; it does not add
 account management. The existing `/etc/pam.d/aerial-lock` remains unchanged.

@@ -13,13 +13,23 @@ from private_runtime import PrivateRuntime
 source = Path(sys.argv[1]).resolve(strict=True)
 with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRuntime("wayland") as runtime:
     root = Path(d)
-    tree = root / "source"
+    tree = root / "source with spaces"
     shutil.copytree(source, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__", "*.so"))
 
     def make(prefix, *args):
         result = subprocess.run(["make", "-C", str(tree), "PREFIX=" + str(prefix), *args],
                                 capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stdout + result.stderr
+        return result
+
+    def helper_path(plugin, expected, unexpected):
+        # QStringLiteral stores the selected executable in native UTF-16.
+        # Check the final linked consumer, including optimized/LTO builds,
+        # rather than trusting a make variable or compiler command echo.
+        encoding = "utf-16-le" if sys.byteorder == "little" else "utf-16-be"
+        payload = plugin.read_bytes()
+        assert str(expected).encode(encoding) in payload, f"helper path missing from {plugin}: {expected}"
+        assert str(unexpected).encode(encoding) not in payload, f"stale helper path in {plugin}: {unexpected}"
 
     a, b = root / "a", root / "b"
     make(a, "clean")
@@ -66,6 +76,29 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
     listener.close()
     make(b)
     assert after == [p.stat().st_mtime_ns for p in objects], "unchanged configuration rebuilt native objects"
+
+    # The portable fixture must not engage a compositor lock. Stub only the
+    # copied dev launcher; the real make dev prerequisites/build still run.
+    (tree / "Scripts/dev/run.sh").write_text("#!/usr/bin/env bash\nprintf 'DEV_RUNNER_STUB\\n'\n")
+    plugin = tree / "native/qt-plugins/generic/libAerialLockSurfaceInput.so"
+    auth_object = tree / "build/auth-context.o"
+    installed_helper = b / "libexec/aerial-lock/aerial-lock-auth"
+    dev_helper = tree / "native/aerial-lock-auth"
+    helper_path(plugin, installed_helper, dev_helper)
+    installed_stamp = auth_object.stat().st_mtime_ns
+    assert "DEV_RUNNER_STUB" in make(b, "dev").stdout
+    helper_path(plugin, dev_helper, installed_helper)
+    dev_stamp = auth_object.stat().st_mtime_ns
+    assert dev_stamp > installed_stamp, "dev helper-path selection reused auth-context.o"
+    assert os.access(dev_helper, os.X_OK), "dev build omitted its helper"
+    make(b, "dev")
+    assert auth_object.stat().st_mtime_ns == dev_stamp, "unchanged dev selection rebuilt auth-context.o"
+    make(b, "install", "PAMDIR=" + str(root / "pam"))
+    helper_path(b / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so", installed_helper, dev_helper)
+    assert auth_object.stat().st_mtime_ns > dev_stamp, "install after dev reused auth-context.o"
+    print("AUTH_HELPER_PATH_PASS installed dev dev_noop installed_again source_path_spaces", flush=True)
+
+    after = [p.stat().st_mtime_ns for p in objects]
     make(b, "CXXFLAGS=-O1 -frecord-gcc-switches")
     assert all(p.stat().st_mtime_ns > old for p, old in zip(objects, after)), "changed flags reused native objects"
 
@@ -84,6 +117,8 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         assert commands == [f"ExecStart={bindir}/aerial-idle"], (label, commands)
         assert unit.stat().st_mode & 0o777 == 0o644, (label, oct(unit.stat().st_mode))
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
+        helper_path(stage / prefix.relative_to("/") / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so",
+                    prefix / "libexec/aerial-lock/aerial-lock-auth", dev_helper)
         print(f"UNIT_INSTALL_PASS {label} {commands[0]} mode=644", flush=True)
         make(prefix, "uninstall", *options)
         assert not any(p.is_file() for p in stage.rglob("*")), f"{label} uninstall left installed files"
@@ -111,4 +146,5 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == defaults["idle"]
-    print("BUILD_CONFIG_PASS paths_consumed_by_installed_supervisor_and_idle stable_noop flags_rebuilt unit_install_paths packaging_lto")
+    helper_path(plugin, installed_helper, dev_helper)
+    print("BUILD_CONFIG_PASS paths_consumed_by_installed_supervisor_and_idle auth_helper_dev_install stable_noop flags_rebuilt unit_install_paths packaging_lto")
