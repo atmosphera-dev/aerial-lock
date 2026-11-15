@@ -184,8 +184,12 @@ which can replace it. To remove this customization later, restore the saved
 script and shell settings, disable aerial-idle, and unmask/re-enable Omarchy's
 sleep-lock unit.
 
-Check Super+Ctrl+L, the menu's Lock action, inactivity and suspend/resume. Confirm
-1Password still locks if installed; aerial-lock itself does not lock it.
+Check Super+Ctrl+L, the menu's Lock action, inactivity and suspend/resume.
+
+1Password: `omarchy-system-lock` also locks 1Password, but the idle and suspend
+locks from aerial-idle start `aerial-lock` directly and don't run that script.
+If you rely on it, turn on 1Password's own automatic locking in its settings;
+aerial-lock itself does not lock 1Password.
 
 Sources: [`default/hypr/bindings/utilities.lua:144`][omarchy-key],
 [`bin/omarchy-system-lock:8-28`][omarchy-lock],
@@ -199,8 +203,9 @@ If your installation still has `~/.config/hypr/hypridle.conf` launching
 `omarchy-system-lock`/hyprlock, keep hypridle as the owner and leave aerial-idle
 disabled. Apply the [hypridle alternative](../README.md#alternatives-without-aerial-idle):
 replace `lock_cmd` and `before_sleep_cmd`, and change the lock listener's
-`on-timeout` to `loginctl lock-session`. Keep the existing `after_sleep_cmd` and
-`inhibit_sleep` values. Disable the separate screensaver listener if replacing
+`on-timeout` to `loginctl lock-session`. Keep the existing `after_sleep_cmd`,
+and set `inhibit_sleep = 3`: hypridle's automatic mode only waits for the lock
+before sleeping when the command contains `hyprlock`. Disable the separate screensaver listener if replacing
 it with aerial-lock's video background.
 
 Replace Super+Ctrl+L's command with `aerial-lock` in your personal bindings.
