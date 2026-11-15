@@ -162,7 +162,9 @@ the exact command and one-warning policy at the inactive transport boundary.
 stdout and stderr visibility while the child is alive, direct file-descriptor
 inheritance and supervisor RSS after finite output volumes. The child waits for
 the next command after acknowledging each completed write; neither liveness nor
-the memory assertion depends on a timed output burst.
+the memory assertion depends on a timed output burst. Both checks also run
+through a Python interpreter symlink whose path contains spaces, exercising
+the fixture wrapper's argument quoting.
 
 `idle-config` compares the native reader's `--print-config` output with the
 actual ConfigStore merge/schema methods in QML for shared fixtures: missing,

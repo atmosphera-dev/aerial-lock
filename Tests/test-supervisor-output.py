@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import subprocess
 import sys
@@ -54,8 +55,11 @@ class SupervisorOutput(unittest.TestCase):
         control.bind(str(runtime / "control"))
         control.listen(1)
         control.settimeout(15)
+        script = self.root / "child.py"
+        script.write_text(CHILD)
         child = self.root / "child"
-        child.write_text('#!' + sys.executable + '\n' + CHILD)
+        child.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable)
+                         + ' ' + shlex.quote(str(script)) + ' "$@"\n')
         child.chmod(0o700)
         self.bus = subprocess.Popen([
             "dbus-daemon", "--session", "--nofork", "--print-address=1",
@@ -126,6 +130,18 @@ class SupervisorOutput(unittest.TestCase):
                 with path.open("rb") as stream:
                     stream.seek(-80, os.SEEK_END)
                     self.assertIn(f"CHILD_{fd}_{size}\n".encode(), stream.read())
+
+
+class SpacedInterpreter(unittest.TestCase):
+    def test_output_fixture_with_interpreter_path_containing_spaces(self):
+        with tempfile.TemporaryDirectory(prefix="supervisor python ") as directory:
+            interpreter = Path(directory) / "python with spaces"
+            interpreter.symlink_to(sys.executable)
+            result = subprocess.run([
+                str(interpreter), str(Path(__file__).resolve()), str(SUPERVISOR),
+                "SupervisorOutput"], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Ran 2 tests", result.stderr)
 
 
 if __name__ == "__main__":
