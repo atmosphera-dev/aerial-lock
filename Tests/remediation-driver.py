@@ -23,6 +23,7 @@ import threading
 import time
 
 from owned_instance import OwnedInstance, session_identity
+from process_state import require_process
 
 
 def run(argv, env, **kwargs):
@@ -676,17 +677,21 @@ class Session:
             if self.locker.process.poll() is not None:
                 raise RuntimeError("resource locker exited before required duration/outcome")
             proc = Path(f"/proc/{self.locker.process.pid}")
-            status = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
-                      for line in (proc / "status").read_text().splitlines() if ":" in line}
+            with require_process(self.locker.process.pid):
+                status = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                          for line in (proc / "status").read_text().splitlines() if ":" in line}
+                limits = (proc / "limits").read_text().splitlines()
+                rollup = (proc / "smaps_rollup").read_text().splitlines()
+                fds = len(list((proc / "fd").iterdir()))
             memory = {line.split(":", 1)[0]: int(line.split()[1]) for line in Path("/proc/meminfo").read_text().splitlines()}
-            limits = (proc / "limits").read_text().splitlines()
             fd_limit = int(next(line.split()[3] for line in limits if line.startswith("Max open files")))
-            rollup = (proc / "smaps_rollup").read_text().splitlines()
             pss = int(next(line.split()[1] for line in rollup if line.startswith("Pss:"))) * 1024
             media = self.resource_media() or media
             rss = int(status["VmRSS"].split()[0]) * 1024
-            fds = len(list((proc / "fd").iterdir()))
-            frame_files = len(list(frames.iterdir())) if frames.is_dir() else 0
+            try:
+                frame_files = len(list(frames.iterdir()))
+            except FileNotFoundError:
+                frame_files = 0
             sample = {"elapsed_seconds": time.monotonic() - started, "rss_bytes": rss, "pss_bytes": pss,
                       "fds": fds, "fd_limit": fd_limit, "mem_available_kb": memory["MemAvailable"],
                       "mem_total_kb": memory["MemTotal"], "media": media, "frame_files": frame_files}

@@ -21,20 +21,11 @@ import subprocess
 import threading
 import time
 from types import SimpleNamespace
+from process_state import descendants, process_text
 
 spec = importlib.util.spec_from_file_location("driver", Path(__file__).with_name("remediation-driver.py"))
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
-
-
-def descendants(pid):
-    result = []
-    path = Path(f"/proc/{pid}/task/{pid}/children")
-    if path.exists():
-        for child in path.read_text().split():
-            result.append(int(child))
-            result.extend(descendants(int(child)))
-    return result
 
 
 def main():
@@ -119,7 +110,7 @@ def main():
         while True:
             exited = supervisor.process.poll() is not None  # sampled before the scan
             candidates = [pid for pid in descendants(supervisor.process.pid)
-                          if Path(f"/proc/{pid}/comm").read_text().strip() == "qs"]
+                          if process_text(pid, "comm").strip() == "qs"]
             if len(candidates) == 1 and hasattr(log, "process"):
                 qs_pid = candidates[0]
                 break
@@ -201,7 +192,7 @@ def main():
             log.wait_line(lambda line: "ext_session_lock_v1" in line and ".locked()" in line)
             supervisor.wait_line(lambda line: "state: locked" in line)
             children = [pid for pid in descendants(supervisor.process.pid)
-                        if Path(f"/proc/{pid}/comm").read_text().strip() == "qs"]
+                        if process_text(pid, "comm").strip() == "qs"]
             assert len(children) == 1
             qs_pid = children[0]
             if name == "release-signal":
@@ -303,7 +294,7 @@ def main():
                     return None
                 pid = int(result.stdout.split()[1])
                 children = [child for child in descendants(pid)
-                            if Path(f"/proc/{child}/comm").read_text().strip() == "qs"]
+                            if process_text(child, "comm").strip() == "qs"]
                 if children:
                     qs_pid = children[0]
                 return pid

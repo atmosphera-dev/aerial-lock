@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from private_runtime import PrivateRuntime, assert_socket_paths
+from process_state import require_process
 
 supervisor = Path(sys.argv[1]).resolve(strict=True)
 terminal_probe = Path(sys.argv[2]).resolve(strict=True) if len(sys.argv) > 2 else None
@@ -155,9 +156,12 @@ while True:
             duplicate = subprocess.Popen([str(supervisor)], env=case_env, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True)
             processes.append(duplicate)
-            wait_for(lambda: (1 << (signal.SIGUSR1 - 1)) & int(next(
-                line.split()[1] for line in Path(f"/proc/{duplicate.pid}/status").read_text().splitlines()
-                if line.startswith("SigBlk:")), 16), "duplicate SIGUSR1 mask")
+            def signal_blocked():
+                with require_process(duplicate.pid):
+                    status = Path(f"/proc/{duplicate.pid}/status").read_text()
+                return (1 << (signal.SIGUSR1 - 1)) & int(next(
+                    line.split()[1] for line in status.splitlines() if line.startswith("SigBlk:")), 16)
+            wait_for(signal_blocked, "duplicate SIGUSR1 mask")
             duplicate.send_signal(signal.SIGUSR1)
             time.sleep(0.15)
             assert duplicate.poll() is None and process.poll() is None
