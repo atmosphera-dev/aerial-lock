@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from private_runtime import PrivateRuntime
+from process_state import process_exited, thread_children
 
 binary, supervisor, peer = (Path(p).resolve(strict=True) for p in sys.argv[1:4])
 source = Path(__file__).resolve().parent.parent
@@ -170,8 +171,8 @@ while not (p / "stop").exists():
         wait_for(lambda: self.state() == 's "locked"', "real supervisor locked")
 
     def no_children(self):
-        for task in Path(f"/proc/{self.idle.pid}/task").iterdir():
-            assert not (task / "children").read_text().strip(), "aerial-idle must have no children"
+        assert self.idle.poll() is None, "aerial-idle must still be running"
+        assert not thread_children(self.idle.pid), "aerial-idle must have no children"
 
     def release(self, via_idle=True):
         if via_idle:
@@ -194,10 +195,7 @@ while not (p / "stop").exists():
         # Detached supervisors are not children of the test; wait for their
         # actual process state (init may briefly retain a zombie).
         for launch in self.launches():
-            def stopped():
-                path = Path(f'/proc/{launch["pid"]}/stat')
-                return not path.exists() or path.read_text().split(") ", 1)[1].startswith("Z ")
-            wait_for(stopped, "owned detached supervisor exit")
+            wait_for(lambda: process_exited(launch["pid"]), "owned detached supervisor exit")
         self.send("quit")
         assert self.fake.wait(5) == 0
         for bus in self.buses:

@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 from private_runtime import PrivateRuntime
+from process_state import require_process
 
 SUPERVISOR = Path(sys.argv.pop(1)).resolve(strict=True)
 
@@ -113,7 +114,9 @@ class SupervisorOutput(unittest.TestCase):
 
     def test_supervisor_memory_does_not_scale_with_completed_output_volume(self):
         def rss():
-            for line in Path(f"/proc/{self.process.pid}/status").read_text().splitlines():
+            with require_process(self.process.pid):
+                status = Path(f"/proc/{self.process.pid}/status").read_text()
+            for line in status.splitlines():
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1]) * 1024
             self.fail("missing supervisor RSS")

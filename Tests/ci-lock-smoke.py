@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import sys
 import time
+from process_state import process_text
 
 spec = importlib.util.spec_from_file_location("remediation", Path(__file__).with_name("remediation-driver.py"))
 driver = importlib.util.module_from_spec(spec)
@@ -81,10 +82,10 @@ def session():
         locker.wait_line(lambda line: "lock requested -> engaged reason=compositor-confirmed" in line)
         locker.wait_line(lambda line: "ext_session_lock_v1" in line and ".locked()" in line)
         locker.wait_line(lambda line: "state: locked" in line)
-        children = Path(f"/proc/{locker.process.pid}/task/{locker.process.pid}/children").read_text().split()
+        children = process_text(locker.process.pid, f"task/{locker.process.pid}/children").split()
         assert len(children) == 1, "supervisor must own one real locker"
         child = children[0]
-        assert Path(f"/proc/{child}/comm").read_text().strip() == "qs"
+        assert process_text(child, "comm").strip() == "qs"
 
         def submit(value):
             key_env = env.copy()

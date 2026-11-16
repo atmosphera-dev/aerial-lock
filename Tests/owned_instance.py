@@ -9,6 +9,7 @@ import pwd
 import re
 import stat
 import uuid
+from process_state import process_entries, require_process
 
 
 def digest(path):
@@ -19,9 +20,10 @@ def digest(path):
 
 def process_identity(pid):
     process = Path("/proc") / str(pid)
-    return {"pid": int(pid), "uid": process.stat().st_uid,
-            "starttime": process.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19],
-            "executable": str(process.joinpath("exe").resolve(strict=True))}
+    with require_process(pid):
+        return {"pid": int(pid), "uid": process.stat().st_uid,
+                "starttime": process.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19],
+                "executable": str(process.joinpath("exe").resolve(strict=True))}
 
 
 def socket_identity(path, pid):
@@ -37,10 +39,10 @@ def socket_identity(path, pid):
     inodes = {row[6] for row in rows if len(row) == 8 and row[7] == str(path)
               and row[4] == "0001" and int(row[3], 16) & (1 << 16)}
     descriptors = set()
-    for descriptor in (Path("/proc") / str(pid) / "fd").iterdir():
+    for descriptor in process_entries(pid, "fd"):
         try:
             descriptors.add(os.readlink(descriptor))
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             pass
     if len(inodes) != 1 or "socket:[" + next(iter(inodes)) + "]" not in descriptors:
         raise RuntimeError("socket is not owned by recorded compositor: " + str(path))
@@ -58,13 +60,15 @@ def session_identity(pid, backend, runtime, wayland, ipc):
               "wayland": socket_identity(wayland, pid), "ipc": socket_identity(ipc, pid)}
     if backend == "niri-drm":
         process = Path("/proc") / str(pid)
-        if b"--session" not in process.joinpath("cmdline").read_bytes().split(b"\0"):
+        with require_process(pid):
+            command = process.joinpath("cmdline").read_bytes()
+        if b"--session" not in command.split(b"\0"):
             raise RuntimeError("native DRM lane requires the actual session compositor")
         devices = set()
-        for descriptor in process.joinpath("fd").iterdir():
+        for descriptor in process_entries(pid, "fd"):
             try:
                 target = os.readlink(descriptor)
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 continue
             if target.startswith("/dev/dri/card"):
                 devices.add(target)
