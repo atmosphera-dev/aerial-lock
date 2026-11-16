@@ -30,8 +30,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client acl
           test -c /dev/kvm
-          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
-          test -r /dev/kvm && test -w /dev/kvm
           mkdir -p .ci-vm/tmp .ci-vm/state
           df -h "$GITHUB_WORKSPACE"
           python3 - <<'PY'
@@ -56,6 +54,11 @@ jobs:
         env:
           TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
         run: |
+          # Device permissions can change between runner steps; acquire at use.
+          stat -c '%n mode=%a uid=%u gid=%g inode=%i' /dev/kvm
+          getfacl /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
           python3 Tests/vm/vm_platform.py build-image --config .ci-vm/config.json \
             --lock Tests/vm/image.lock.json --output-dir .ci-vm/image
           (cd .ci-vm/image && sha256sum -c SHA256SUMS)
@@ -67,6 +70,10 @@ jobs:
         env:
           TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
         run: |
+          stat -c '%n mode=%a uid=%u gid=%g inode=%i' /dev/kvm
+          getfacl /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
           python3 - <<'PY'
           import json, os
           from pathlib import Path

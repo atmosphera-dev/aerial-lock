@@ -332,6 +332,15 @@ class EvidenceExport(unittest.TestCase):
 
 
 class ReviewRegressions(unittest.TestCase):
+    def test_each_kvm_step_acquires_runner_device_access(self):
+        workflow = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
+        for name in ('Rebuild the locked Arch image', 'One nested niri unlock cycle'):
+            step = workflow.split('- name: ' + name, 1)[1].split('- name:', 1)[0]
+            grant = 'sudo setfacl -m "u:$(id -un):rw" /dev/kvm'
+            self.assertIn(grant, step)
+            self.assertLess(step.index(grant), step.index('python3 Tests/vm/vm_platform.py'))
+            self.assertIn('getfacl /dev/kvm', step)
+
     def test_workflow_deadlines_cover_workload_and_cleanup(self):
         workflow = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
         steps = dict(re.findall(r'- name: ([^\n]+)\n(?:[ \t]+#[^\n]*\n)*\s+timeout-minutes: (\d+)', workflow))
