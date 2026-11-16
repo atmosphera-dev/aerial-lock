@@ -444,6 +444,7 @@ class ShadowBackupRegression(unittest.TestCase):
                     image_sha256='image', source_freeze_identity='source', build_seconds=10)))
                 owned = SimpleNamespace(OwnedInstance=Mock(), digest=Mock(), session_identity=Mock())
                 with patch.dict(sys.modules, owned_instance=owned), \
+                        patch.object(guest.Path, 'home', return_value=root.parent), \
                         patch.object(guest.sys, 'path', list(sys.path)), \
                         patch.object(guest.importlib.util, 'spec_from_file_location', return_value=Mock()), \
                         patch.object(guest.importlib.util, 'module_from_spec', return_value=driver), \
