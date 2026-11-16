@@ -198,6 +198,84 @@ class DiskObservation(unittest.TestCase):
             self.assertEqual(meter.result()['minimum_free_bytes'], 600)
 
 
+class ProvisioningObservation(unittest.TestCase):
+    def test_exit_status_is_strictly_parsed_on_the_host(self):
+        for text, expected in [('running\n', None), ('0\n', 0), ('1\n', 1), ('255\n', 255)]:
+            self.assertEqual(platform.parse_provision_status(text), expected)
+        for text in ('', '0', '00\n', '-1\n', '256\n', ' 0\n', '0\n\n',
+                     '0\r\n', 'running', 'running\n0\n', 'unexpected\n'):
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, 'invalid provisioning status'):
+                platform.parse_provision_status(text)
+
+    def test_observers_use_only_sh_and_coreutils_without_python_or_sudo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            observed = root / 'observed file'
+            vm = platform.VM.__new__(platform.VM)
+            vm.execute = Mock(side_effect=AssertionError('no sudo/env wrapper during provisioning'))
+            calls = []
+            def ssh(argv, **kwargs):
+                calls.append(argv)
+                self.assertEqual(argv[:2], ['/bin/sh', '-c'])
+                # Real shell probe, but with no Python/sudo/env in PATH.
+                return subprocess.run([*argv[:-1], str(observed)], check=True,
+                    env=dict(os.environ, PATH=str(root / 'no-tools')), **kwargs)
+            vm.ssh = ssh
+            self.assertIsNone(vm.provision_status())
+            observed.write_text('0\n')
+            self.assertEqual(vm.provision_status(), 0)
+            observed.write_text('27\n')
+            self.assertEqual(vm.provision_status(), 27)
+            observed.write_text('progress while packages are replaced\n')
+            self.assertEqual(vm.provision_log(), observed.read_text())
+            for argv in calls:
+                self.assertNotRegex(argv[2], r'python|sudo|\benv\b')
+            vm.execute.assert_not_called()
+
+    def test_builder_waits_for_status_before_using_upgraded_guest_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / 'state'
+            state.mkdir()
+            vm = Mock()
+            vm.directory = state
+            vm.process.poll.return_value = 0
+            vm.provision_status.side_effect = [None, 0]
+            boundary = RuntimeError('stop at completed provisioning boundary')
+            def execute(argv, **kwargs):
+                self.assertEqual(vm.provision_status.call_count, 2)
+                self.assertEqual(argv[:2], ['/usr/bin/cloud-init', 'status'])
+                raise boundary
+            vm.execute.side_effect = execute
+            args = SimpleNamespace(lock=str(Path(__file__).parent / 'image.lock.json'),
+                                   resolve_lock=False, output_dir=str(root / 'output'))
+            with patch.object(platform, 'VM', return_value=vm), \
+                    patch.object(platform, 'download'), patch.object(platform.time, 'sleep'), \
+                    self.assertRaises(RuntimeError) as error:
+                platform.build_image(args, dict(storage=str(state), build_seconds=10))
+            self.assertIs(error.exception, boundary)
+            vm.stop.assert_called_once_with(force=True)
+
+    def test_exit_marker_is_published_by_rename_after_complete_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'bin').mkdir()
+            rename = root / 'bin/mv'
+            rename.write_text('#!/bin/sh\n'
+                'test -s "$2" && test ! -e "$3" || exit 90\n'
+                'printf renamed > "$TRACE_FILE"\n'
+                'exec /usr/bin/mv "$@"\n')
+            rename.chmod(0o755)
+            script = (Path(__file__).parent / 'provision.sh').read_text().split('cd "$root/provision"', 1)[0]
+            script = script.replace('root=/var/lib/aerial-ci', 'root=$FIXTURE_ROOT')
+            result = subprocess.run(['/bin/bash', '-c', script + '\nexit 23\n'],
+                env=dict(os.environ, PATH=str(root / 'bin') + ':/usr/bin',
+                         TRACE_FILE=str(root / 'trace'), FIXTURE_ROOT=str(root)))
+            self.assertEqual(result.returncode, 23)
+            self.assertEqual((root / 'provision.exit').read_text(), '23\n')
+            self.assertEqual((root / 'trace').read_text(), 'renamed')
+
+
 class FailureCustody(unittest.TestCase):
     def test_remote_failure_keeps_stderr_and_local_boot_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -235,7 +313,7 @@ class FailureCustody(unittest.TestCase):
             vm = Mock()
             vm.process.poll.return_value = None
             vm.directory = Path(directory)
-            vm.execute.side_effect = TimeoutError('secondary collection timeout')
+            vm.provision_log.side_effect = TimeoutError('secondary collection timeout')
             vm.stop.side_effect = RuntimeError('secondary stop error')
             primary = ValueError('primary failure')
             result = platform.preserve_failure(vm, Path(directory), primary)

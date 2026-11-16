@@ -104,6 +104,16 @@ def failure_details(error):
     return value
 
 
+def parse_provision_status(text):
+    if text == 'running\n':
+        return None
+    if re.fullmatch(r'(?:0|[1-9][0-9]{0,2})\n', text):
+        status = int(text)
+        if status <= 255:
+            return status
+    raise RuntimeError('invalid provisioning status: ' + repr(text))
+
+
 def export_vm_diagnostics(vm, output):
     # Private seeds/keys/disks are deliberately not part of this allowlist.
     for name in ('serial.log', 'qemu.log', 'ssh-errors.log', 'instance.json'):
@@ -339,6 +349,22 @@ class VM:
     def execute(self, argv, timeout=30):
         return self.ssh(['sudo', '-n', 'env', 'TMPDIR=/var/lib/aerial-ci/tmp', *argv],
                         timeout=timeout, capture_output=True, text=True).stdout
+
+    def provision_status(self):
+        # Python and sudo/env may be replaced by the transaction being watched.
+        # The status/log files are readable by this unprivileged SSH account.
+        text = self.ssh(['/bin/sh', '-c',
+            'export TMPDIR=/var/lib/aerial-ci/tmp; '
+            'if test -f "$1"; then exec /usr/bin/cat -- "$1"; else printf "running\\n"; fi',
+            'aerial-provision-status', '/var/lib/aerial-ci/provision.exit'],
+            capture_output=True, text=True).stdout
+        return parse_provision_status(text)
+
+    def provision_log(self):
+        return self.ssh(['/bin/sh', '-c',
+            'export TMPDIR=/var/lib/aerial-ci/tmp; exec /usr/bin/cat -- "$1"',
+            'aerial-provision-log', '/var/lib/aerial-ci/provision.log'],
+            capture_output=True, text=True).stdout
 
     def wait_ready(self):
         deadline = time.monotonic() + self.cfg['boot_seconds']
@@ -602,7 +628,7 @@ def preserve_failure(vm, output, error):
     failure = failure_details(error) | dict(cleanup_errors=[])
     if vm.process.poll() is None:
         try:
-            (output / 'provision.log').write_text(vm.execute(['/usr/bin/cat', '/var/lib/aerial-ci/provision.log']))
+            (output / 'provision.log').write_text(vm.provision_log())
         except Exception as cleanup_error:
             failure['cleanup_errors'].append(str(cleanup_error))
     try:
@@ -639,11 +665,10 @@ def build_image(args, cfg):
         vm.wait_ready()
         deadline = time.monotonic() + cfg['build_seconds']
         while time.monotonic() < deadline:
-            state = vm.execute(['/usr/bin/python3', '-c',
-                'from pathlib import Path; p=Path("/var/lib/aerial-ci/provision.exit"); print(p.read_text().strip() if p.exists() else "running")']).strip()
-            if state != 'running':
-                if state != '0':
-                    raise RuntimeError('image provisioning failed with exit ' + state)
+            state = vm.provision_status()
+            if state is not None:
+                if state != 0:
+                    raise RuntimeError('image provisioning failed with exit ' + str(state))
                 break
             time.sleep(5)
         else:
@@ -653,7 +678,7 @@ def build_image(args, cfg):
             raise RuntimeError('cloud-init did not finish cleanly: ' + str(cloud))
         vm.execute(['/usr/bin/cloud-init', 'schema', '--system'])
         resolved = json.loads(vm.execute(['/usr/bin/cat', '/var/lib/aerial-ci/resolved-lock.json']))
-        (output / 'provision.log').write_text(vm.execute(['/usr/bin/cat', '/var/lib/aerial-ci/provision.log']))
+        (output / 'provision.log').write_text(vm.provision_log())
         write_json(output / 'resolved-lock.json', resolved)
         if not args.resolve_lock and resolved != lock:
             raise RuntimeError('installed package or repository lock drift')

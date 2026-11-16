@@ -113,6 +113,12 @@ with `--resolve-lock` in the preparation VM. This writes a candidate
 the complete package/source change, then commit the candidate and run a normal
 locked rebuild. CI must never resolve/update pins automatically.
 
+While provisioning replaces packages, progress/exit and failure-log observers
+use unprivileged sh/coreutils reads, not Python or sudo/env. Exit records are
+published by atomic rename and strictly parsed on the host. Python-based
+cloud-init and inventory checks run before or after the package transaction,
+never as its progress poll.
+
 Outputs are the standalone compressed qcow2, SHA256SUMS and
 image-manifest.json (input, lock and tool hashes, sizes and preparation receipt).
 Rebuildable means the same locked software/provisioning, not identical random

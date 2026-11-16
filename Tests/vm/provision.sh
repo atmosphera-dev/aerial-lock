@@ -6,7 +6,13 @@ root=/var/lib/aerial-ci
 mkdir -p "$root/tmp"
 export TMPDIR="$root/tmp" MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2
 exec >"$root/provision.log" 2>&1
-trap 'printf "%s\n" "$?" > "$root/provision.exit"' EXIT
+# Publish only a complete record; a reader must never see an empty exit file.
+publish_exit() {
+    local status=$?
+    printf '%s\n' "$status" > "$root/provision.exit.pending"
+    mv -- "$root/provision.exit.pending" "$root/provision.exit"
+}
+trap publish_exit EXIT
 cd "$root/provision"
 snapshot=$(python3 -c 'import json; print(json.load(open("image.lock.json"))["snapshot"])')
 # Pacman, not this shell, expands the repository/architecture placeholders.
