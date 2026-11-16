@@ -8,6 +8,10 @@ on:
         type: choice
         options: [niri-smoke]
         default: niri-smoke
+      publish:
+        description: Publish the tested image (master only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,8 +19,8 @@ permissions:
 jobs:
   niri-smoke:
     runs-on: ubuntu-24.04
-    # Step budgets total 144 minutes, including bounded upload/summary cleanup.
-    timeout-minutes: 150
+    # Step budgets total 161 minutes, including opt-in image staging.
+    timeout-minutes: 180
     steps:
       - name: Checkout reviewed source
         timeout-minutes: 5
@@ -88,6 +92,29 @@ jobs:
             --image "$image" --sha256 "$expected" --source "$GITHUB_WORKSPACE" \
             --source-revision "$GITHUB_SHA" --group niri-smoke --results .ci-vm/results
 
+      - name: Prepare tested publication assets
+        if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
+        timeout-minutes: 2
+        run: |
+          python3 Tests/vm/publish_image.py prepare --image-dir .ci-vm/image \
+            --results .ci-vm/results --lock Tests/vm/image.lock.json
+
+      - name: Stage tested image on GitHub
+        if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
+        timeout-minutes: 15
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            .ci-vm/image/aerial-ci-arch-x86_64.qcow2
+            .ci-vm/image/SHA256SUMS
+            .ci-vm/image/image-manifest.json
+            .ci-vm/image/image.lock.json
+            .ci-vm/image/publication.json
+
       - name: Compact diagnostic results
         timeout-minutes: 10
         if: always()
@@ -124,3 +151,31 @@ jobs:
               stream.write(f'Image: `{value.get("image_sha256", "not built")}`\n\n')
               stream.write(f'Status: {value["status"]}; phase: {value.get("phase")}; exercised: {value.get("exercised", 0)}/1; result bytes: {total}\n')
           PY
+
+  publish-image:
+    needs: niri-smoke
+    if: ${{ inputs.publish && github.ref == 'refs/heads/master' && needs.niri-smoke.result == 'success' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout tested publisher
+        timeout-minutes: 5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download tested image
+        timeout-minutes: 15
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: publication
+
+      - name: Publish a non-Latest prerelease
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Tests/vm/publish_image.py publish --directory publication

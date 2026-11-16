@@ -14,6 +14,7 @@ import subprocess
 import sys
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
+from datetime import date, datetime, timezone
 
 spec = importlib.util.spec_from_file_location('aerial_vm_platform', Path(__file__).with_name('vm_platform.py'))
 platform = importlib.util.module_from_spec(spec)
@@ -21,6 +22,9 @@ spec.loader.exec_module(platform)
 guest_spec = importlib.util.spec_from_file_location('aerial_vm_guest', Path(__file__).with_name('guest.py'))
 guest = importlib.util.module_from_spec(guest_spec)
 guest_spec.loader.exec_module(guest)
+publish_spec = importlib.util.spec_from_file_location('aerial_image_publisher', Path(__file__).with_name('publish_image.py'))
+publisher = importlib.util.module_from_spec(publish_spec)
+publish_spec.loader.exec_module(publisher)
 
 
 class Channel:
@@ -421,7 +425,8 @@ class ReviewRegressions(unittest.TestCase):
 
     def test_workflow_deadlines_cover_workload_and_cleanup(self):
         workflow = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
-        steps = dict(re.findall(r'- name: ([^\n]+)\n(?:[ \t]+#[^\n]*\n)*\s+timeout-minutes: (\d+)', workflow))
+        producer = workflow.split('\n  publish-image:', 1)[0]
+        steps = dict(re.findall(r'- name: ([^\n]+)\n(?:[ \t]+(?:#[^\n]*|if:[^\n]*)\n)*\s+timeout-minutes: (\d+)', producer))
         deadlines = {key: int(re.search(key + r'=(\d+)', workflow)[1])
                      for key in ('boot_seconds', 'build_seconds', 'group_seconds', 'export_seconds')}
         # Include cloud-init/account/transfer/summary SSH calls and shutdown,
@@ -574,6 +579,133 @@ class ShadowBackupRegression(unittest.TestCase):
                     self.assertEqual(guest.run_group(request), 1)
                 self.assertEqual(len(restored), int(phase == 'after-backup'))
                 self.assertFalse(backup.exists())
+
+
+class ImagePublication(unittest.TestCase):
+    revision = '1' * 40
+
+    def fixture(self, root):
+        image, results = root / 'image', root / 'results'
+        image.mkdir()
+        results.mkdir()
+        (image / publisher.IMAGE).write_bytes(b'test image, never booted')
+        lock = root / 'lock.json'
+        lock.write_text('{}\n')
+        (image / 'image-manifest.json').write_text(json.dumps(dict(
+            image_sha256=platform.digest(image / publisher.IMAGE), lock_sha256=platform.digest(lock))))
+        value = dict(instance_uuid='owned', image_sha256=platform.digest(image / publisher.IMAGE),
+                     source_identity='2' * 64, source_revision=self.revision,
+                     status='PASS', group='niri-smoke', planned=1, exercised=1,
+                     no_surviving_locker=True, cycle=dict(exit=0, unlock_and_destroy=True, desktop_input=True))
+        (results / 'summary.json').write_text(json.dumps(value))
+        (results / 'instance.json').write_text('{"uuid":"owned","qemu_exit":0}')
+        return image, results, lock
+
+    def prepare(self, root):
+        image, results, lock = self.fixture(root)
+        publisher.prepare_assets(image, results, lock, self.revision, 'https://github.com/test/repo/actions/runs/1')
+        return image
+
+    def test_publish_false_is_default_and_write_job_is_master_and_success_only(self):
+        text = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
+        producer, release = text.split('\n  publish-image:', 1)
+        self.assertRegex(text, r'publish:\n\s+description:[^\n]+\n\s+type: boolean\n\s+default: false')
+        self.assertIn('permissions:\n  contents: read', producer)
+        self.assertNotIn('contents: write', producer)
+        self.assertNotIn('GH_TOKEN:', producer)
+        self.assertEqual(text.count('contents: write'), 1)
+        condition = release.split('if: ', 1)[1].splitlines()[0]
+        for required in ('inputs.publish', "github.ref == 'refs/heads/master'", "needs.niri-smoke.result == 'success'"):
+            self.assertIn(required, condition)
+        for name in ('Prepare tested publication assets', 'Stage tested image on GitHub'):
+            step = producer.split('- name: ' + name, 1)[1].split('- name:', 1)[0]
+            self.assertIn("inputs.publish && github.ref == 'refs/heads/master'", step)
+        budgets = [int(n) for n in re.findall(r'        timeout-minutes: (\d+)', release)]
+        self.assertGreaterEqual(int(re.search(r'    timeout-minutes: (\d+)', release)[1]), sum(budgets))
+
+    def test_non_master_publication_refuses_before_filesystem_or_network_access(self):
+        for ref in ('refs/heads/test/ci-image-publish', 'refs/heads/fix/other', 'refs/tags/v1', None):
+            with self.subTest(ref=ref), \
+                    patch.object(publisher, 'validate_assets', side_effect=AssertionError('read before ref gate')) as validate, \
+                    patch.object(publisher, 'run_gh', side_effect=AssertionError('network before ref gate')) as gh:
+                with self.assertRaisesRegex(RuntimeError, 'requires refs/heads/master'):
+                    publisher.publish('must-not-read', ref, 'test/repo', self.revision)
+                validate.assert_not_called()
+                gh.assert_not_called()
+
+    def test_prepare_binds_image_lock_result_and_source_in_checksums(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = self.prepare(Path(directory))
+            value = publisher.validate_assets(image, self.revision)
+            self.assertEqual(value['source_revision'], self.revision)
+            self.assertEqual(value['lock_sha256'], platform.digest(image / 'image.lock.json'))
+            self.assertEqual({line.split('  ')[1] for line in (image / 'SHA256SUMS').read_text().splitlines()}, set(publisher.ASSETS))
+
+    def test_failed_incomplete_or_foreign_smoke_is_not_publishable(self):
+        for change in ({'status': 'BLOCKED'}, {'exercised': 0}, {'no_surviving_locker': False},
+                       {'cycle': dict(exit=0, unlock_and_destroy=True, desktop_input=False)},
+                       {'source_revision': '3' * 40}, {'image_sha256': '0' * 64}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                image, results, lock = self.fixture(Path(directory))
+                path = results / 'summary.json'
+                path.write_text(json.dumps(json.loads(path.read_text()) | change))
+                with self.assertRaises(RuntimeError):
+                    publisher.prepare_assets(image, results, lock, self.revision, 'proof')
+
+    def test_lock_drift_and_abnormal_disposal_refuse_staging(self):
+        for change in ('lock', 'stop'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                image, results, lock = self.fixture(Path(directory))
+                if change == 'lock':
+                    lock.write_text('{"changed":true}')
+                else:
+                    (results / 'instance.json').write_text('{"uuid":"owned","qemu_exit":0,"forced_shutdown":true}')
+                with self.assertRaises(RuntimeError):
+                    publisher.prepare_assets(image, results, lock, self.revision, 'proof')
+
+    def test_transfer_tampering_prevents_all_github_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = self.prepare(Path(directory))
+            (image / publisher.IMAGE).write_bytes(b'changed in transfer')
+            with patch.object(publisher, 'run_gh') as gh, self.assertRaisesRegex(RuntimeError, 'checksum'):
+                publisher.publish(image, 'refs/heads/master', 'test/repo', self.revision)
+            gh.assert_not_called()
+
+    def test_existing_tags_and_releases_get_a_new_suffix_not_an_overwrite(self):
+        with patch.object(publisher, 'existing_names', return_value={'ci-image-20261116', 'ci-image-20261116-1'}), \
+                patch.object(publisher, 'run_gh', return_value=SimpleNamespace(returncode=0)) as gh:
+            self.assertEqual(publisher.reserve_tag('test/repo', self.revision, date(2026, 11, 16)), 'ci-image-20261116-2')
+        self.assertIn('ref=refs/tags/ci-image-20261116-2', gh.call_args.args[0])
+        self.assertIn('sha=' + self.revision, gh.call_args.args[0])
+
+    def test_concurrent_tag_reservation_selects_next_unused_name(self):
+        with patch.object(publisher, 'existing_names', side_effect=[set(), {'ci-image-20261116'}]), \
+                patch.object(publisher, 'run_gh', side_effect=[SimpleNamespace(returncode=1, stderr='exists'), SimpleNamespace(returncode=0)]) as gh:
+            self.assertEqual(publisher.reserve_tag('test/repo', self.revision, date(2026, 11, 16)), 'ci-image-20261116-1')
+            self.assertEqual(gh.call_count, 2)
+
+    def test_non_collision_api_error_is_not_hidden_as_a_tag_retry(self):
+        with patch.object(publisher, 'existing_names', return_value=set()), \
+                patch.object(publisher, 'run_gh', return_value=SimpleNamespace(returncode=1, stderr='denied')) as gh:
+            with self.assertRaisesRegex(RuntimeError, 'reservation failed: denied'):
+                publisher.reserve_tag('test/repo', self.revision, date(2026, 11, 16))
+            self.assertEqual(gh.call_count, 1)
+
+    def test_release_is_prerelease_never_latest_with_utc_date_and_fixed_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = self.prepare(Path(directory))
+            with patch.object(publisher, 'datetime') as clock, \
+                    patch.object(publisher, 'reserve_tag', return_value='ci-image-20261116') as reserve, \
+                    patch.object(publisher, 'run_gh', return_value=SimpleNamespace(returncode=0)) as gh, \
+                    patch('sys.stdout'):
+                clock.now.return_value = datetime(2026, 11, 16, tzinfo=timezone.utc)
+                publisher.publish(image, 'refs/heads/master', 'test/repo', self.revision)
+                clock.now.assert_called_once_with(timezone.utc)
+                reserve.assert_called_once_with('test/repo', self.revision, date(2026, 11, 16))
+                argv = gh.call_args.args[0]
+                for flag in ('--prerelease', '--latest=false', '--verify-tag'):
+                    self.assertIn(flag, argv)
+                self.assertEqual(argv[-5:], [str(image / name) for name in (*publisher.ASSETS, 'SHA256SUMS')])
 
 
 if __name__ == '__main__':

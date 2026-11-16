@@ -135,23 +135,73 @@ with per-file evidence hashes. PASS requires the exact expected consumer
 outcomes and source/image/instance identity. Missing, timed-out, BLOCKED,
 malformed or stale results are not passes. Credentials are generated only in
 the guest, sent on stdin, restored and removed, and checked before export.
-No disks, seed, keys, shadow backup, raw input protocol, video or build archive
-belong in Actions artifacts. Never upload the whole workspace.
+Ordinary diagnostic artifacts contain no disks, seed, keys, shadow backup,
+raw input protocol, video or build archive. Never upload the whole workspace.
 
-The initial workflow rebuilds before its one smoke group, so it does not
-depend on an image asset that has not been published yet. Durable images are
-separate checksum-bearing GitHub prerelease assets, for example
-`ci-image-YYYYMMDD`, explicitly not Latest and separate from product versions.
-The maintainer publishes after review/merge, never overwrites assets/tags,
-and keeps each asset under GitHub's 2 GiB limit. Consumers must obtain the
-expected digest from the approved release descriptor, not hash a download
-and treat its own hash as authentication. A future workflow can pin that
-release URL/digest; unavailable images must not cause a silent fallback.
+### Opt-in publication
+
+The manual workflow always rebuilds and exercises its image. Its boolean
+`publish` input defaults to false. Only `publish=true` on `master`, after the
+rebuild and niri smoke succeed, stages that exact image for a separate publish
+job. Both the job condition and publisher code refuse non-master refs. Never
+dispatch a branch with publish=true. Build/smoke permissions remain contents:
+read; contents: write and GH_TOKEN exist only in the publish job/step.
+
+The master publishing path uses one explicit, one-day GitHub transfer artifact
+containing the qcow2, SHA256SUMS, image.lock.json, image-manifest.json and
+publication.json. This is the only image-artifact exception; it needs about
+2 GiB of temporary Actions storage headroom. No image passes through Ark.
+The receiving job rechecks every checksum and the tested source/image/lock
+identities before any GitHub write. Ordinary runs do not stage this artifact.
+
+The publisher reserves an unused tag at the tested source commit, named
+`ci-image-YYYYMMDD` using the UTC date. Existing tags or releases cause `-1`,
+`-2`, etc. suffixes; a concurrent reservation selects another unused name.
+It creates a prerelease with Latest explicitly disabled, separate from product
+versions. It never moves a tag or overwrites an asset. A failed publication
+may leave its reserved tag/draft for inspection; a later attempt uses a new
+name, not a destructive retry. Each release asset stays below 2 GiB.
+The short release note records source, image/lock hashes and the proof-run URL.
+
+### Consume a published image without rebuilding
+
+Inside your authorized disposable execution VM (including a local Ark fork),
+start from the repository root and choose an exact reviewed release tag:
+
+```sh
+export TMPDIR="$HOME/aerial-work/tmp"
+mkdir -p "$TMPDIR"
+source="$PWD"
+tag=ci-image-YYYYMMDD # Replace with the exact approved tag, including its suffix.
+directory="$HOME/aerial-work/vm/$tag"
+mkdir -p "$directory"
+cd "$directory"
+for asset in aerial-ci-arch-x86_64.qcow2 SHA256SUMS image.lock.json image-manifest.json publication.json; do
+  curl --fail --location "https://github.com/atmosphera-dev/aerial-lock/releases/download/$tag/$asset" -o "$asset"
+done
+sha256sum -c SHA256SUMS
+expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1 }' SHA256SUMS)
+python3 "$source/Tests/vm/vm_platform.py" run-group \
+  --config "$HOME/aerial-work/test.json" --image "$directory/aerial-ci-arch-x86_64.qcow2" \
+  --sha256 "$expected" --source "$source" --group niri-smoke \
+  --results "$HOME/aerial-work/results/$tag-niri-smoke"
+```
+
+The test configuration is the same explicit fresh-instance configuration
+documented above. Review publication.json/image.lock.json for the source and
+software identity. Obtain the expected digest from the approved release
+descriptor/checksum file, not by hashing a downloaded image and treating its
+own hash as authentication. Never use a moving Latest URL. A future workflow
+can replace its rebuild step with this exact-tag/digest download and retain
+the existing run-group command. This workflow does not yet offer prebuilt-image
+inputs; unavailable images must fail, not silently fall back to another image.
 
 GitHub constraints are 20 Free concurrent jobs, six hours/job, 256 matrix jobs,
 500 MB artifact storage, 10 GB cache/repository, and standard public Linux
 4 vCPU/16 GB/approximately 14 GB disk. This workflow uses one VM at a time,
 two vCPUs, explicit deadlines, three-day compact artifacts and no image cache.
+Opt-in master publication additionally needs the one-day image transfer quota
+above; release assets are durable and separate from Actions artifact storage.
 Measure before claiming it fits. Blacksmith is a later option only if actual
 GitHub limits obstruct the workload, not the initial provider.
 
