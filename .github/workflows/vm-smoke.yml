@@ -15,9 +15,11 @@ permissions:
 jobs:
   niri-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # Step budgets total 144 minutes, including bounded upload/summary cleanup.
+    timeout-minutes: 150
     steps:
       - name: Checkout reviewed source
+        timeout-minutes: 5
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -60,7 +62,8 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
 
       - name: One nested niri unlock cycle
-        timeout-minutes: 50
+        # Boot, command, SSH/setup, export and stop budgets total 3780s.
+        timeout-minutes: 65
         env:
           TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
         run: |
@@ -79,6 +82,7 @@ jobs:
             --source-revision "$GITHUB_SHA" --group niri-smoke --results .ci-vm/results
 
       - name: Compact diagnostic results
+        timeout-minutes: 10
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -94,6 +98,7 @@ jobs:
             .ci-vm/image/disk-usage.json
 
       - name: Report measured result
+        timeout-minutes: 2
         if: always()
         run: |
           python3 - <<'PY'

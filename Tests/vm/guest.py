@@ -99,6 +99,7 @@ def run_group(request_path):
     service = 'aerial-ci-' + request['uuid'].split('-')[0]
     pam_path = '/etc/pam.d/' + service
     fixture_ready = False
+    backup_ready = False
     start = time.monotonic()
     try:
         with (root / 'results/build.log').open('w') as log:
@@ -144,6 +145,7 @@ def run_group(request_path):
             raise RuntimeError('outer Sway has no active output')
         subprocess.run(['sudo', '-n', 'cp', '--preserve=mode,ownership,timestamps', '/etc/shadow', str(backup)], check=True, timeout=10)
         subprocess.run(['sudo', '-n', 'chmod', '600', str(backup)], check=True, timeout=10)
+        backup_ready = True
         password = secrets.token_hex(16)
         user = pwd.getpwuid(os.getuid()).pw_name
         subprocess.run(['sudo', '-n', 'chpasswd'], input=f'{user}:{password}\n', text=True, check=True, timeout=10)
@@ -200,9 +202,10 @@ def run_group(request_path):
         summary.update(status='BLOCKED' if (root / 'run/BLOCKED.json').exists() else 'FAIL',
                        error=type(error).__name__, reason=str(error))
     finally:
-        if backup.exists():
+        if backup_ready:
             subprocess.run(['sudo', '-n', 'cp', '--preserve=mode,ownership,timestamps', str(backup), '/etc/shadow'], check=True, timeout=10)
             subprocess.run(['sudo', '-n', 'cmp', '-s', str(backup), '/etc/shadow'], check=True, timeout=10)
+        if backup.exists():
             subprocess.run(['sudo', '-n', 'rm', '-f', str(backup)], check=True, timeout=10)
         if fixture_ready:
             subprocess.run(['sudo', '-n', 'rm', '-f', pam_path], check=True, timeout=10)

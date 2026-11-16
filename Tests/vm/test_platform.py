@@ -3,7 +3,9 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import re
 import tempfile
 import tarfile
 import time
@@ -295,6 +297,163 @@ class EvidenceExport(unittest.TestCase):
             (root / 'results/summary.json').write_text('{"export_forbidden":true}')
             with self.assertRaisesRegex(RuntimeError, 'credential'):
                 guest.export_results(root)
+
+
+class ReviewRegressions(unittest.TestCase):
+    def test_workflow_deadlines_cover_workload_and_cleanup(self):
+        workflow = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
+        steps = dict(re.findall(r'- name: ([^\n]+)\n(?:[ \t]+#[^\n]*\n)*\s+timeout-minutes: (\d+)', workflow))
+        deadlines = {key: int(re.search(key + r'=(\d+)', workflow)[1])
+                     for key in ('boot_seconds', 'build_seconds', 'group_seconds', 'export_seconds')}
+        # Include cloud-init/account/transfer/summary SSH calls and shutdown,
+        # not just the guest workload. Leave additional setup margin in the step.
+        chain = sum(deadlines.values()) + 60 + 450 + 150 + 60
+        self.assertGreaterEqual(int(steps['One nested niri unlock cycle']) * 60, chain)
+        job = int(re.search(r'    timeout-minutes: (\d+)', workflow)[1])
+        self.assertGreaterEqual(job, sum(map(int, steps.values())))
+        self.assertIn('Compact diagnostic results', steps)
+        self.assertIn('Report measured result', steps)
+
+    def test_initial_receipt_failure_reaps_qemu_and_preserves_primary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            key = root / 'client'
+            key.write_text('test-only placeholder')
+            key.chmod(0o600)
+            key.with_suffix('.pub').write_text('ssh-ed25519 placeholder')
+            cfg = dict(instance='owned', host='test', user='tester', ssh_port=2200,
+                       ssh_key=str(key), qemu='qemu-system-x86_64', cpus=2, memory_mib=2048)
+            process = Mock(pid=123)
+            primary = OSError('initial receipt full')
+            with patch.object(platform.os, 'access', return_value=True), \
+                    patch.object(platform, 'command'), \
+                    patch.object(platform.subprocess, 'Popen', return_value=process) as launch, \
+                    patch.object(platform.VM, 'save', side_effect=primary):
+                with self.assertRaises(OSError) as error:
+                    platform.VM(cfg, root / 'image', root / 'instance')
+            self.assertIs(error.exception, primary)
+            process.kill.assert_called_once()
+            process.wait.assert_called_once_with(timeout=5)
+            self.assertTrue(launch.call_args.kwargs['stdout'].closed)
+
+    def group_fixture(self, root):
+        source = root / 'source'
+        source.mkdir()
+        (source / '.gitignore').touch()
+        (source / 'file').write_text('source')
+        image = root / 'image'
+        image.write_bytes(b'image')
+        instance = root / 'instance'
+        instance.mkdir()
+        cfg = dict(guest_root=str(root / 'inner'), storage=str(root), user='tester',
+                   host='test', build_seconds=30, group_seconds=30, export_seconds=10)
+        args = SimpleNamespace(image=str(image), sha256=platform.digest(image), source=str(source),
+                               results=str(root / 'results'), source_revision=None)
+        vm = Mock(spec=['name', 'uuid', 'mac', 'receipt', 'directory', 'wait_ready', 'ssh', 'stop', 'execute'])
+        vm.name, vm.uuid, vm.mac = 'owned', 'owned-uuid', '52:54:00:00:00:01'
+        vm.directory, vm.receipt = instance, dict(phase='starting', qemu_exit=0)
+        return source, cfg, args, vm
+
+    def test_receipt_failures_cannot_skip_disposal_or_replace_primary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, cfg, args, vm = self.group_fixture(Path(directory))
+            primary = RuntimeError('original boot failure')
+            vm.wait_ready.side_effect = primary
+            vm.ssh.side_effect = TimeoutError('secondary export failure')
+            with patch.object(platform, 'VM', return_value=vm), \
+                    patch.object(platform, 'write_json', side_effect=OSError('results full')), \
+                    patch.object(platform.sys, 'stderr'):
+                with self.assertRaises(Exception) as error:
+                    platform.run_group(args, cfg)
+            vm.stop.assert_called_once_with(force=True)
+            self.assertIs(error.exception, primary)
+
+    def test_source_transfer_preserves_modes_under_restrictive_guest_umask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, cfg, args, vm = self.group_fixture(root)
+            (source / 'file').chmod(0o664)
+            vm.execute.return_value = '{"status":"done"}'
+            reached_transfer = []
+            def ssh(argv, **kwargs):
+                if argv[0] == 'python3':
+                    return SimpleNamespace(stdout=json.dumps(dict(user='tester', home=str(root))))
+                if argv[:3] == ['sudo', '-n', 'cat']:
+                    return SimpleNamespace(stdout=vm.uuid)
+                if argv[0] == 'mkdir':
+                    for path in (argv[2:] if argv[1] == '-p' else argv[-1:]):
+                        Path(path).mkdir(parents=True, exist_ok=True)
+                    return
+                if argv[0] == 'tar':
+                    old = os.umask(0o077)
+                    try:
+                        subprocess.run(argv, stdin=kwargs['stdin'], check=True)
+                    finally:
+                        os.umask(old)
+                    reached_transfer.append(True)
+                    raise RuntimeError('stop after transfer probe')
+                raise RuntimeError('no guest workload in this contract')
+            vm.ssh.side_effect = ssh
+            with patch.object(platform, 'VM', return_value=vm), self.assertRaises(RuntimeError):
+                platform.run_group(args, cfg)
+            self.assertTrue(reached_transfer)
+            transferred = Path(cfg['guest_root']) / 'src/aerial-lock/file'
+            self.assertEqual(transferred.stat().st_mode, (source / 'file').stat().st_mode)
+
+
+class ShadowBackupRegression(unittest.TestCase):
+    def test_partial_or_unsecured_backup_is_never_restored(self):
+        for phase in ('early', 'copy', 'permissions', 'after-backup'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / 'guest'
+                source = root / 'src/aerial-lock'
+                source.mkdir(parents=True)
+                backup = root / 'run/shadow-backup'
+                restored = []
+                driver = Mock()
+                driver.ObservedProcess.return_value.process.pid = 123
+                def compositor(*_):
+                    (root / 'runtime/wayland-0').touch()
+                    return driver.ObservedProcess.return_value
+                driver.ObservedProcess.side_effect = compositor
+                def run(argv, **_):
+                    if phase == 'early' and argv[0] == 'make':
+                        raise RuntimeError('early build failure')
+                    if argv[:3] == ['sudo', '-n', 'cp']:
+                        if argv[-1] == str(backup):
+                            backup.write_text('simulated backup')
+                            if phase == 'copy':
+                                raise OSError('partial backup')
+                        else:
+                            restored.append(argv)
+                    if argv[:3] == ['sudo', '-n', 'chmod'] and phase == 'permissions':
+                        raise OSError('unsecured backup')
+                    if argv[:3] == ['sudo', '-n', 'chpasswd']:
+                        raise RuntimeError('after backup, before fixture')
+                    if argv[:4] == ['sudo', '-n', 'rm', '-f']:
+                        backup.unlink(missing_ok=True)
+                    return SimpleNamespace(returncode=0)
+                def output(argv, **_):
+                    if argv[0] == 'getcap':
+                        return ''
+                    if argv[0] == 'swaymsg':
+                        return '[{"active":true,"name":"HEADLESS-1"}]'
+                    return 'niri pinned-version\n'
+                request = root / 'request.json'
+                request.write_text(json.dumps(dict(root=str(root), source_files={}, uuid='owned',
+                    image_sha256='image', source_freeze_identity='source', build_seconds=10)))
+                owned = SimpleNamespace(OwnedInstance=Mock(), digest=Mock(), session_identity=Mock())
+                with patch.dict(sys.modules, owned_instance=owned), \
+                        patch.object(guest.sys, 'path', list(sys.path)), \
+                        patch.object(guest.importlib.util, 'spec_from_file_location', return_value=Mock()), \
+                        patch.object(guest.importlib.util, 'module_from_spec', return_value=driver), \
+                        patch.object(guest, 'digest', return_value='same-helper'), \
+                        patch.object(guest.Path, 'is_socket', return_value=True), \
+                        patch.object(guest.subprocess, 'run', side_effect=run), \
+                        patch.object(guest.subprocess, 'check_output', side_effect=output):
+                    self.assertEqual(guest.run_group(request), 1)
+                self.assertEqual(len(restored), int(phase == 'after-backup'))
+                self.assertFalse(backup.exists())
 
 
 if __name__ == '__main__':

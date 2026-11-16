@@ -296,9 +296,23 @@ class VM:
         self.receipt = dict(schema=1, domain=self.name, uuid=self.uuid, mac=self.mac, host=cfg['host'],
             argv=argv, directory=str(self.directory), ssh_port=port, phase='starting')
         self.log = (self.directory / 'qemu.log').open('wb')
-        self.process = subprocess.Popen(argv, stdout=self.log, stderr=subprocess.STDOUT)
-        self.receipt['pid'] = self.process.pid
-        self.save()
+        try:
+            self.process = subprocess.Popen(argv, stdout=self.log, stderr=subprocess.STDOUT)
+            self.receipt['pid'] = self.process.pid
+            self.save()
+        except BaseException:
+            # Ownership cannot escape the constructor until its receipt exists.
+            # Do not use stop(): it writes the same failed receipt filesystem.
+            if hasattr(self, 'process'):
+                try:
+                    try:
+                        self.process.kill()
+                    finally:
+                        self.process.wait(timeout=5)
+                except Exception as error:
+                    print('INITIAL_VM_DISPOSAL_ERROR ' + str(error), file=sys.stderr)
+            self.log.close()
+            raise
 
     def save(self):
         write_json(self.directory / 'instance.json', self.receipt)
@@ -445,6 +459,15 @@ def run_group(args, cfg):
         group_seconds=cfg['group_seconds'], source_revision=args.source_revision)
     primary = None
     summary = None
+
+    def retain(name, value):
+        nonlocal primary
+        try:
+            write_json(results / name, value)
+        except Exception as error:
+            primary = primary or error
+            print('RESULT_RECEIPT_ERROR ' + str(error), file=sys.stderr)
+
     try:
         vm.wait_ready()
         cloud = json.loads(vm.execute(['/usr/bin/cloud-init', 'status', '--wait', '--format', 'json'], timeout=60))
@@ -468,7 +491,7 @@ def run_group(args, cfg):
             for name in inventory:
                 stream.add(source / name, arcname=name, recursive=False)
         with archive.open('rb') as stream:
-            vm.ssh(['tar', '--no-same-owner', '-xf', '-', '-C', str(root / 'src/aerial-lock')], timeout=60, stdin=stream)
+            vm.ssh(['tar', '--no-same-owner', '--same-permissions', '-xf', '-', '-C', str(root / 'src/aerial-lock')], timeout=60, stdin=stream)
         vm.ssh(['tee', str(root / 'run/request.json')], input=json.dumps(request).encode(), stdout=subprocess.DEVNULL)
         with (results / 'guest-command.log').open('wb') as log:
             vm.ssh(['env', 'TMPDIR=' + str(root / 'tmp'), 'dbus-run-session', '--', 'python3',
@@ -495,36 +518,43 @@ def run_group(args, cfg):
                 write_json(results / 'summary.json', summary)
             except Exception:
                 pass  # absent/untrusted summary remains an infrastructure failure
-        write_json(results / 'failure.json', dict(status=summary.get('status') if summary else 'INFRA_ERROR', error=type(error).__name__, reason=str(error),
-                                                instance_uuid=vm.uuid, phase=vm.receipt['phase']))
+        retain('failure.json', dict(status=summary.get('status') if summary else 'INFRA_ERROR', error=type(error).__name__, reason=str(error),
+                                   instance_uuid=vm.uuid, phase=vm.receipt['phase']))
     finally:
         # This independent SSH request still runs when the group process is
         # waiting behind BLOCKED. Only sanitized results are exported.
         try:
-            root = Path(cfg['guest_root'])
-            with (results / 'diagnostics.tar.gz').open('wb') as stream:
-                vm.ssh(['env', 'TMPDIR=' + str(root / 'tmp'), 'python3',
-                        str(root / 'src/aerial-lock/Tests/vm/guest.py'), 'export', str(root)],
-                       timeout=cfg['export_seconds'], stdout=stream, stderr=subprocess.DEVNULL)
-        except Exception as error:
-            write_json(results / 'export-error.json', dict(error=str(error)))
-            primary = primary or error
-        try:
-            vm.stop(force=True)
-            if vm.receipt.get('forced_shutdown') or vm.receipt.get('qemu_exit') != 0:
-                raise RuntimeError('test VM required abnormal disposal; outcome retained but infrastructure failed')
-        except Exception as error:
-            write_json(results / 'stop-error.json', dict(error=str(error)))
-            primary = primary or error
-        write_json(results / 'instance.json', vm.receipt)
-        if primary is not None and summary is not None and summary.get('status') == 'PASS':
-            summary.update(outcome_status='PASS', status='INFRA_ERROR', phase='export-or-stop')
-            write_json(results / 'summary.json', summary)
+            try:
+                root = Path(cfg['guest_root'])
+                with (results / 'diagnostics.tar.gz').open('wb') as stream:
+                    vm.ssh(['env', 'TMPDIR=' + str(root / 'tmp'), 'python3',
+                            str(root / 'src/aerial-lock/Tests/vm/guest.py'), 'export', str(root)],
+                           timeout=cfg['export_seconds'], stdout=stream, stderr=subprocess.DEVNULL)
+            except Exception as error:
+                primary = primary or error
+                retain('export-error.json', dict(error=str(error)))
+        finally:
+            # Disk-full/error reporting must never bypass owned VM disposal.
+            try:
+                vm.stop(force=True)
+                if vm.receipt.get('forced_shutdown') or vm.receipt.get('qemu_exit') != 0:
+                    raise RuntimeError('test VM required abnormal disposal; outcome retained but infrastructure failed')
+            except Exception as error:
+                primary = primary or error
+                retain('stop-error.json', dict(error=str(error)))
+        retain('instance.json', vm.receipt)
         suite = ET.Element('testsuite', name='niri-smoke', tests='1', failures='1' if primary else '0')
         cell = ET.SubElement(suite, 'testcase', name='niri/unlock/1', classname='aerial-lock.vm')
         if primary:
             ET.SubElement(cell, 'failure', message=summary.get('status', 'INFRA_ERROR') if summary else 'INFRA_ERROR').text = str(primary)
-        ET.ElementTree(suite).write(results / 'junit.xml', encoding='utf-8', xml_declaration=True)
+        try:
+            ET.ElementTree(suite).write(results / 'junit.xml', encoding='utf-8', xml_declaration=True)
+        except Exception as error:
+            primary = primary or error
+            print('RESULT_RECEIPT_ERROR ' + str(error), file=sys.stderr)
+        if primary is not None and summary is not None and summary.get('status') == 'PASS':
+            summary.update(outcome_status='PASS', status='INFRA_ERROR', phase='export-or-stop')
+            retain('summary.json', summary)
     if primary is not None:
         raise primary
     print('NIRI_SMOKE_PASS ' + str(results), flush=True)
