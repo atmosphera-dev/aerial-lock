@@ -38,6 +38,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -267,13 +269,9 @@ private:
 
         // On Hyprland a respawned locker is refused without the
         // session-lock-restore flag, so set it just-in-time before every
-        // launch there (first or respawn); unset when the episode ends.
-        if (isHyprland() && !m_hyprFlagSet) {
-            if (setHyprlandRestoreFlag(true)) {
-                m_hyprFlagSet = true;
-                log("Hyprland: misc:allow_session_lock_restore set just-in-time");
-            }
-        }
+        // launch there (first or respawn); unset when the episode ends. A
+        // config reload can reset it between attempts, so never cache success.
+        if (isHyprland()) updateHyprlandRestoreFlag(true);
 
         log(QStringLiteral("launching locker, attempt %1/%2%3")
                 .arg(m_attempt).arg(RESPAWN_LIMIT)
@@ -438,10 +436,7 @@ private:
         closeReport();
         setState(code == 0 ? LockState::Ended : LockState::Failed,
                  QStringLiteral("exit-code-%1").arg(code));
-        if (m_hyprFlagSet) {
-            setHyprlandRestoreFlag(false);
-            m_hyprFlagSet = false;
-        }
+        if (isHyprland()) updateHyprlandRestoreFlag(false);
         QCoreApplication::exit(code);
     }
 
@@ -653,18 +648,104 @@ private:
         return sig && *sig;
     }
 
-    // hyprctl keyword misc:allow_session_lock_restore <0|1>
-    static bool setHyprlandRestoreFlag(bool on)
+    // hyprctl's exit code describes transport, not necessarily the command:
+    // both a Lua keyword refusal and "unknown request" can exit successfully.
+    static bool hyprlandCommand(const QStringList &args, QString *reply, QString *why)
     {
         QProcess p;
-        p.start(QStringLiteral("hyprctl"),
-                {QStringLiteral("keyword"),
-                 QStringLiteral("misc:allow_session_lock_restore"),
-                 on ? QStringLiteral("1") : QStringLiteral("0")});
+        p.start(QStringLiteral("hyprctl"), args);
         if (!p.waitForFinished(3000)) {
+            const QString error = p.errorString();
+            if (p.state() != QProcess::NotRunning) {
+                p.kill();
+                p.waitForFinished(1000);
+            }
+            *why = QStringLiteral("hyprctl %1: %2").arg(args.join(' '), error);
             return false;
         }
-        return p.exitCode() == 0;
+        *reply = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        const QString stderrText = QString::fromUtf8(p.readAllStandardError()).simplified().left(512);
+        if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) {
+            *why = QStringLiteral("hyprctl %1: exit=%2 status=%3 stdout=%4 stderr=%5")
+                       .arg(args.join(' ')).arg(p.exitCode()).arg(int(p.exitStatus()))
+                       .arg(reply->simplified().left(512), stderrText);
+            return false;
+        }
+        return true;
+    }
+
+    static bool setHyprlandRestoreFlag(bool on, QString *why)
+    {
+        const QString option = QStringLiteral("misc:allow_session_lock_restore");
+        QString reply;
+        if (!hyprlandCommand({QStringLiteral("-j"), QStringLiteral("status")}, &reply, why)) return false;
+
+        QString provider;
+        if (reply == QLatin1String("unknown request")) {
+            // Before provider selection existed, Hyprland only had hyprlang.
+            provider = QStringLiteral("hyprlang");
+        } else {
+            const QJsonDocument status = QJsonDocument::fromJson(reply.toUtf8());
+            if (!status.isObject()) {
+                *why = QStringLiteral("hyprctl -j status: invalid JSON object: %1").arg(reply.simplified().left(512));
+                return false;
+            }
+            const QJsonValue value = status.object().value(QStringLiteral("configProvider"));
+            provider = value.isUndefined() ? QStringLiteral("hyprlang") : value.toString();
+        }
+
+        QStringList args;
+        if (provider == QLatin1String("lua")) {
+            args = {QStringLiteral("eval"), QStringLiteral("hl.config({misc={allow_session_lock_restore=%1}})")
+                                               .arg(on ? QStringLiteral("true") : QStringLiteral("false"))};
+        } else if (provider == QLatin1String("hyprlang")) {
+            args = {QStringLiteral("keyword"), option, on ? QStringLiteral("1") : QStringLiteral("0")};
+        } else {
+            *why = QStringLiteral("hyprctl -j status: unsupported configProvider: %1").arg(provider.simplified().left(512));
+            return false;
+        }
+
+        if (!hyprlandCommand(args, &reply, why)) return false;
+        if (reply != QLatin1String("ok")) {
+            *why = QStringLiteral("hyprctl %1: expected ok, received %2").arg(args.join(' '), reply.simplified().left(512));
+            return false;
+        }
+
+        if (!hyprlandCommand({QStringLiteral("-j"), QStringLiteral("getoption"), option}, &reply, why)) return false;
+        const QJsonDocument document = QJsonDocument::fromJson(reply.toUtf8());
+        const QJsonObject object = document.object();
+        const QJsonValue boolean = object.value(QStringLiteral("bool"));
+        const QJsonValue integer = object.value(QStringLiteral("int"));
+        const bool validBoolean = boolean.isBool();
+        const bool validInteger = integer.isDouble() && (integer.toDouble() == 0 || integer.toDouble() == 1);
+        if (!document.isObject() || object.value(QStringLiteral("option")).toString() != option
+            || (!validBoolean && !validInteger)) {
+            *why = QStringLiteral("hyprctl -j getoption %1: invalid option read-back: %2").arg(option, reply.simplified().left(512));
+            return false;
+        }
+        const bool actual = validBoolean ? boolean.toBool() : integer.toDouble() == 1;
+        if (actual != on) {
+            *why = QStringLiteral("hyprctl -j getoption %1: expected %2, received %3")
+                       .arg(option).arg(int(on)).arg(int(actual));
+            return false;
+        }
+        return true;
+    }
+
+    static void updateHyprlandRestoreFlag(bool on)
+    {
+        QString why;
+        if (setHyprlandRestoreFlag(on, &why)) {
+            log(QStringLiteral("Hyprland: misc:allow_session_lock_restore %1 and verified")
+                    .arg(on ? QStringLiteral("enabled") : QStringLiteral("cleared")));
+        } else {
+            log(QStringLiteral("Hyprland: cannot %1 misc:allow_session_lock_restore (%2); %3. "
+                               "Check 'hyprctl -j status' and 'hyprctl -j getoption misc:allow_session_lock_restore'; "
+                               "recover manually from a TTY if needed. No automatic unlock.")
+                    .arg(on ? QStringLiteral("enable") : QStringLiteral("clear"), why,
+                         on ? QStringLiteral("a replacement locker may be refused")
+                            : QStringLiteral("the compositor option may still be enabled")));
+        }
     }
 
     static void log(const QString &msg) { logLine(msg); }
@@ -675,7 +756,6 @@ private:
     QString m_video;
     QString m_lastVideo;
     int m_attempt = 0;
-    bool m_hyprFlagSet = false;
     bool m_attemptSettled = false;
     bool m_onlyPreEngagementFailures = true;
     bool m_guardFailed = false;

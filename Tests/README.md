@@ -181,6 +181,13 @@ cmake --build "$ROOT/build/debug/aerial-tests"
 ctest --test-dir "$ROOT/build/debug/aerial-tests" --output-on-failure
 ```
 
+`supervisor-hyprland` runs the actual supervisor with a fake hyprctl and stub
+locker on a private bus. It covers Lua/legacy provider selection (including old
+versions without status), exit-0 semantic rejection, malformed status/read-back,
+wrong effective values, failed cleanup and re-ensuring after failure or reload.
+No compositor, authentication or unlock request is used. Real crash/relock and
+PAM acceptance still require the owned Hyprland VM lanes.
+
 `make` comes first: `supervisor-session` uses the built supervisor. The portable
 set covers native input and editor migration, the BLOCKED latch, supervisor
 session scoping and engagement-confirmed duplicates (waiting while engaging, a

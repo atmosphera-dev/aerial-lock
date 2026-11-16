@@ -3,6 +3,12 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- On Hyprland with a Lua config (the only format since 0.57), a crashed locker could not be replaced, leaving the session on Hyprland's crash screen.
+
 ## [0.1.4] - 2026-11-15
 
 ### Fixed

@@ -77,6 +77,9 @@ add_test(NAME supervisor-session
 add_test(NAME supervisor-output
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-output.py"
             "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
+add_test(NAME supervisor-hyprland
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-hyprland.py"
+            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
 add_executable(supervisor-terminal-probe supervisor-terminal-probe.cpp)
 target_link_libraries(supervisor-terminal-probe PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
 add_test(NAME supervisor-release
