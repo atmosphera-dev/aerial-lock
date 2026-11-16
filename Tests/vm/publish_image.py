@@ -35,11 +35,13 @@ def prepare_assets(image_dir, results, lock, revision, run_url):
                                    source_freeze_identity=summary['source_identity']))
     if receipt.get('qemu_exit') != 0 or receipt.get('forced_shutdown'):
         raise RuntimeError('test VM did not stop cleanly')
-    if digest(lock) != manifest['lock_sha256']:
+    tested_lock = image_dir / 'resolved-lock.json'
+    if digest(tested_lock) != manifest['lock_sha256'] \
+            or json.loads(lock.read_text()) != json.loads(tested_lock.read_text()):
         raise RuntimeError('tested image lock identity mismatch')
-    shutil.copyfile(lock, image_dir / 'image.lock.json')
+    shutil.copyfile(tested_lock, image_dir / 'image.lock.json')
     descriptor = dict(schema=1, source_revision=revision, image_sha256=image_hash,
-                      lock_sha256=digest(lock), run_url=run_url, group='niri-smoke',
+                      lock_sha256=digest(image_dir / 'image.lock.json'), run_url=run_url, group='niri-smoke',
                       planned=1, exercised=1, status='PASS')
     (image_dir / 'publication.json').write_text(json.dumps(descriptor, indent=2) + '\n')
     (image_dir / 'SHA256SUMS').write_text(''.join(digest(image_dir / name) + '  ' + name + '\n' for name in ASSETS))

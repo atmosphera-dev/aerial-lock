@@ -153,6 +153,10 @@ publication.json. This is the only image-artifact exception; it needs about
 2 GiB of temporary Actions storage headroom. No image passes through Ark.
 The receiving job rechecks every checksum and the tested source/image/lock
 identities before any GitHub write. Ordinary runs do not stage this artifact.
+The published image.lock.json contains the exact tested resolved-lock.json
+bytes; its parsed content must match the input lock even if formatting differs.
+The publish job downloads the producer's recorded artifact name, so a partial
+re-run still selects the retained successful producer attempt.
 
 The publisher reserves an unused tag at the tested source commit, named
 `ci-image-YYYYMMDD` using the UTC date. Existing tags or releases cause `-1`,
@@ -169,6 +173,8 @@ Inside your authorized disposable execution VM (including a local Ark fork),
 start from the repository root and choose an exact reviewed release tag:
 
 ```sh
+(
+set -eu
 export TMPDIR="$HOME/aerial-work/tmp"
 mkdir -p "$TMPDIR"
 source="$PWD"
@@ -177,15 +183,20 @@ directory="$HOME/aerial-work/vm/$tag"
 mkdir -p "$directory"
 cd "$directory"
 for asset in aerial-ci-arch-x86_64.qcow2 SHA256SUMS image.lock.json image-manifest.json publication.json; do
-  curl --fail --location "https://github.com/atmosphera-dev/aerial-lock/releases/download/$tag/$asset" -o "$asset"
+  curl --fail --location "https://github.com/atmosphera-dev/aerial-lock/releases/download/$tag/$asset" -o "$asset" || exit
 done
-sha256sum -c SHA256SUMS
-expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1 }' SHA256SUMS)
+sha256sum -c SHA256SUMS &&
+expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1; matches++ } END { if (matches != 1) exit 1 }' SHA256SUMS) &&
 python3 "$source/Tests/vm/vm_platform.py" run-group \
   --config "$HOME/aerial-work/test.json" --image "$directory/aerial-ci-arch-x86_64.qcow2" \
   --sha256 "$expected" --source "$source" --group niri-smoke \
   --results "$HOME/aerial-work/results/$tag-niri-smoke"
+)
 ```
+
+The subshell stops on a failed download, checksum or digest extraction without
+changing the invoking shell's options. The smoke command runs only after all
+verification succeeds.
 
 The test configuration is the same explicit fresh-instance configuration
 documented above. Review publication.json/image.lock.json for the source and

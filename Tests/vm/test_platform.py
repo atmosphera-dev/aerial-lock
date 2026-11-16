@@ -591,8 +591,9 @@ class ImagePublication(unittest.TestCase):
         (image / publisher.IMAGE).write_bytes(b'test image, never booted')
         lock = root / 'lock.json'
         lock.write_text('{}\n')
+        (image / 'resolved-lock.json').write_bytes(lock.read_bytes())
         (image / 'image-manifest.json').write_text(json.dumps(dict(
-            image_sha256=platform.digest(image / publisher.IMAGE), lock_sha256=platform.digest(lock))))
+            image_sha256=platform.digest(image / publisher.IMAGE), lock_sha256=platform.digest(image / 'resolved-lock.json'))))
         value = dict(instance_uuid='owned', image_sha256=platform.digest(image / publisher.IMAGE),
                      source_identity='2' * 64, source_revision=self.revision,
                      status='PASS', group='niri-smoke', planned=1, exercised=1,
@@ -633,6 +634,19 @@ class ImagePublication(unittest.TestCase):
                 validate.assert_not_called()
                 gh.assert_not_called()
 
+    def test_publish_download_uses_retained_producer_artifact_output(self):
+        text = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
+        producer, consumer = text.split('\n  publish-image:', 1)
+        self.assertIn('image-artifact: ${{ steps.publication-assets.outputs.artifact_name }}', producer)
+        prepare = producer.split('- name: Prepare tested publication assets', 1)[1].split('- name:', 1)[0]
+        self.assertIn('id: publication-assets', prepare)
+        self.assertIn('IMAGE_ARTIFACT_NAME: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}', prepare)
+        self.assertIn('printf \'artifact_name=%s\\n\' "$IMAGE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"', prepare)
+        upload = producer.split('- name: Stage tested image on GitHub', 1)[1].split('- name:', 1)[0]
+        self.assertIn('name: ${{ steps.publication-assets.outputs.artifact_name }}', upload)
+        self.assertIn('name: ${{ needs.niri-smoke.outputs.image-artifact }}', consumer)
+        self.assertNotIn('github.run_attempt', consumer)
+
     def test_prepare_binds_image_lock_result_and_source_in_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
             image = self.prepare(Path(directory))
@@ -640,6 +654,56 @@ class ImagePublication(unittest.TestCase):
             self.assertEqual(value['source_revision'], self.revision)
             self.assertEqual(value['lock_sha256'], platform.digest(image / 'image.lock.json'))
             self.assertEqual({line.split('  ')[1] for line in (image / 'SHA256SUMS').read_text().splitlines()}, set(publisher.ASSETS))
+
+    def test_equivalent_input_serialization_publishes_exact_resolved_lock_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image, results, lock = self.fixture(Path(directory))
+            content = dict(schema=1, packages=[], repositories={})
+            lock.write_text(json.dumps(content, separators=(',', ':')))
+            resolved = image / 'resolved-lock.json'
+            resolved.write_text(json.dumps(content, indent=2) + '\n')
+            manifest = image / 'image-manifest.json'
+            manifest.write_text(json.dumps(json.loads(manifest.read_text()) | dict(lock_sha256=platform.digest(resolved))))
+            self.assertNotEqual(platform.digest(lock), platform.digest(resolved))
+            publisher.prepare_assets(image, results, lock, self.revision, 'proof')
+            self.assertEqual((image / 'image.lock.json').read_bytes(), resolved.read_bytes())
+            self.assertEqual(publisher.validate_assets(image, self.revision)['lock_sha256'], platform.digest(resolved))
+
+    def test_resolved_lock_must_match_both_tested_digest_and_input_content(self):
+        for change in ('bytes', 'content'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                image, results, lock = self.fixture(Path(directory))
+                resolved = image / 'resolved-lock.json'
+                resolved.write_text(' { }\n' if change == 'bytes' else '{"changed":true}\n')
+                if change == 'content':
+                    manifest = image / 'image-manifest.json'
+                    manifest.write_text(json.dumps(json.loads(manifest.read_text()) | dict(lock_sha256=platform.digest(resolved))))
+                with self.assertRaisesRegex(RuntimeError, 'tested image lock identity mismatch'):
+                    publisher.prepare_assets(image, results, lock, self.revision, 'proof')
+
+    def test_readme_consumption_never_boots_after_download_checksum_or_digest_failure(self):
+        readme = (Path(__file__).parent / 'README.md').read_text()
+        snippet = readme.split('### Consume a published image without rebuilding', 1)[1].split('```sh\n', 1)[1].split('```', 1)[0]
+        stubs = '''
+curl() { printf 'download\\n' >> "$TRACE"; test "$CASE" != download; }
+sha256sum() { printf 'checksum\\n' >> "$TRACE"; test "$CASE" != checksum; }
+awk() { test "$CASE" != digest || return 2; printf '%s\\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
+python3() { printf 'boot\\n' >> "$TRACE"; }
+'''
+        for phase in ('download', 'checksum', 'digest', 'success'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                trace = root / 'trace'
+                result = subprocess.run(['/bin/bash', '-c', stubs + snippet], cwd=root,
+                    env=dict(os.environ, HOME=str(root), CASE=phase, TRACE=str(trace)), capture_output=True, text=True)
+                events = trace.read_text().splitlines()
+                self.assertEqual('boot' in events, phase == 'success')
+                if phase == 'success':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                if phase == 'download':
+                    self.assertEqual(events, ['download'])
 
     def test_failed_incomplete_or_foreign_smoke_is_not_publishable(self):
         for change in ({'status': 'BLOCKED'}, {'exercised': 0}, {'no_surviving_locker': False},

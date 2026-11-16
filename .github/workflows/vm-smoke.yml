@@ -19,7 +19,9 @@ permissions:
 jobs:
   niri-smoke:
     runs-on: ubuntu-24.04
-    # Step budgets total 161 minutes, including opt-in image staging.
+    outputs:
+      image-artifact: ${{ steps.publication-assets.outputs.artifact_name }}
+    # Step budgets total 166 minutes, including workflow validation and image staging.
     timeout-minutes: 180
     steps:
       - name: Checkout reviewed source
@@ -46,6 +48,14 @@ jobs:
                         build_seconds=2100, group_seconds=600, boot_seconds=300, export_seconds=60)
           (root / 'config.json').write_text(json.dumps(config))
           PY
+
+      - name: Validate workflow
+        timeout-minutes: 5
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+          GOCACHE: ${{ github.workspace }}/.ci-vm/go-build
+          GOMODCACHE: ${{ github.workspace }}/.ci-vm/go-mod
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/vm-smoke.yml
 
       - name: Platform contract tests
         timeout-minutes: 2
@@ -95,16 +105,20 @@ jobs:
       - name: Prepare tested publication assets
         if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
         timeout-minutes: 2
+        id: publication-assets
+        env:
+          IMAGE_ARTIFACT_NAME: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           python3 Tests/vm/publish_image.py prepare --image-dir .ci-vm/image \
             --results .ci-vm/results --lock Tests/vm/image.lock.json
+          printf 'artifact_name=%s\n' "$IMAGE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Stage tested image on GitHub
         if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
         timeout-minutes: 15
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.publication-assets.outputs.artifact_name }}
           retention-days: 1
           compression-level: 0
           if-no-files-found: error
@@ -171,7 +185,7 @@ jobs:
         timeout-minutes: 15
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ci-image-transfer-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.niri-smoke.outputs.image-artifact }}
           path: publication
 
       - name: Publish a non-Latest prerelease
