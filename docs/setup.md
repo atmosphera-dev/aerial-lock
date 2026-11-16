@@ -63,7 +63,8 @@ hl.config({
 })
 ```
 
-Or in a legacy `hyprland.conf` `misc` block (Hyprland 0.56 and older):
+Or in a legacy `hyprland.conf` `misc` block (Hyprland 0.50 to 0.56; on older
+versions omit `session_lock_xray`, which they lack and which defaults to off):
 
 ```conf
 misc {
@@ -79,8 +80,8 @@ briefly shows its "lockscreen app died" fallback during healthy normal lock
 startup too, before aerial-lock's first frame. It disappears when the locker
 renders; it does not by itself mean aerial-lock crashed. These settings also
 affect other session-lock clients. Don't set `allow_session_lock_restore`
-yourself: the supervisor enables it only while replacing a crashed locker, with
-either config format.
+yourself: the supervisor turns it on before each locker launch and off again
+when the lock ends, with either config format.
 
 Sources: Hyprland's [lock settings][hypr-lock-options] and
 [lock-screen rendering checks][hypr-lock-render].
