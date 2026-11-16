@@ -47,6 +47,41 @@ and `hyprctl configerrors`; the latter must report no errors. Press Super+L.
 Sources: Hyprland's [legacy binding parser][hypr-legacy] and
 [Lua binding documentation][hypr-binds].
 
+#### Keep recovery frames opaque
+
+Hyprland can briefly show the desktop when replacing a crashed locker, even
+while desktop input remains blocked. To mitigate this visual disclosure, set
+these compositor-wide options. In an existing legacy `misc` block:
+
+```conf
+misc {
+    lockdead_screen_delay = 0
+    session_lock_xray = false
+}
+```
+
+Or in the existing Lua configuration:
+
+```lua
+hl.config({
+    misc = {
+        lockdead_screen_delay = 0,
+        session_lock_xray = false,
+    },
+})
+```
+
+Reload and check `hyprctl configerrors`. Zero delay suppressed the captured
+recovery flash in a Hyprland 0.56.2 VM test; it is a mitigation, not a guarantee
+of an atomic handoff on every version or system. The tradeoff is that Hyprland
+briefly shows its "lockscreen app died" fallback during healthy normal lock
+startup too, before aerial-lock's first frame. It disappears when the locker
+renders; it does not by itself mean aerial-lock crashed. These settings also
+affect other session-lock clients. Leave restore-flag management to aerial-lock.
+
+Sources: Hyprland's [lock settings][hypr-lock-options] and
+[lock-screen rendering checks][hypr-lock-render].
+
 ### sway
 
 Add to `~/.config/sway/config` (Sway 1.9 or newer):
@@ -237,6 +272,8 @@ Historical source (revision `b9ddccf`):
 [niri-binds]: https://github.com/niri-wm/niri/blob/main/docs/wiki/Configuration%3A-Key-Bindings.md#spawn
 [hypr-legacy]: https://github.com/hyprwm/Hyprland/blob/v0.56.2/src/config/legacy/ConfigManager.cpp#L1492-L1495
 [hypr-binds]: https://github.com/hyprwm/hyprland-wiki/blob/3d598abaa15b9dfc4834b3e45fe0b734707a9adb/content/configuring/core/binds/_index.md
+[hypr-lock-options]: https://github.com/hyprwm/Hyprland/blob/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947/src/config/values/ConfigValues.cpp#L586-L603
+[hypr-lock-render]: https://github.com/hyprwm/Hyprland/blob/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947/src/render/Renderer.cpp#L1781-L1803
 [sway-config]: https://github.com/swaywm/sway/blob/master/sway/sway.5.scd
 [atmo-settings]: https://github.com/alexindigo/atmosphera/blob/523f773b86e1182f4615df3669cd332c76457110/Commons/Settings.qml#L831-L835
 [atmo-ui]: https://github.com/alexindigo/atmosphera/blob/523f773b86e1182f4615df3669cd332c76457110/Modules/Panels/Settings/Tabs/LockScreen/AppearanceSubTab.qml#L31-L75
