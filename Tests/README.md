@@ -273,6 +273,12 @@ also checks journal replacement visibility and failed-publication preservation.
 
 ## Real-session integration drivers
 
+The optional [KVM CI platform](vm/README.md) rebuilds a pinned official Arch
+cloud image and runs one nested niri real-PAM unlock group on demand. It uses
+configurable QEMU/SSH identities and the owned manifest below, not Ark-specific
+settings. The manual `VM niri smoke` workflow leaves existing PR checks alone;
+it is not full acceptance, IME or multi-output proof.
+
 Stock wtype 0.4 writes its keymap to a hardcoded shared temporary path, ignoring
 `TMPDIR`. For disk-backed-only guest testing, put a workspace-local build with
 the TMPDIR-only tempfile patch first in `PATH`; preserve its source, patch and

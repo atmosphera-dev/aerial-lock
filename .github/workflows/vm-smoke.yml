@@ -1,0 +1,110 @@
+name: VM niri smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: Real-session group
+        type: choice
+        options: [niri-smoke]
+        default: niri-smoke
+
+permissions:
+  contents: read
+
+jobs:
+  niri-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare this runner VM
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client acl
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          mkdir -p .ci-vm/tmp .ci-vm/state
+          df -h "$GITHUB_WORKSPACE"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path.cwd() / '.ci-vm'
+          config = dict(instance=f'aerial-ci-image-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}',
+                        host=os.environ['RUNNER_NAME'], user='tester', storage=str(root / 'state'),
+                        guest_root='/home/tester/aerial-ci', memory_mib=4096, cpus=2,
+                        build_seconds=2100, group_seconds=600, boot_seconds=300, export_seconds=60)
+          (root / 'config.json').write_text(json.dumps(config))
+          PY
+
+      - name: Platform contract tests
+        timeout-minutes: 2
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+        run: python3 Tests/vm/test_platform.py
+
+      - name: Rebuild the locked Arch image
+        timeout-minutes: 55
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+        run: |
+          python3 Tests/vm/vm_platform.py build-image --config .ci-vm/config.json \
+            --lock Tests/vm/image.lock.json --output-dir .ci-vm/image
+          (cd .ci-vm/image && sha256sum -c SHA256SUMS)
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: One nested niri unlock cycle
+        timeout-minutes: 50
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('.ci-vm/config.json')
+          config = json.loads(path.read_text())
+          config['instance'] = f'aerial-ci-niri-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+          path.write_text(json.dumps(config))
+          PY
+          image=.ci-vm/image/aerial-ci-arch-x86_64.qcow2
+          expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1 }' .ci-vm/image/SHA256SUMS)
+          python3 Tests/vm/vm_platform.py run-group --config .ci-vm/config.json \
+            --image "$image" --sha256 "$expected" --source "$GITHUB_WORKSPACE" \
+            --source-revision "$GITHUB_SHA" --group niri-smoke --results .ci-vm/results
+
+      - name: Compact diagnostic results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vm-niri-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          include-hidden-files: true
+          path: |
+            .ci-vm/results/
+            .ci-vm/image/image-manifest.json
+            .ci-vm/image/SHA256SUMS
+            .ci-vm/image/failure.json
+            .ci-vm/image/provision.log
+            .ci-vm/image/disk-usage.json
+
+      - name: Report measured result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          summary = Path('.ci-vm/results/summary.json')
+          value = json.loads(summary.read_text()) if summary.exists() else {'status': 'INCOMPLETE', 'phase': 'image or boot'}
+          total = sum(p.stat().st_size for p in Path('.ci-vm/results').rglob('*') if p.is_file())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('## niri VM smoke\n\n')
+              stream.write(f'Source: `{os.environ["GITHUB_SHA"]}`\n\n')
+              stream.write(f'Image: `{value.get("image_sha256", "not built")}`\n\n')
+              stream.write(f'Status: {value["status"]}; phase: {value.get("phase")}; exercised: {value.get("exercised", 0)}/1; result bytes: {total}\n')
+          PY
