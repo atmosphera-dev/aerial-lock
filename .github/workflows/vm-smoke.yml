@@ -96,6 +96,10 @@ jobs:
             .ci-vm/image/failure.json
             .ci-vm/image/provision.log
             .ci-vm/image/disk-usage.json
+            .ci-vm/image/serial.log
+            .ci-vm/image/qemu.log
+            .ci-vm/image/ssh-errors.log
+            .ci-vm/image/instance.json
 
       - name: Report measured result
         timeout-minutes: 2

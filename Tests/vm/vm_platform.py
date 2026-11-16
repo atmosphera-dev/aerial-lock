@@ -94,6 +94,24 @@ def command(argv, timeout=60, **kwargs):
     return subprocess.run([str(value) for value in argv], check=True, timeout=timeout, **kwargs)
 
 
+def failure_details(error):
+    value = dict(error=type(error).__name__, reason=str(error))
+    if isinstance(error, subprocess.CalledProcessError):
+        value['returncode'] = error.returncode
+    stderr = getattr(error, 'stderr', None)
+    if stderr:
+        value['stderr'] = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
+    return value
+
+
+def export_vm_diagnostics(vm, output):
+    # Private seeds/keys/disks are deliberately not part of this allowlist.
+    for name in ('serial.log', 'qemu.log', 'ssh-errors.log', 'instance.json'):
+        source = vm.directory / name
+        if source.is_file() and not source.is_symlink():
+            shutil.copyfile(source, Path(output) / name)
+
+
 def config(path):
     path = Path(path).resolve(strict=True)
     value = json.loads(path.read_text())
@@ -296,6 +314,7 @@ class VM:
         self.receipt = dict(schema=1, domain=self.name, uuid=self.uuid, mac=self.mac, host=cfg['host'],
             argv=argv, directory=str(self.directory), ssh_port=port, phase='starting')
         self.log = (self.directory / 'qemu.log').open('wb')
+        self.started = time.monotonic()
         try:
             self.process = subprocess.Popen(argv, stdout=self.log, stderr=subprocess.STDOUT)
             self.receipt['pid'] = self.process.pid
@@ -347,7 +366,8 @@ class VM:
         self.known_hosts.chmod(0o600)
         if identity['user'] != self.cfg['user']:
             raise RuntimeError('serial guest account mismatch')
-        self.receipt.update(phase='serial-ready', guest=identity)
+        self.receipt.update(phase='serial-ready', guest=identity,
+                            serial_ready_seconds=time.monotonic() - self.started)
         self.save()
         return identity
 
@@ -361,7 +381,19 @@ class VM:
             '-o', 'ProxyJump=none', '-o', 'ConnectTimeout=10', self.cfg['user'] + '@127.0.0.1']
 
     def ssh(self, argv, timeout=30, **kwargs):
-        return command(self.ssh_args() + [shlex.join(argv)], timeout, **kwargs)
+        if not kwargs.get('capture_output') and 'stderr' not in kwargs:
+            kwargs['stderr'] = subprocess.PIPE
+        try:
+            return command(self.ssh_args() + [shlex.join(argv)], timeout, **kwargs)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            details = failure_details(error)
+            print('SSH_FAILURE ' + json.dumps(details), file=sys.stderr)
+            try:
+                with (self.directory / 'ssh-errors.log').open('a') as log:
+                    log.write(json.dumps(details) + '\n')
+            except OSError as diagnostic_error:
+                print('SSH_DIAGNOSTIC_ERROR ' + str(diagnostic_error), file=sys.stderr)
+            raise
 
     def stop(self, force=False):
         if self.process.poll() is not None:
@@ -518,7 +550,7 @@ def run_group(args, cfg):
                 write_json(results / 'summary.json', summary)
             except Exception:
                 pass  # absent/untrusted summary remains an infrastructure failure
-        retain('failure.json', dict(status=summary.get('status') if summary else 'INFRA_ERROR', error=type(error).__name__, reason=str(error),
+        retain('failure.json', failure_details(error) | dict(status=summary.get('status') if summary else 'INFRA_ERROR',
                                    instance_uuid=vm.uuid, phase=vm.receipt['phase']))
     finally:
         # This independent SSH request still runs when the group process is
@@ -543,6 +575,11 @@ def run_group(args, cfg):
                 primary = primary or error
                 retain('stop-error.json', dict(error=str(error)))
         retain('instance.json', vm.receipt)
+        try:
+            export_vm_diagnostics(vm, results)
+        except Exception as error:
+            primary = primary or error
+            retain('diagnostic-error.json', failure_details(error))
         suite = ET.Element('testsuite', name='niri-smoke', tests='1', failures='1' if primary else '0')
         cell = ET.SubElement(suite, 'testcase', name='niri/unlock/1', classname='aerial-lock.vm')
         if primary:
@@ -562,7 +599,7 @@ def run_group(args, cfg):
 
 def preserve_failure(vm, output, error):
     """Best-effort custody must never replace the primary workload exception."""
-    failure = dict(error=type(error).__name__, reason=str(error), cleanup_errors=[])
+    failure = failure_details(error) | dict(cleanup_errors=[])
     if vm.process.poll() is None:
         try:
             (output / 'provision.log').write_text(vm.execute(['/usr/bin/cat', '/var/lib/aerial-ci/provision.log']))
@@ -570,6 +607,10 @@ def preserve_failure(vm, output, error):
             failure['cleanup_errors'].append(str(cleanup_error))
     try:
         vm.stop(force=True)
+    except Exception as cleanup_error:
+        failure['cleanup_errors'].append(str(cleanup_error))
+    try:
+        export_vm_diagnostics(vm, output)
     except Exception as cleanup_error:
         failure['cleanup_errors'].append(str(cleanup_error))
     try:

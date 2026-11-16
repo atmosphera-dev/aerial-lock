@@ -199,10 +199,42 @@ class DiskObservation(unittest.TestCase):
 
 
 class FailureCustody(unittest.TestCase):
+    def test_remote_failure_keeps_stderr_and_local_boot_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, output = root / 'state', root / 'output'
+            state.mkdir()
+            output.mkdir()
+            for name in ('serial.log', 'qemu.log', 'ssh-errors.log', 'instance.json'):
+                (state / name).write_text('diagnostic ' + name)
+            vm = SimpleNamespace(directory=state, process=Mock(), stop=Mock())
+            vm.process.poll.return_value = 0
+            primary = subprocess.CalledProcessError(1, ['ssh'], stderr='guest runtime failed')
+            result = platform.preserve_failure(vm, output, primary)
+            self.assertEqual(result['returncode'], 1)
+            self.assertEqual(result['stderr'], 'guest runtime failed')
+            for name in ('serial.log', 'qemu.log', 'ssh-errors.log', 'instance.json'):
+                self.assertEqual((output / name).read_bytes(), (state / name).read_bytes())
+
+    def test_ssh_failure_prints_and_retains_captured_stderr_without_masking_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = platform.VM.__new__(platform.VM)
+            vm.directory = Path(directory)
+            vm.ssh_args = Mock(return_value=['ssh'])
+            primary = subprocess.CalledProcessError(1, ['ssh'], stderr='guest runtime failed')
+            with patch.object(platform, 'command', side_effect=primary), \
+                    patch.object(platform.sys, 'stderr', new_callable=io.StringIO) as stderr:
+                with self.assertRaises(subprocess.CalledProcessError) as error:
+                    vm.ssh(['probe'], capture_output=True, text=True)
+            self.assertIs(error.exception, primary)
+            self.assertIn('guest runtime failed', stderr.getvalue())
+            self.assertIn('guest runtime failed', (vm.directory / 'ssh-errors.log').read_text())
+
     def test_secondary_collection_and_stop_errors_do_not_replace_primary(self):
         with tempfile.TemporaryDirectory() as directory:
             vm = Mock()
             vm.process.poll.return_value = None
+            vm.directory = Path(directory)
             vm.execute.side_effect = TimeoutError('secondary collection timeout')
             vm.stop.side_effect = RuntimeError('secondary stop error')
             primary = ValueError('primary failure')
