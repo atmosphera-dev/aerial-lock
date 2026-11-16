@@ -143,6 +143,8 @@ jobs:
             .ci-vm/image/SHA256SUMS
             .ci-vm/image/failure.json
             .ci-vm/image/provision.log
+            .ci-vm/image/provision-observation.json
+            .ci-vm/image/sshd-journal.log
             .ci-vm/image/disk-usage.json
             .ci-vm/image/serial.log
             .ci-vm/image/qemu.log

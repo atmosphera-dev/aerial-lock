@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
 BOOT_MARKER = 'AERIAL_CI_READY '
+PROVISION_OBSERVER = 'AERIAL_PROVISION_OBSERVER\n'
 
 
 class DiskMeter:
@@ -112,6 +113,61 @@ def parse_provision_status(text):
         if status <= 255:
             return status
     raise RuntimeError('invalid provisioning status: ' + repr(text))
+
+
+def pre_auth_transport_loss(error, port):
+    """Only exact pre-auth diagnostics with no remote output are retryable."""
+    if error.returncode != 255 or error.stdout not in ('', b'', None):
+        return False
+    reset = ('kex_exchange_identification: read: Connection reset by peer\n'
+             f'Connection reset by 127.0.0.1 port {port}\n')
+    refused = f'ssh: connect to host 127.0.0.1 port {port}: Connection refused\n'
+    return error.stderr in (reset, refused)
+
+
+def wait_for_provision(vm, seconds, output):
+    # One absolute budget covers running, unavailable, SSH and poll delays.
+    deadline = time.monotonic() + seconds
+    observation = dict(polls=0, transport_retries=0, transport_recoveries=0,
+                       outcome='failed')
+    unavailable = False
+    try:
+        while (remaining := deadline - time.monotonic()) > 0:
+            if vm.process.poll() is not None:
+                raise RuntimeError('QEMU exited during image provisioning')
+            observation['polls'] += 1
+            try:
+                state = vm.provision_status(timeout=min(30, remaining))
+            except subprocess.CalledProcessError as error:
+                if not pre_auth_transport_loss(error, vm.port):
+                    raise
+                unavailable = True
+                observation['transport_retries'] += 1
+                print('PROVISION_TRANSPORT_UNAVAILABLE ' + json.dumps(failure_details(error)), flush=True)
+            else:
+                if unavailable:
+                    unavailable = False
+                    observation['transport_recoveries'] += 1
+                    print('PROVISION_TRANSPORT_RECOVERED', flush=True)
+                if time.monotonic() >= deadline:
+                    break
+                if state is not None:
+                    if state != 0:
+                        raise RuntimeError('image provisioning failed with exit ' + str(state))
+                    observation['outcome'] = 'complete'
+                    return
+            time.sleep(min(5, max(0, deadline - time.monotonic())))
+        observation['outcome'] = 'deadline'
+        raise TimeoutError('image provisioning deadline exceeded')
+    finally:
+        print('PROVISION_OBSERVATION ' + json.dumps(observation), flush=True)
+        primary = sys.exc_info()[1]
+        try:
+            write_json(Path(output) / 'provision-observation.json', observation)
+        except Exception as error:
+            if primary is None:
+                raise
+            print('PROVISION_OBSERVATION_ERROR ' + str(error), file=sys.stderr)
 
 
 def export_vm_diagnostics(vm, output):
@@ -350,15 +406,18 @@ class VM:
         return self.ssh(['sudo', '-n', 'env', 'TMPDIR=/var/lib/aerial-ci/tmp', *argv],
                         timeout=timeout, capture_output=True, text=True).stdout
 
-    def provision_status(self):
+    def provision_status(self, timeout=30):
         # Python and sudo/env may be replaced by the transaction being watched.
         # The status/log files are readable by this unprivileged SSH account.
         text = self.ssh(['/bin/sh', '-c',
             'export TMPDIR=/var/lib/aerial-ci/tmp; '
+            'printf "AERIAL_PROVISION_OBSERVER\\n"; '
             'if test -f "$1"; then exec /usr/bin/cat -- "$1"; else printf "running\\n"; fi',
             'aerial-provision-status', '/var/lib/aerial-ci/provision.exit'],
-            capture_output=True, text=True).stdout
-        return parse_provision_status(text)
+            timeout=timeout, capture_output=True, text=True).stdout
+        if not text.startswith(PROVISION_OBSERVER):
+            raise RuntimeError('missing provisioning observer marker')
+        return parse_provision_status(text[len(PROVISION_OBSERVER):])
 
     def provision_log(self):
         return self.ssh(['/bin/sh', '-c',
@@ -663,22 +722,15 @@ def build_image(args, cfg):
     vm = VM(cfg, base, Path(cfg['storage']) / 'prepare', files, online=True)
     try:
         vm.wait_ready()
-        deadline = time.monotonic() + cfg['build_seconds']
-        while time.monotonic() < deadline:
-            state = vm.provision_status()
-            if state is not None:
-                if state != 0:
-                    raise RuntimeError('image provisioning failed with exit ' + str(state))
-                break
-            time.sleep(5)
-        else:
-            raise TimeoutError('image provisioning deadline exceeded')
+        wait_for_provision(vm, cfg['build_seconds'], output)
         cloud = json.loads(vm.execute(['/usr/bin/cloud-init', 'status', '--wait', '--format', 'json'], timeout=60))
         if cloud.get('status') != 'done' or cloud.get('errors'):
             raise RuntimeError('cloud-init did not finish cleanly: ' + str(cloud))
         vm.execute(['/usr/bin/cloud-init', 'schema', '--system'])
         resolved = json.loads(vm.execute(['/usr/bin/cat', '/var/lib/aerial-ci/resolved-lock.json']))
         (output / 'provision.log').write_text(vm.provision_log())
+        (output / 'sshd-journal.log').write_text(vm.execute([
+            '/usr/bin/journalctl', '-b', '-u', 'sshd.service', '--no-pager', '-o', 'short-monotonic']))
         write_json(output / 'resolved-lock.json', resolved)
         if not args.resolve_lock and resolved != lock:
             raise RuntimeError('installed package or repository lock drift')

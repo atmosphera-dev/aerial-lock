@@ -119,6 +119,18 @@ published by atomic rename and strictly parsed on the host. Python-based
 cloud-init and inventory checks run before or after the package transaction,
 never as its progress poll.
 
+The provisioning status observer alone tolerates exact pre-auth SSH reset or
+connection-refused diagnostics (exit 255, no remote output) while the package
+transaction can restart sshd. A remote-start marker distinguishes remote exit
+255 from these failures. SSH calls and poll delays consume the same absolute
+provisioning deadline; an unavailable transport never means completion.
+Host-key/authentication errors, unknown SSH failures, command timeouts, remote
+exits and malformed status remain hard failures. All SSH uses the original
+serial-pinned key; no new key is accepted and no general SSH retry is added.
+`PROVISION_OBSERVATION` and `provision-observation.json` record polls,
+transport retries/recoveries (including zero) and the outcome. The successful
+build also retains the boot's `sshd-journal.log` for restart correlation.
+
 Outputs are the standalone compressed qcow2, SHA256SUMS and
 image-manifest.json (input, lock and tool hashes, sizes and preparation receipt).
 Rebuildable means the same locked software/provisioning, not identical random

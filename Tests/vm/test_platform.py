@@ -203,6 +203,145 @@ class DiskObservation(unittest.TestCase):
 
 
 class ProvisioningObservation(unittest.TestCase):
+    port = 58619
+    reset = ('kex_exchange_identification: read: Connection reset by peer\n'
+             'Connection reset by 127.0.0.1 port 58619\n')
+    refused = 'ssh: connect to host 127.0.0.1 port 58619: Connection refused\n'
+
+    def observer(self, replies):
+        vm = platform.VM.__new__(platform.VM)
+        vm.port = self.port
+        vm.process = Mock()
+        vm.process.poll.return_value = None
+        vm.ssh = Mock(side_effect=replies)
+        return vm
+
+    def reply(self, status):
+        return SimpleNamespace(stdout=platform.PROVISION_OBSERVER + status)
+
+    def transport_error(self, stderr, code=255, stdout=''):
+        return subprocess.CalledProcessError(code, ['ssh'], output=stdout, stderr=stderr)
+
+    def wait(self, vm, root, seconds=12):
+        now = [0]
+        def sleep(delay):
+            now[0] += delay
+        with patch.object(platform.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(platform.time, 'sleep', side_effect=sleep):
+            platform.wait_for_provision(vm, seconds, root)
+
+    def test_pre_auth_reset_and_refusal_recover_before_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = self.observer([self.transport_error(self.reset), self.transport_error(self.refused), self.reply('0\n')])
+            self.wait(vm, directory)
+            value = json.loads((Path(directory) / 'provision-observation.json').read_text())
+            self.assertEqual(value, dict(polls=3, transport_retries=2, transport_recoveries=1, outcome='complete'))
+            self.assertEqual([call.kwargs['timeout'] for call in vm.ssh.call_args_list], [12, 7, 2])
+
+    def test_uninterrupted_provisioning_reports_explicit_zero_retries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.wait(self.observer([self.reply('running\n'), self.reply('0\n')]), directory)
+            value = json.loads((Path(directory) / 'provision-observation.json').read_text())
+            self.assertEqual(value, dict(polls=2, transport_retries=0, transport_recoveries=0, outcome='complete'))
+
+    def test_recovered_transport_is_not_completed_provisioning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = self.observer([self.transport_error(self.reset), self.reply('running\n'), self.reply('running\n')])
+            with self.assertRaisesRegex(TimeoutError, 'provisioning deadline'):
+                self.wait(vm, directory)
+            value = json.loads((Path(directory) / 'provision-observation.json').read_text())
+            self.assertEqual(value, dict(polls=3, transport_retries=1, transport_recoveries=1, outcome='deadline'))
+
+    def test_unavailable_transport_does_not_extend_absolute_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = self.observer([self.transport_error(self.reset)] * 3)
+            with self.assertRaisesRegex(TimeoutError, 'provisioning deadline'):
+                self.wait(vm, directory)
+            self.assertEqual(vm.ssh.call_count, 3)
+            value = json.loads((Path(directory) / 'provision-observation.json').read_text())
+            self.assertEqual(value, dict(polls=3, transport_retries=3, transport_recoveries=0, outcome='deadline'))
+
+    def test_identity_auth_remote_and_unknown_failures_never_retry(self):
+        failures = [
+            self.transport_error('WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n'),
+            self.transport_error('Host key verification failed.\n'),
+            self.transport_error('tester@127.0.0.1: Permission denied (publickey).\n'),
+            self.transport_error('Connection to 127.0.0.1 closed by remote host.\n'),
+            self.transport_error('unknown failure\n'),
+            self.transport_error(self.reset + 'Host key verification failed.\n'),
+            self.transport_error(self.reset.replace('58619', '22')),
+            self.transport_error(self.reset, stdout=platform.PROVISION_OBSERVER),
+            self.transport_error(self.reset, code=1),
+            self.transport_error('cat: Permission denied\n', code=1, stdout=platform.PROVISION_OBSERVER),
+            subprocess.TimeoutExpired(['ssh'], 12, stderr=self.reset),
+        ]
+        for failure in failures:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                vm = self.observer([failure])
+                with self.assertRaises(type(failure)) as error:
+                    self.wait(vm, directory)
+                self.assertIs(error.exception, failure)
+                vm.ssh.assert_called_once()
+                self.assertEqual(json.loads((Path(directory) / 'provision-observation.json').read_text())['transport_retries'], 0)
+
+    def test_malformed_status_missing_marker_and_nonzero_exit_fail_hard(self):
+        for reply in [self.reply(''), self.reply('garbage\n'), self.reply('0\n0\n'),
+                      SimpleNamespace(stdout='0\n'), self.reply('23\n'), self.reply('255\n')]:
+            with self.subTest(reply=reply), tempfile.TemporaryDirectory() as directory:
+                vm = self.observer([reply])
+                with self.assertRaises(RuntimeError):
+                    self.wait(vm, directory)
+                vm.ssh.assert_called_once()
+
+    def test_dead_guest_fails_without_attempting_an_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = self.observer([])
+            vm.process.poll.return_value = 1
+            with self.assertRaisesRegex(RuntimeError, 'QEMU exited'):
+                self.wait(vm, directory)
+            vm.ssh.assert_not_called()
+
+    def test_recovery_never_hides_later_remote_command_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            error = self.transport_error(self.reset, stdout=platform.PROVISION_OBSERVER)
+            vm = self.observer([self.transport_error(self.reset), self.reply('running\n'), error])
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                self.wait(vm, directory)
+            self.assertIs(caught.exception, error)
+            self.assertEqual(vm.ssh.call_count, 3)
+
+    def test_observation_retries_keep_original_strict_host_key_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = platform.VM.__new__(platform.VM)
+            vm.directory = Path(directory)
+            vm.key = Path(directory) / 'client-key'
+            vm.known_hosts = Path(directory) / 'known_hosts'
+            vm.known_hosts.write_text('owned ssh-ed25519 original-pin\n')
+            vm.name, vm.port, vm.cfg = 'owned', self.port, dict(user='tester')
+            vm.process = Mock()
+            vm.process.poll.return_value = None
+            with patch.object(platform, 'command', side_effect=[self.transport_error(self.reset), self.reply('0\n')]) as command:
+                self.wait(vm, directory)
+            first, second = [call.args[0] for call in command.call_args_list]
+            self.assertEqual(first, second)
+            for option in ('StrictHostKeyChecking=yes', 'HostKeyAlgorithms=ssh-ed25519',
+                           'HostKeyAlias=owned', 'UpdateHostKeys=no', 'IdentityAgent=none',
+                           'GlobalKnownHostsFile=/dev/null', 'UserKnownHostsFile=' + str(vm.known_hosts)):
+                self.assertIn(option, first)
+            self.assertEqual(vm.known_hosts.read_text(), 'owned ssh-ed25519 original-pin\n')
+
+    def test_late_success_does_not_escape_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            vm = self.observer([])
+            def late(*args, **kwargs):
+                clock[0] = 13
+                return self.reply('0\n')
+            clock = [0]
+            vm.ssh.side_effect = late
+            with patch.object(platform.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    self.assertRaisesRegex(TimeoutError, 'provisioning deadline'):
+                platform.wait_for_provision(vm, 12, directory)
+
     def test_exit_status_is_strictly_parsed_on_the_host(self):
         for text, expected in [('running\n', None), ('0\n', 0), ('1\n', 1), ('255\n', 255)]:
             self.assertEqual(platform.parse_provision_status(text), expected)
@@ -243,7 +382,7 @@ class ProvisioningObservation(unittest.TestCase):
             state.mkdir()
             vm = Mock()
             vm.directory = state
-            vm.process.poll.return_value = 0
+            vm.process.poll.return_value = None
             vm.provision_status.side_effect = [None, 0]
             boundary = RuntimeError('stop at completed provisioning boundary')
             def execute(argv, **kwargs):
