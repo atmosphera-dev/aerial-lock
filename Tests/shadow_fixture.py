@@ -35,8 +35,10 @@ def restore_account(user, original, database=Path('/etc/shadow')):
     with account_lock():
         metadata = database.stat()
         current = database.read_bytes()
-        line = account_line(current, user)
-        replacement = current.replace(line, original)
+        account_line(current, user)  # Require exactly one selected record.
+        name = user.encode()
+        replacement = b''.join(original if record.partition(b':')[0] == name else record
+                               for record in current.splitlines(keepends=True))
         # Same-filesystem publication, with no truncation of the live database.
         with tempfile.NamedTemporaryFile(dir=database.parent, prefix='.' + database.name + '.aerial-',
                                          mode='wb', delete=False) as stream:

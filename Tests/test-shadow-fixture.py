@@ -92,6 +92,19 @@ class ShadowRestoration(unittest.TestCase):
                          (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode)))
         self.assertNotEqual(before.st_ino, after.st_ino, 'never truncate the live inode')
 
+    def test_shared_name_suffix_with_identical_fields_is_unchanged(self):
+        target = fixture.account_line(CURRENT, 'tester')
+        other = b'other' + target
+        for before, expected in ((target + other, ORIGINAL + other),
+                                 (other + target, other + ORIGINAL)):
+            with self.subTest(target_first=before.startswith(target)):
+                self.database.write_bytes(before)
+                fixture.restore_account('tester', ORIGINAL, self.database)
+                restored = self.database.read_bytes()
+                self.assertEqual(fixture.account_line(restored, 'tester'), ORIGINAL)
+                self.assertEqual(fixture.account_line(restored, 'othertester'), other)
+                self.assertEqual(restored, expected)
+
     def test_missing_or_duplicate_user_is_not_rewritten(self):
         for content in (b'peer:!:1::::::\n', CURRENT + ORIGINAL):
             self.database.write_bytes(content)
