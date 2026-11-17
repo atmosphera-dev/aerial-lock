@@ -80,7 +80,7 @@ bash Scripts/dev/qmllint.sh .
 node --test Tests/*.test.cjs
 ```
 
-`i18n.test.cjs` executes ConfigStore's actual methods with a fake FileView
+`i18n.test.cjs` executes ConfigStore's actual presentation methods with a fake FileView
 boundary. It checks per-key user/bundle/English precedence, partial overrides,
 user-only languages, and one-warning fallback for missing or broken user files.
 Invalid or blank leaves cannot erase usable lower-layer labels.
@@ -150,8 +150,11 @@ retirement, inhibitors, wire flags/noninteractive headers, failures, service
 replacement and lifecycle ordering. No portable test sends a real OS action.
 `tst_power_actions.qml` drives all four actual themes at wide/narrow sizes,
 including Cancel-first keyboard flow, hidden controls, literal error text,
-progress and measured geometry. Config/i18n Node tests execute ConfigStore's
-shipped methods, not a second merge implementation.
+progress and measured geometry. The i18n Node tests execute ConfigStore's shipped
+presentation methods. Settings coverage lives in `companion-config`, using the
+production shared reader, repository and QML-constructed `LocalConfig` facade.
+`companion-api` uses generated bindings against the actual service on a private
+bus. Neither suite contacts remote content providers.
 
 Inside the owned VM's Wayland session, after building the tests:
 
@@ -345,8 +348,8 @@ the memory assertion depends on a timed output burst. Both checks also run
 through a Python interpreter symlink whose path contains spaces, exercising
 the fixture wrapper's argument quoting.
 
-`idle-config` compares the native reader's `--print-config` output with the
-actual ConfigStore merge/schema methods in QML for shared fixtures: missing,
+`idle-config` compares the idle reader's `--print-config` output with the
+actual native `LocalConfig` facade for shared fixtures: missing,
 partial, full and invalid objects/fields, extra keys and timeout bounds.
 Both idle fixtures set `AERIAL_LOCK_SHELL` to the source tree, so no installed
 `/usr/share/aerial-lock` is needed. This variable selects both the supervisor's

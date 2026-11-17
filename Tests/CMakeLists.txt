@@ -13,6 +13,37 @@ target_link_libraries(native-input-probe PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 
 enable_testing()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/local-config.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/local-config.h" -o "${CMAKE_CURRENT_BINARY_DIR}/local-config.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/native/local-config.h")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/config-repository.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/companion/config-repository.h" -o "${CMAKE_CURRENT_BINARY_DIR}/config-repository.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/companion/config-repository.h")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-config-probe.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-config-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-config-probe.moc"
+    DEPENDS companion-config-probe.cpp)
+add_executable(companion-config-probe companion-config-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/common/config-document.cpp" "${AERIAL_LOCK_SOURCE}/native/local-config.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/config-repository.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/local-config.moc" "${CMAKE_CURRENT_BINARY_DIR}/config-repository.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/companion-config-probe.moc")
+target_include_directories(companion-config-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(companion-config-probe PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
+add_test(NAME companion-config COMMAND companion-config-probe "${AERIAL_LOCK_SOURCE}")
+find_program(QDBUSXML2CPP qdbusxml2cpp PATHS /usr/lib/qt6/bin REQUIRED)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h"
+    COMMAND "${QDBUSXML2CPP}" -m -N -c CompanionClient -p "${CMAKE_CURRENT_BINARY_DIR}/companion_client" "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Companion1.xml"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Companion1.xml")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h" -o "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h")
+add_executable(companion-api-probe companion-api-probe.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp")
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
+target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(companion-api-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
+add_test(NAME companion-api COMMAND dbus-run-session -- "$<TARGET_FILE:companion-api-probe>"
+    "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 add_executable(auth-client-probe auth-client-probe.c "${AERIAL_LOCK_SOURCE}/native/auth-client.c")
 set_property(TARGET auth-client-probe PROPERTY C_STANDARD 11)
 target_link_options(auth-client-probe PRIVATE "-Wl,--wrap=send")
@@ -106,7 +137,7 @@ pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")
 target_link_libraries(emergency-unit PRIVATE PkgConfig::WAYLAND PkgConfig::XKBCOMMON)
 add_test(NAME emergency-unit COMMAND emergency-unit)
-add_executable(emergency-settings-probe emergency-settings-probe.cpp)
+add_executable(emergency-settings-probe emergency-settings-probe.cpp "${AERIAL_LOCK_SOURCE}/common/config-document.cpp")
 target_link_libraries(emergency-settings-probe PRIVATE Qt6::Core Qt6::Qml)
 add_test(NAME emergency-settings COMMAND emergency-settings-probe "${AERIAL_LOCK_SOURCE}")
 add_test(NAME emergency-integration-contract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-emergency-integration.py")
@@ -213,7 +244,7 @@ add_executable(idle-bus-fixture idle-bus-fixture.cpp)
 target_link_libraries(idle-bus-fixture PRIVATE Qt6::Core Qt6::DBus)
 add_test(NAME idle-config
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-idle-config.py"
-            "${AERIAL_LOCK_SOURCE}/idle/aerial-idle" "${QMLTESTRUNNER}")
+            "${AERIAL_LOCK_SOURCE}/idle/aerial-idle" "$<TARGET_FILE:companion-config-probe>")
 add_test(NAME idle-shell-dir
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-idle-shell-dir.py"
             "${AERIAL_LOCK_SOURCE}")

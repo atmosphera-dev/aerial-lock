@@ -3,6 +3,24 @@
   "backgroundColor": "#000000",
   "theme": "Macintosh.qml",
   "sources": [],
+  "acquisition": {
+    "automatic": {
+      "enabled": true,
+      "allowedResolutions": [1080],
+      "allowMetered": false,
+      "connectionTypes": {
+        "ethernet": true, "wifi": true, "cellular": true,
+        "bluetooth": true, "vpn": true, "other": true, "unknown": true
+      },
+      "power": { "ac": true, "battery": true, "unknown": true }
+    },
+    "checkIntervalSeconds": 3600
+  },
+  "cache": {
+    "maxBytes": 10000000000,
+    "rotationDays": 7,
+    "minFreeBytes": 0
+  },
   "pamService": "aerial-lock",
   "fallbackQuitMs": 3000,
   "pamWatchdogTimeoutMs": 60000,

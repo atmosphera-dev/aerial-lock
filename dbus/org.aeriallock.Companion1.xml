@@ -1,0 +1,23 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.aeriallock.Companion1">
+    <property name="ApiVersion" type="u" access="read"/>
+    <property name="Profile" type="s" access="read"/>
+    <property name="ConfigRevision" type="s" access="read"/>
+    <method name="GetSettings">
+      <arg name="userJson" type="s" direction="out"/>
+      <arg name="effectiveJson" type="s" direction="out"/>
+      <arg name="revision" type="s" direction="out"/>
+    </method>
+    <method name="UpdateSettings">
+      <arg name="expectedRevision" type="s" direction="in"/>
+      <arg name="mergePatchJson" type="s" direction="in"/>
+      <arg name="revision" type="s" direction="out"/>
+    </method>
+    <method name="SetPaused"><arg name="paused" type="b" direction="in"/></method>
+    <signal name="SettingsChanged">
+      <arg name="revision" type="s"/><arg name="paths" type="as"/>
+    </signal>
+  </interface>
+</node>
