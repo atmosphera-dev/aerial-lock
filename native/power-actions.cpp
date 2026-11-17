@@ -228,12 +228,16 @@ void PowerActions::dispatch(quint64 transaction, const QString &service) {
 }
 
 void PowerActions::inhibited(quint64 transaction, const QString &service, int action) {
-    // Every known-inhibited outcome gathers the same bounded, untrusted detail,
-    // including a capability that changed before the user's request reached us.
-    call(service, manager, "ListInhibitors", {}, [this, transaction, service, action](const QDBusMessage &reply) {
-        if (transaction != transactionEpoch || !active() || service != owner) return;
+    if (transaction != transactionEpoch || !active() || service != owner) return;
+    // Definite refusal ends the operation before optional metadata is fetched.
+    // Authentication must never depend on another application's detail reply.
+    const auto detailEpoch = transactionEpoch + 1;
+    finish("inhibited");
+    if (detailEpoch != transactionEpoch || !active() || service != owner || failure != "inhibited" || lastAction != ids[action]) return;
+    call(service, manager, "ListInhibitors", {}, [this, detailEpoch, service, action](const QDBusMessage &reply) {
+        if (detailEpoch != transactionEpoch || !active() || service != owner || failure != "inhibited") return;
         readBlocker(reply, action);
-        finish("inhibited");
+        emit changed();
     });
 }
 

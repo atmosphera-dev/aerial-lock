@@ -96,6 +96,7 @@ def run_group(request_path):
     compositor = None
     password = None
     backup = root / 'run/shadow-backup'
+    user = pwd.getpwuid(os.getuid()).pw_name
     service = 'aerial-ci-' + request['uuid'].split('-')[0]
     pam_path = '/etc/pam.d/' + service
     fixture_ready = False
@@ -147,7 +148,6 @@ def run_group(request_path):
         subprocess.run(['sudo', '-n', 'chmod', '600', str(backup)], check=True, timeout=10)
         backup_ready = True
         password = secrets.token_hex(16)
-        user = pwd.getpwuid(os.getuid()).pw_name
         subprocess.run(['sudo', '-n', 'chpasswd'], input=f'{user}:{password}\n', text=True, check=True, timeout=10)
         subprocess.run(['sudo', '-n', 'test', '!', '-e', pam_path], check=True, timeout=10)
         subprocess.run(['sudo', '-n', 'tee', pam_path], input='auth required pam_unix.so\n',
@@ -203,8 +203,8 @@ def run_group(request_path):
                        error=type(error).__name__, reason=str(error))
     finally:
         if backup_ready:
-            subprocess.run(['sudo', '-n', 'cp', '--preserve=mode,ownership,timestamps', str(backup), '/etc/shadow'], check=True, timeout=10)
-            subprocess.run(['sudo', '-n', 'cmp', '-s', str(backup), '/etc/shadow'], check=True, timeout=10)
+            subprocess.run(['sudo', '-n', sys.executable, str(source / 'Tests/shadow_fixture.py'), user, str(backup)],
+                           check=True, timeout=30)
         if backup.exists():
             subprocess.run(['sudo', '-n', 'rm', '-f', str(backup)], check=True, timeout=10)
         if fixture_ready:

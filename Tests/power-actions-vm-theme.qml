@@ -75,7 +75,7 @@ FocusScope {
                 state: power.state, pending: power.pendingAction, active: power.activeAction,
                 confirming: power.confirmationRequired, busy: power.busy, error: power.error,
                 status: power.status, who: power.blockerWho, why: power.blockerWhy,
-                enabled: power.enabled,
+                enabled: power.enabled, checking: root.context.labels.powerChecking,
                 canSuspend: power.canSuspend, canHibernate: power.canHibernate,
                 canReboot: power.canReboot, canPowerOff: power.canPowerOff,
                 suspendReason: power.suspendReason, hibernateReason: power.hibernateReason,

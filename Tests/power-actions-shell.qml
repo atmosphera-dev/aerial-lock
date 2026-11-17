@@ -97,7 +97,7 @@ ShellRoot {
                     return true
                 },
                 function() {
-                    if (power.errorCode !== "inhibited") return false
+                    if (power.errorCode !== "inhibited" || !power.blockerWho) return false
                     var lock = loader.item as LockModule.Lock
                     require(lock.context.power.error === "Restart is blocked by <b>Firefox</b> %3: <img> %2", "literal-blocker-projection")
                     require(!lock.context.power.interactionActive && lock.locked, "failure-restores-auth-with-lock")
@@ -120,6 +120,38 @@ ShellRoot {
                     if (power.state !== "idle") return false
                     var lock = loader.item as LockModule.Lock
                     require(lock.context.auth.input.text === "retained-draft" && lock.locked, "resume-retains-lock-and-draft")
+                    configure({hold: "SuspendWithFlags"})
+                    lock.context.power.requestSuspend()
+                    return true
+                },
+                function() {
+                    if (count("SuspendWithFlags") !== 1) return false
+                    configure({hold: "ListInhibitors",
+                               faults: {SuspendWithFlags: "org.freedesktop.login1.BlockedByInhibitorLock"},
+                               inhibitors: [{what: "sleep", mode: "block", who: "Firefox", why: "Downloading file"}]})
+                    power.control("Release", "{}")
+                    return true
+                },
+                function() {
+                    if (count("ListInhibitors") !== 1) return false
+                    var lock = loader.item as LockModule.Lock
+                    require(power.errorCode === "inhibited" && !lock.context.power.interactionActive,
+                            "dispatch-rejection-restores-input-before-detail")
+                    require(lock.locked && unlocks === 0 && releases === 0 && pam.starts === 1,
+                            "dispatch-rejection-does-not-authenticate-or-release")
+                    lock.tryUnlock()
+                    require(pam.starts === 2 && lock.unlockInProgress, "independent-auth-allowed-while-detail-held")
+                    lock.context.power.requestReboot()
+                    require(power.confirmationRequired && !lock.unlockInProgress && unlocks === 0 && releases === 0,
+                            "new-intent-cancels-independent-pam-safely")
+                    power.control("Release", "{}")
+                    return true
+                },
+                function() {
+                    var lock = loader.item as LockModule.Lock
+                    require(power.confirmationRequired && !power.errorCode && !power.blockerWho,
+                            "late-detail-cannot-replace-new-controller-intent")
+                    lock.context.power.cancel()
                     configure({hold: "ListInhibitors"})
                     lock.context.power.requestSuspend()
                     return true

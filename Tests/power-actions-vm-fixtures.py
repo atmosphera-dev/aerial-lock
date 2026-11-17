@@ -13,6 +13,7 @@ import secrets
 import stat
 import subprocess
 import time
+from shadow_fixture import restore_account
 
 
 def run(*argv, **kwargs):
@@ -115,13 +116,7 @@ def main():
         print('POLICY_' + args.policy.upper())
         return
     assert not rule.exists() and not other_pam.exists() and not (private / 'other-created').exists()
-    current = Path('/etc/shadow').read_text()
-    line = next(line for line in current.splitlines(keepends=True) if line.startswith(record['guest']['user'] + ':'))
-    original = (private / 'tester-shadow').read_text()
-    assert current.count(line) == 1
-    Path('/etc/shadow').write_text(current.replace(line, original))
-    assert next(line for line in Path('/etc/shadow').read_text().splitlines(keepends=True)
-                if line.startswith(record['guest']['user'] + ':')) == original
+    restore_account(record['guest']['user'], (private / 'tester-shadow').read_bytes())
     assert pam.read_text() == 'auth required pam_unix.so\n'
     pam.unlink()
     (root / 'run/pam-fixture-secret').unlink()

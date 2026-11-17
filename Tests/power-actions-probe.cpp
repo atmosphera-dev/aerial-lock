@@ -116,6 +116,38 @@ int main(int argc, char **argv) {
         require(until([&] { return !power.errorCode().isEmpty(); }), "error shown");
         require(power.state() == "idle", "definite error restores input");
     }
+    for (const QString &action : {"suspend", "hibernate", "reboot", "powerOff"}) {
+        const QString method = action == "suspend" ? "SuspendWithFlags" : action == "hibernate" ? "HibernateWithFlags"
+                             : action == "reboot" ? "RebootWithFlags" : "PowerOffWithFlags";
+        for (int retire = 0; retire < 4; ++retire) {
+            control("Configure", {{"hold", method}});
+            PowerActions power(bus, nullptr); ready(power); power.request(action); power.confirm();
+            require(until([&] { return calls(method) == 1; }), "dispatch held before definite rejection");
+            control("Configure", {{"hold", "ListInhibitors"},
+                {"faults", QJsonObject{{method, "org.freedesktop.login1.BlockedByInhibitorLock"}}},
+                {"inhibitors", QJsonArray{QJsonObject{{"what", "sleep:shutdown"}, {"mode", "block"},
+                    {"who", "Firefox"}, {"why", "Downloading file"}}}}});
+            control("Release");
+            require(until([&] { return calls("ListInhibitors") == 1; }), "post-rejection detail reply held");
+            require(power.state() == "idle" && !power.interactionActive() && !power.busy()
+                    && power.pendingAction().isEmpty() && power.errorCode() == "inhibited",
+                    "definite rejection restores authentication before blocker detail");
+            require(power.activeAction() == action, "immediate failure retains action for generic message");
+            if (retire == 0) power.clearError();
+            else if (retire == 1) power.request("reboot");
+            else if (retire == 2) power.setEnabled(false);
+            control("Release"); QTest::qWait(50);
+            if (retire == 3) {
+                require(power.blockerWho() == "Firefox" && power.blockerWhy() == "Downloading file",
+                        "current failure accepts asynchronously enriched blocker detail");
+                continue;
+            }
+            require(power.blockerWho().isEmpty() && power.blockerWhy().isEmpty(), "retired blocker details ignored");
+            if (retire == 0) require(power.errorCode().isEmpty() && power.activeAction().isEmpty(), "detail cannot revive dismissal");
+            else if (retire == 1) require(power.confirmationRequired() && power.errorCode().isEmpty(), "detail cannot replace new intent");
+            else require(power.state() == "idle" && !power.interactionActive(), "definite rejection clears sent before disable");
+        }
+    }
     for (const QString &error : {"org.freedesktop.DBus.Error.AccessDenied", "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired",
                                 "org.freedesktop.login1.OperationInProgress", "org.freedesktop.login1.SleepVerbNotSupported",
                                 "org.freedesktop.DBus.Error.NoReply", "org.freedesktop.DBus.Error.ServiceUnknown"}) {
@@ -137,7 +169,7 @@ int main(int argc, char **argv) {
         const QString why = longText ? QString(90, 'r') : QStringLiteral("<img src='https://invalid.test'> %2");
         control("Configure", {{"inhibitors", QJsonArray{QJsonObject{{"what", "shutdown"}, {"mode", "block"}, {"who", who}, {"why", why}}}}});
         PowerActions power(bus, nullptr); ready(power); power.request("reboot"); power.confirm();
-        require(until([&] { return power.errorCode() == "inhibited"; }), "blocker data outcome");
+        require(until([&] { return power.errorCode() == "inhibited" && !power.blockerWho().isEmpty(); }), "blocker data outcome");
         require(power.activeAction() == "reboot" && calls("RebootWithFlags") == 0, "blocked action retained without dispatch");
         require(power.blockerWho() == (longText ? QString(37, 'n') + "..." : who), "name literal and bounded to 40 codepoints");
         require(power.blockerWhy() == (longText ? QString(77, 'r') + "..." : why), "reason literal and bounded to 80 codepoints");
@@ -163,8 +195,19 @@ int main(int argc, char **argv) {
         require(until([&] { return power.suspendReason() == "inhibited"; }), "inhibited snapshot before detail hold");
         power.request("suspend");
         require(until([&] { return calls("ListInhibitors") == 1; }), "inhibitor detail held");
+        require(power.state() == "idle" && !power.interactionActive(), "initial refusal never blocks input for detail");
         power.clearError(); control("Release"); QTest::qWait(50);
         require(power.errorCode().isEmpty() && power.activeAction().isEmpty(), "dismiss retires late inhibitor detail");
+    }
+    control("Configure"); {
+        PowerActions power(bus, nullptr); ready(power); power.request("reboot");
+        control("Configure", {{"caps", QJsonObject{{"CanReboot", "inhibitor-blocked"}}}, {"hold", "ListInhibitors"}});
+        power.confirm();
+        require(until([&] { return calls("ListInhibitors") == 1; }), "final capability refusal detail held");
+        require(power.errorCode() == "inhibited" && power.state() == "idle" && !power.interactionActive(),
+                "final capability refusal restores input before detail");
+        power.clearError(); control("Release"); QTest::qWait(50);
+        require(power.errorCode().isEmpty() && calls("RebootWithFlags") == 0, "final refusal detail cannot revive or dispatch");
     }
     control("Configure"); {
         PowerActions power(bus, nullptr); ready(power); power.request("reboot");

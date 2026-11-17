@@ -70,6 +70,8 @@ target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"
     "$<TARGET_FILE:power-actions-probe>" "$<TARGET_FILE:power-actions-bus-fixture>")
+add_test(NAME power-vm-discovery COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-vm.py")
+add_test(NAME shadow-fixture COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-shadow-fixture.py")
 add_test(NAME auth-helper COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-auth-helper.py"
     "${AERIAL_LOCK_SOURCE}/native/aerial-lock-auth" "$<TARGET_FILE:auth-pam-fixture>")
 add_test(NAME surface-input-teardown

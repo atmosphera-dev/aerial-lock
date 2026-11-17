@@ -52,7 +52,10 @@ def main():
             log = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
             print(log, end='')
             assert result.returncode == 0 and 'POWER_CONTROLLER_PASS ' in log, 'controller failed'
-            assert not re.search(r'(?:WARN|ERROR|TypeError|ReferenceError)', log), 'unexpected warning'
+            diagnostic = r'^\s*WARN\s*:\s*power-action: org\.freedesktop\.login1\.BlockedByInhibitorLock\s*$'
+            assert len(re.findall(diagnostic, log, re.MULTILINE)) == 1, 'expected dispatch rejection diagnostic'
+            remaining = re.sub(diagnostic, '', log, flags=re.MULTILINE)
+            assert not re.search(r'(?:WARN|ERROR|TypeError|ReferenceError)', remaining), 'unexpected warning'
             for secret in ('queued-synthetic', 'retained-draft'):
                 assert secret not in log, 'input leaked in log'
     finally:

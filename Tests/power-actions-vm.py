@@ -352,7 +352,11 @@ class Acceptance:
 
     def supported(self, action):
         self.launch("MaterialYou" if action == "suspend" else "Windows7")
-        state = self.state(lambda state: state["canReboot"])
+        capability_key = ACTION_CAPABILITY[action]
+        reason_key = {"suspend": "suspendReason", "hibernate": "hibernateReason",
+                      "reboot": "rebootReason", "powerOff": "powerOffReason"}[action]
+        state = self.state(lambda state: state[capability_key]
+                           or state[reason_key] not in ("", state["checking"]))
         capability = call("Can" + {"suspend": "Suspend", "hibernate": "Hibernate", "reboot": "Reboot",
                                   "powerOff": "PowerOff"}[action])
         if not state[ACTION_CAPABILITY[action]]:
