@@ -150,7 +150,7 @@ add_test(NAME companion-planner COMMAND companion-content-probe plannerDurabilit
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/local-content.h" -o "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/native/local-content.h")
-foreach(stem IN ITEMS http-operation local-probe transfer manifest-store transfer-queue)
+foreach(stem IN ITEMS http-operation local-probe transfer manifest-store transfer-queue policy-monitor)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
         COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/companion/${stem}.h" -o "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
         DEPENDS "${AERIAL_LOCK_SOURCE}/companion/${stem}.h")
@@ -166,14 +166,17 @@ add_executable(companion-transfer-probe companion-transfer-probe.cpp
     "${AERIAL_LOCK_SOURCE}/companion/manifest-store.cpp" "${CMAKE_CURRENT_BINARY_DIR}/manifest-store.moc"
     "${AERIAL_LOCK_SOURCE}/companion/planner-state.cpp" "${AERIAL_LOCK_SOURCE}/companion/acquisition-planner.cpp"
     "${AERIAL_LOCK_SOURCE}/companion/transfer-queue.cpp" "${CMAKE_CURRENT_BINARY_DIR}/transfer-queue.moc"
+    "${AERIAL_LOCK_SOURCE}/companion/policy-monitor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/policy-monitor.moc"
     "${AERIAL_LOCK_SOURCE}/companion/config-repository.cpp" "${CMAKE_CURRENT_BINARY_DIR}/config-repository.moc"
     "${AERIAL_LOCK_SOURCE}/common/config-document.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/local-probe.moc" "${CMAKE_CURRENT_BINARY_DIR}/transfer.moc"
     "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc")
 target_include_directories(companion-transfer-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(companion-transfer-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
-target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::Network Qt6::Test PkgConfig::ARCHIVE)
-add_test(NAME companion-transfer COMMAND companion-transfer-probe "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
+target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Network Qt6::Test PkgConfig::ARCHIVE)
+add_test(NAME companion-transfer COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
+add_test(NAME companion-policy COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
+    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" policyQueue policySnapshotsAndOwnerReplacement policyTransferPauseAndResume)
 add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-queue.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)

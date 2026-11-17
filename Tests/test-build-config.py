@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o",
         "local-config.o", "config-document.o", "config-repository.o",
         "local-content.o", "owned-directory.o", "content-snapshot.o",
-        "companion-main.o", "companion-service.o", "companion_adaptor.o",
+        "companion-main.o", "companion-service.o", "companion_adaptor.o", "policy-monitor.o",
         "media-probe.o",
         "source-resolver.o", "cache-store.o", "http-operation.o", "manifest-store.o", "local-probe.o",
         "transfer.o", "planner-state.o", "acquisition-planner.o", "transfer-queue.o",

@@ -1,8 +1,11 @@
 #include "../companion/transfer.h"
 #include "../companion/manifest-store.h"
 #include "../companion/transfer-queue.h"
+#include "../companion/policy-monitor.h"
 #include "../common/content-snapshot.h"
 #include <QCoreApplication>
+#include <QDBusVirtualObject>
+#include <QDBusMetaType>
 #include <QFile>
 #include <QJsonDocument>
 #include <QProcess>
@@ -15,6 +18,56 @@
 #include <unistd.h>
 
 using namespace Aerial;
+
+class PolicyPeer : public QDBusVirtualObject {
+public:
+    const QString nm = "org.freedesktop.NetworkManager", up = "org.freedesktop.UPower";
+    const QString manager = "/org/freedesktop/NetworkManager", power = "/org/freedesktop/UPower";
+    const QString primary = manager + "/ActiveConnection/1", vpn = manager + "/ActiveConnection/2", device = manager + "/Devices/1";
+    QDBusConnection bus;
+    QMap<QString, QVariantMap> data;
+    QList<QDBusMessage> held;
+    QString hold;
+    QStringList calls;
+    PolicyPeer() : bus(QDBusConnection::connectToBus(QDBusConnection::SessionBus, "policy-fixture"))
+    {
+        data[manager] = {{"State", uint(70)}, {"Connectivity", uint(4)}, {"Metered", uint(2)},
+            {"PrimaryConnection", QVariant::fromValue(QDBusObjectPath(primary))},
+            {"ActiveConnections", QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(primary)})}};
+        data[primary] = {{"Type", "802-3-ethernet"}, {"State", uint(2)}, {"Default", true}, {"Vpn", false},
+            {"Devices", QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(device)})}};
+        data[device] = {{"Metered", uint(2)}};
+        data[power] = {{"OnBattery", false}};
+        if (!bus.registerVirtualObject(manager, this, QDBusConnection::SubPath)
+            || !bus.registerVirtualObject(power, this) || !bus.registerService(nm) || !bus.registerService(up)) qFatal("policy peer registration failed");
+    }
+    ~PolicyPeer()
+    {
+        bus.unregisterService(nm); bus.unregisterService(up);
+        bus.unregisterObject(manager, QDBusConnection::UnregisterTree); bus.unregisterObject(power);
+        QDBusConnection::disconnectFromBus("policy-fixture");
+    }
+    QString introspect(const QString &) const override { return {}; }
+    bool handleMessage(const QDBusMessage &message, const QDBusConnection &connection) override
+    {
+        calls.append(message.interface() + "." + message.member());
+        if (message.interface() != "org.freedesktop.DBus.Properties" || message.member() != "GetAll") {
+            connection.send(message.createErrorReply(QDBusError::UnknownMethod, "read-only peer")); return true;
+        }
+        if (message.path() == hold) held.append(message);
+        else connection.send(message.createReply(QVariantList{data.value(message.path())}));
+        return true;
+    }
+    void update(const QString &path, const QVariantMap &patch, const QStringList &invalidated = {})
+    {
+        for (auto it = patch.begin(); it != patch.end(); ++it) data[path][it.key()] = it.value();
+        for (const auto &key : invalidated) data[path].remove(key);
+        auto message = QDBusMessage::createSignal(path, "org.freedesktop.DBus.Properties", "PropertiesChanged");
+        const auto interface = path == manager ? nm : path == power ? up : path == device ? nm + ".Device" : nm + ".Connection.Active";
+        message << interface << patch << invalidated;
+        if (!bus.send(message)) qFatal("policy signal failed");
+    }
+};
 
 class HttpFixture : public QTcpServer {
 public:
@@ -69,6 +122,11 @@ public:
                     const bool head = buffer->startsWith("HEAD ");
                     if (head) body.clear();
                     if (mode == "interrupted") body = body.left(body.size() / 2);
+                    if (mode == "hold-partial" && !head) {
+                        socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
+                            + QByteArray::number(declared) + "\r\n" + extra + "\r\n" + body.left(body.size() / 2));
+                        return;
+                    }
                     if (mode == "chunked") {
                         socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n" + extra + "\r\n");
                         socket->write(QByteArray::number(body.size(), 16) + "\r\n" + body + "\r\n0\r\n\r\n");
@@ -433,6 +491,129 @@ private slots:
         queue->setPolicyReason("Metered"); queue->start();
         QTRY_VERIFY_WITH_TIMEOUT(ended(*queue, manual), 20000);
         QCOMPARE(queue->job(manual).value("state").toString(), "succeeded"); QCOMPARE(cache.entries().size(), 1);
+    }
+    void policyQueue_data()
+    {
+        QTest::addColumn<QString>("kind");
+        for (const auto *kind : {"ethernet", "wifi", "cellular", "bluetooth", "vpn", "other", "unknown",
+                 "ac", "battery", "power-unknown", "metered", "offline", "enabled", "resolution"})
+            QTest::newRow(kind) << QString::fromLatin1(kind);
+    }
+    void policyQueue()
+    {
+        QFETCH(QString, kind);
+        PolicyPeer peer;
+        const QMap<QString, QString> types{{"ethernet", "802-3-ethernet"}, {"wifi", "802-11-wireless"},
+            {"cellular", "gsm"}, {"bluetooth", "bluetooth"}, {"vpn", "vpn"}, {"other", "bridge"}, {"unknown", ""}};
+        if (types.contains(kind)) peer.data[peer.primary]["Type"] = types.value(kind);
+        if (kind == "battery") peer.data[peer.power]["OnBattery"] = true;
+        if (kind == "power-unknown") peer.data[peer.power].clear();
+        if (kind == "metered") {
+            // NM's manager says unmetered, but the VPN's underlying device says
+            // metered. Only a real graph read discovers that restriction.
+            peer.data[peer.vpn] = {{"Type", "vpn"}, {"Vpn", true}, {"Default", true}, {"State", uint(2)}};
+            peer.data[peer.manager]["ActiveConnections"] = QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(peer.primary), QDBusObjectPath(peer.vpn)});
+            peer.data[peer.device]["Metered"] = uint(1);
+        }
+        if (kind == "offline") peer.data[peer.manager]["State"] = uint(20);
+        PolicyMonitor monitor(QDBusConnection::sessionBus()); monitor.start();
+        QTRY_VERIFY(monitor.ready());
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto paths = queueConfig(directory.path(), {source(server)}, true);
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        QJsonObject disallowed, allowed;
+        if (types.contains(kind)) {
+            disallowed = {{"connectionTypes", QJsonObject{{kind, false}}}};
+            allowed = {{"connectionTypes", QJsonObject{{kind, true}}}};
+        } else if (kind == "ac" || kind == "battery" || kind == "power-unknown") {
+            const auto key = kind == "power-unknown" ? QString("unknown") : kind;
+            disallowed = {{"power", QJsonObject{{key, false}}}}; allowed = {{"power", QJsonObject{{key, true}}}};
+        } else if (kind == "metered") allowed = {{"allowMetered", true}};
+        else if (kind == "enabled") { disallowed = {{"enabled", false}}; allowed = {{"enabled", true}}; }
+        else if (kind == "resolution") { disallowed = {{"allowedResolutions", QJsonArray{}}}; allowed = {{"allowedResolutions", QJsonArray{1080}}}; }
+        const auto patch = [&](const QJsonObject &automatic) {
+            return config.update(config.document().revision, {{"acquisition", QJsonObject{{"automatic", automatic}}}}).ok();
+        };
+        QVERIFY(patch(disallowed));
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
+        const auto update = [&] { queue.setPolicyReason(monitor.deferReason(config.document().effective)); };
+        connect(&monitor, &PolicyMonitor::changed, &queue, update);
+        connect(&config, &ConfigRepository::changed, &queue, update);
+        update(); queue.start();
+        QTRY_VERIFY(queue.status() == "deferred" || queue.status() == "paused");
+        QVERIFY(server.requests.isEmpty());
+        const auto manual = queue.acquire({}, 1);
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, manual), 20000);
+        QCOMPARE(queue.job(manual).value("state").toString(), "succeeded");
+        QCOMPARE(cache.entries().size(), 1);
+        // Config changes and observer changes must trigger the same production
+        // planner. Resume fills the second clip, not just a reported status.
+        if (kind == "offline") peer.update(peer.manager, {{"State", uint(70)}});
+        else QVERIFY(patch(allowed));
+        QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), 2, 20000);
+        for (const auto &call : peer.calls) QCOMPARE(call, "org.freedesktop.DBus.Properties.GetAll");
+    }
+    void policySnapshotsAndOwnerReplacement()
+    {
+        PolicyPeer peer;
+        peer.hold = peer.manager;
+        PolicyMonitor monitor(QDBusConnection::sessionBus()); monitor.start();
+        QTRY_COMPARE(peer.held.size(), 1); QVERIFY(!monitor.ready());
+        const auto old = peer.data[peer.manager];
+        peer.update(peer.manager, {{"Metered", uint(1)}});
+        QTest::qWait(30);
+        peer.hold.clear();
+        peer.bus.send(peer.held.takeFirst().createReply(QVariantList{old}));
+        QTRY_VERIFY(monitor.ready());
+        QCOMPARE(monitor.observations().value("metering").toString(), "metered");
+        peer.update(peer.power, {{"OnBattery", true}});
+        QTRY_COMPARE(monitor.observations().value("power").toString(), "battery");
+        peer.update(peer.power, {}, {"OnBattery"});
+        QTRY_COMPARE(monitor.observations().value("power").toString(), "unknown");
+        QVERIFY(peer.bus.unregisterService(peer.nm));
+        QTRY_COMPARE(monitor.observations().value("network").toString(), "unknown");
+        QCOMPARE(monitor.observations().value("metering").toString(), "unknown");
+        peer.data[peer.manager]["State"] = uint(20);
+        QVERIFY(peer.bus.registerService(peer.nm));
+        QTRY_COMPARE(monitor.observations().value("network").toString(), "offline");
+        QTRY_VERIFY(monitor.ready());
+        peer.update(peer.manager, {{"Connectivity", uint(2)}, {"State", uint(70)}});
+        QTRY_COMPARE(monitor.observations().value("network").toString(), "offline");
+    }
+    void policyTransferPauseAndResume()
+    {
+        PolicyPeer peer; PolicyMonitor monitor(QDBusConnection::sessionBus()); monitor.start();
+        QTRY_VERIFY(monitor.ready());
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"clip"}); server.modes["/clip.mp4"] = "hold-partial";
+        const auto paths = queueConfig(directory.path(), {source(server)}, true);
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
+        connect(&monitor, &PolicyMonitor::changed, &queue, [&] { queue.setPolicyReason(monitor.deferReason(config.document().effective)); });
+        queue.setPolicyReason(monitor.deferReason(config.document().effective)); queue.start();
+        QTRY_COMPARE(queue.status(), "downloading");
+        const auto parsed = SourceResolver::parse(source(server), server.url("/fixture.json"), server.bodies["/fixture.json"]);
+        QCOMPARE(parsed.representations.size(), 1);
+        const auto key = parsed.representations[0].key;
+        const auto received = [&] {
+            struct stat file{};
+            return cache.files().identity("partials/" + key + ".part", file) ? file.st_size : -1;
+        };
+        QTRY_COMPARE(received(), qint64(media.size() / 2));
+        peer.update(peer.device, {{"Metered", uint(1)}});
+        QTRY_COMPARE(queue.status(), "deferred");
+        QCOMPARE(queue.deferReason(), "Metered"); QVERIFY(cache.entries().isEmpty());
+        QCOMPARE(cache.metadata("partials/" + key + ".json").value("received").toInteger(), qint64(media.size() / 2));
+        const auto requests = server.requests.size();
+        QTest::qWait(50); QCOMPARE(server.requests.size(), requests);
+        server.modes["/clip.mp4"] = "206";
+        peer.update(peer.device, {{"Metered", uint(2)}});
+        QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), 1, 20000);
+        QVERIFY(server.requests.last().contains("Range: bytes=" + QByteArray::number(media.size() / 2) + '-'));
+        QCOMPARE(cache.files().read("objects/" + key + ".media", 1000000), media);
     }
     void queueRotationCadenceAndPins()
     {

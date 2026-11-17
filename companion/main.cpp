@@ -1,6 +1,7 @@
 #include "config-repository.h"
 #include "service.h"
 #include "transfer-queue.h"
+#include "policy-monitor.h"
 #include "../native/shell-dir.h"
 #include <QCoreApplication>
 #include <QDebug>
@@ -47,8 +48,10 @@ int main(int argc, char **argv)
     Aerial::PlannerState state(paths.state, clock, [] { return QRandomGenerator::global()->generate(); });
     std::unique_ptr<Aerial::CacheStore> cache;
     std::unique_ptr<Aerial::TransferQueue> queue;
+    Aerial::PolicyMonitor policy(QDBusConnection::systemBus());
     const auto initialize = [&] {
         if (queue) return;
+        if (!policy.ready()) return;
         const auto maximum = config.document().effective.value("cache").toObject().value("maxBytes").toInteger();
         // A fresh zero-cap profile creates no managed metadata or media. A later
         // settings transaction can initialize it without restarting the owner.
@@ -59,9 +62,17 @@ int main(int argc, char **argv)
         const auto appleRoot = root.open(QIODevice::ReadOnly) ? root.readAll() : QByteArray{};
         queue = std::make_unique<Aerial::TransferQueue>(config, *cache, state, transport,
             QStringLiteral(AERIAL_COMPANION_PROBE), appleRoot, clock);
+        queue->setPolicyReason(policy.deferReason(config.document().effective));
         queue->start();
     };
+    const auto updatePolicy = [&] {
+        if (queue) queue->setPolicyReason(policy.deferReason(config.document().effective));
+        else initialize();
+    };
+    QObject::connect(&policy, &Aerial::PolicyMonitor::changed, &app, updatePolicy);
+    QObject::connect(&config, &Aerial::ConfigRepository::changed, &app, updatePolicy);
     QObject::connect(&config, &Aerial::ConfigRepository::changed, &app, initialize);
+    policy.start();
     // Migration and initial planning run only after exported methods/name exist.
     QTimer::singleShot(0, &config, [&] { config.migrate(); initialize(); });
     return app.exec();
