@@ -172,6 +172,16 @@ sources, and a zero-cap profile beginning acquisition after an external settings
 replacement. These fixtures do not establish installed activation, real system
 NetworkManager/UPower observations, next-lock rendered video or Apple acceptance.
 
+`companion-policy` connects the production PolicyMonitor to read-only NM/UPower
+peers on a private bus and drives the real TransferQueue, HTTP transport and
+isolated probe. Each connection/power toggle, automatic enable, resolution
+allowance, offline state and VPN underlying metering blocks automatic requests;
+manual acquisition still publishes decoded content, and reallowing policy fills
+the remaining clip. Mid-transfer metering retains partial bytes and resumes with
+Range. A delayed stale snapshot, property invalidation and observer name-owner
+replacement exercise the subscription-before-snapshot path. These are injected
+observations, not mutations or end-to-end proofs of the guest's real NM/UPower.
+
 Inside the owned VM's Wayland session, after building the tests:
 
 ```sh
