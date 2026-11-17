@@ -3,8 +3,28 @@
 <node>
   <interface name="org.aeriallock.Companion1">
     <property name="ApiVersion" type="u" access="read"/>
+    <property name="Version" type="s" access="read"/>
     <property name="Profile" type="s" access="read"/>
     <property name="ConfigRevision" type="s" access="read"/>
+    <property name="State" type="s" access="read"/>
+    <property name="DeferReason" type="s" access="read"/>
+    <property name="ManagedBytes" type="t" access="read"/>
+    <property name="UsageKnown" type="b" access="read"/>
+    <property name="PartialBytes" type="t" access="read"/>
+    <property name="ReservedBytes" type="t" access="read"/>
+    <property name="MaxBytes" type="t" access="read"/>
+    <property name="ReadyClips" type="u" access="read"/>
+    <property name="NextCheck" type="t" access="read"/>
+    <property name="Paths" type="a{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QVariantMap"/>
+    </property>
+    <property name="Observations" type="a{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QVariantMap"/>
+    </property>
+    <method name="EnsureContent">
+      <arg name="hints" type="a{sv}" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
+    </method>
     <method name="GetSettings">
       <arg name="userJson" type="s" direction="out"/>
       <arg name="effectiveJson" type="s" direction="out"/>
@@ -16,8 +36,34 @@
       <arg name="revision" type="s" direction="out"/>
     </method>
     <method name="SetPaused"><arg name="paused" type="b" direction="in"/></method>
+    <method name="Refresh">
+      <arg name="sourceIds" type="as" direction="in"/>
+      <arg name="job" type="o" direction="out"/>
+    </method>
+    <method name="Acquire">
+      <arg name="sourceIds" type="as" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="QVariantMap"/>
+      <arg name="job" type="o" direction="out"/>
+    </method>
+    <method name="ListSources">
+      <arg name="sources" type="aa{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="Aerial::SourceList"/>
+    </method>
+    <method name="ListJobs"><arg name="jobs" type="ao" direction="out"/></method>
+    <method name="Cancel"><arg name="job" type="o" direction="in"/></method>
+    <method name="Prune">
+      <arg name="dryRun" type="b" direction="in"/>
+      <arg name="job" type="o" direction="out"/>
+    </method>
+    <method name="ReportPlayback">
+      <arg name="profile" type="s" direction="in"/>
+      <arg name="assetKey" type="s" direction="in"/>
+    </method>
     <signal name="SettingsChanged">
       <arg name="revision" type="s"/><arg name="paths" type="as"/>
     </signal>
+    <signal name="ContentChanged"><arg name="generation" type="t"/></signal>
+    <signal name="JobAdded"><arg name="job" type="o"/></signal>
   </interface>
 </node>

@@ -35,7 +35,8 @@ CONTENT_OBJS := $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(OBJDI
 PROBE_OBJS := $(OBJDIR)/media-probe.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o $(CONFIG_OBJS)
 COMPANION_CONTENT_OBJS := $(CONTENT_OBJS) $(OBJDIR)/http-operation.o $(OBJDIR)/manifest-store.o $(OBJDIR)/local-probe.o $(OBJDIR)/transfer.o $(OBJDIR)/planner-state.o $(OBJDIR)/acquisition-planner.o $(OBJDIR)/transfer-queue.o
-COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/companion-service.o $(OBJDIR)/companion_adaptor.o $(OBJDIR)/policy-monitor.o $(CONFIG_OBJS) $(COMPANION_CONTENT_OBJS)
+COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/companion-service.o $(OBJDIR)/companion_adaptor.o $(OBJDIR)/job-object.o $(OBJDIR)/job_adaptor.o $(OBJDIR)/policy-monitor.o $(CONFIG_OBJS) $(COMPANION_CONTENT_OBJS)
+CLI_OBJS := $(OBJDIR)/aerialctl.o $(OBJDIR)/companion_client.o $(CONFIG_OBJS)
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
 INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(OBJDIR)/local-content.o $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(CONFIG_OBJS)
@@ -44,7 +45,7 @@ INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 .PHONY: all install uninstall dev clean pam-limits build-flags force-native-config
 
-all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial-companion companion/aerial-media-probe
+all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial-companion companion/aerial-media-probe cli/aerialctl
 
 # Make cannot see variable changes in a command line. One content-stable
 # prerequisite records the effective native configuration, so an incremental
@@ -72,7 +73,7 @@ $(OBJDIR)/native-config: force-native-config | $(OBJDIR)
 	$(file >$@.tmp,$(NATIVE_CONFIG))
 	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
 
-$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS) $(COMPANION_OBJS) $(CONTENT_OBJS) $(PROBE_OBJS): $(OBJDIR)/native-config
+$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS) $(COMPANION_OBJS) $(CONTENT_OBJS) $(PROBE_OBJS) $(CLI_OBJS): $(OBJDIR)/native-config
 
 # Phony on purpose: the value can come from the environment, which Make
 # cannot express as a file prerequisite. The generator is sub-second, so
@@ -255,8 +256,38 @@ $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h &: dbus/org.aerial
 $(OBJDIR)/config-repository.o: companion/config-repository.cpp companion/config-repository.h common/config-document.h $(OBJDIR)/config-repository.moc
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core) -o $@
 
-$(OBJDIR)/companion-service.o: companion/service.cpp companion/service.h companion/config-repository.h $(OBJDIR)/companion_adaptor.h $(OBJDIR)/service.moc
+$(OBJDIR)/companion-service.o: companion/service.cpp companion/service.h companion/config-repository.h companion/job-object.h companion/cache-store.h companion/transfer-queue.h companion/planner-state.h companion/policy-monitor.h common/dbus-types.h $(OBJDIR)/companion_adaptor.h $(OBJDIR)/service.moc
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus Qt6Network) -o $@
+
+$(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h &: dbus/org.aeriallock.Companion1.Job1.xml | $(OBJDIR)
+	/usr/lib/qt6/bin/qdbusxml2cpp -m -a $(OBJDIR)/job_adaptor -l Aerial::JobObject -i companion/job-object.h $<
+
+$(OBJDIR)/moc_job_adaptor.cpp: $(OBJDIR)/job_adaptor.h
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/job_adaptor.o: $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp companion/job-object.h
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+$(OBJDIR)/job-object.o: companion/job-object.cpp companion/job-object.h $(OBJDIR)/job_adaptor.h $(OBJDIR)/job-object.moc
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c companion/job-object.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+$(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h &: dbus/org.aeriallock.Companion1.xml common/dbus-types.h | $(OBJDIR)
+	/usr/lib/qt6/bin/qdbusxml2cpp -m -N -c CompanionClient -p $(OBJDIR)/companion_client -i common/dbus-types.h $<
+
+$(OBJDIR)/moc_companion_client.cpp: $(OBJDIR)/companion_client.h
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/companion_client.o: $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp common/dbus-types.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+$(OBJDIR)/aerialctl.moc: cli/aerialctl.cpp | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/aerialctl.o: cli/aerialctl.cpp $(OBJDIR)/aerialctl.moc $(OBJDIR)/companion_client.h common/config-document.h common/dbus-types.h native/shell-dir.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c cli/aerialctl.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+cli/aerialctl: $(CLI_OBJS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(CLI_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus)
 
 $(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
 	/usr/lib/qt6/moc $< -o $@
@@ -368,6 +399,7 @@ install: all
 	install -m 644 Config/build-flags.json $(DESTDIR)$(CONFDIR)/
 	install -m 644 Config/i18n/en.json $(DESTDIR)$(I18NDIR)/
 	install -m 755 aerial-lock $(DESTDIR)$(BINDIR)/aerial-lock
+	install -m 755 cli/aerialctl $(DESTDIR)$(BINDIR)/aerialctl
 	install -m 755 Scripts/aerial-lock-fetch $(DESTDIR)$(BINDIR)/aerial-lock-fetch
 	install -m 755 recovery/aerial-unlock $(DESTDIR)$(BINDIR)/aerial-unlock
 	install -m 755 supervisor/aerial-lock-supervisor $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
@@ -383,6 +415,7 @@ install: all
 	install -m 755 companion/aerial-media-probe $(DESTDIR)$(LIBEXECDIR)/aerial-media-probe
 	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces
 	install -m 644 dbus/org.aeriallock.Companion1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
+	install -m 644 dbus/org.aeriallock.Companion1.Job1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	install -d $(DESTDIR)$(DATADIR)/AerialLock/Native
 	install -m 644 AerialLock/Native/qmldir AerialLock/Native/native.qmltypes $(DESTDIR)$(DATADIR)/AerialLock/Native/
@@ -394,6 +427,7 @@ install: all
 uninstall:
 	rm -rf $(DESTDIR)$(DATADIR)
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock
+	rm -f $(DESTDIR)$(BINDIR)/aerialctl
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-fetch
 	rm -f $(DESTDIR)$(BINDIR)/aerial-unlock
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
@@ -403,6 +437,7 @@ uninstall:
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-companion $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Companion1.xml
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-media-probe
+	rm -f $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Companion1.Job1.xml
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	rm -f $(DESTDIR)$(PAMDIR)/aerial-lock
 
@@ -420,6 +455,7 @@ clean:
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service
 	rm -f companion/aerial-companion $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
+	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp
 	rm -f $(OBJDIR)/local-content.o $(OBJDIR)/local-content.moc
 	rm -f $(addprefix $(OBJDIR)/,http-operation.moc manifest-store.moc local-probe.moc transfer.moc transfer-queue.moc policy-monitor.moc)
 	@rmdir $(OBJDIR) 2>/dev/null || true

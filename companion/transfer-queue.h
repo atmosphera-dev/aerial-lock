@@ -29,6 +29,7 @@ public:
     QJsonObject jobs() const { auto result = state.jobs(); if (!active.isEmpty()) result[active] = current; return result; }
     QString status() const { return phase; }
     QString deferReason() const { return reason; }
+    QString automaticDeferReason() const { return automaticReason(); }
     qint64 nextCheck() const { return next; }
 signals:
     void changed();

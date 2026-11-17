@@ -49,30 +49,36 @@ int main(int argc, char **argv)
     std::unique_ptr<Aerial::CacheStore> cache;
     std::unique_ptr<Aerial::TransferQueue> queue;
     Aerial::PolicyMonitor policy(QDBusConnection::systemBus());
+    service.bind(&state, nullptr, nullptr, &policy);
     const auto initialize = [&] {
         if (queue) return;
-        if (!policy.ready()) return;
         const auto maximum = config.document().effective.value("cache").toObject().value("maxBytes").toInteger();
         // A fresh zero-cap profile creates no managed metadata or media. A later
         // settings transaction can initialize it without restarting the owner.
-        if (!maximum) return;
+        if (!maximum && !QFileInfo::exists(paths.cache)) return;
         cache = std::make_unique<Aerial::CacheStore>(paths.cache, quint64(maximum));
+        service.bind(&state, cache.get(), nullptr, &policy);
         if (!cache->valid() || !state.valid()) { qWarning("companion storage unavailable"); return; }
         QFile root(paths.bundle + "/Config/apple-root.pem");
         const auto appleRoot = root.open(QIODevice::ReadOnly) ? root.readAll() : QByteArray{};
         queue = std::make_unique<Aerial::TransferQueue>(config, *cache, state, transport,
             QStringLiteral(AERIAL_COMPANION_PROBE), appleRoot, clock);
-        queue->setPolicyReason(policy.deferReason(config.document().effective));
+        queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
+        service.bind(&state, cache.get(), queue.get(), &policy);
         queue->start();
     };
     const auto updatePolicy = [&] {
-        if (queue) queue->setPolicyReason(policy.deferReason(config.document().effective));
+        if (queue) queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
         else initialize();
     };
     QObject::connect(&policy, &Aerial::PolicyMonitor::changed, &app, updatePolicy);
     QObject::connect(&config, &Aerial::ConfigRepository::changed, &app, updatePolicy);
     QObject::connect(&config, &Aerial::ConfigRepository::changed, &app, initialize);
+    initialize();
     policy.start();
+    // A disconnected owner cannot keep accepting/performing unobservable work.
+    // Destruction retains durable jobs/partials for the next exclusive owner.
+    QDBusConnection::sessionBus().connect({}, {}, "org.freedesktop.DBus.Local", "Disconnected", &app, SLOT(quit()));
     // Migration and initial planning run only after exported methods/name exist.
     QTimer::singleShot(0, &config, [&] { config.migrate(); initialize(); });
     return app.exec();

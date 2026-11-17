@@ -32,7 +32,7 @@ target_link_libraries(companion-config-probe PRIVATE Qt6::Core Qt6::Qml Qt6::Tes
 add_test(NAME companion-config COMMAND companion-config-probe "${AERIAL_LOCK_SOURCE}")
 find_program(QDBUSXML2CPP qdbusxml2cpp PATHS /usr/lib/qt6/bin REQUIRED)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h"
-    COMMAND "${QDBUSXML2CPP}" -m -N -c CompanionClient -p "${CMAKE_CURRENT_BINARY_DIR}/companion_client" "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Companion1.xml"
+    COMMAND "${QDBUSXML2CPP}" -m -N -c CompanionClient -p "${CMAKE_CURRENT_BINARY_DIR}/companion_client" -i common/dbus-types.h "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Companion1.xml"
     DEPENDS "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Companion1.xml")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
     COMMAND Qt6::moc "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h" -o "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
@@ -40,7 +40,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
 add_executable(companion-api-probe companion-api-probe.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp")
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
-target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-api-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
 add_test(NAME companion-api COMMAND dbus-run-session -- "$<TARGET_FILE:companion-api-probe>"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
@@ -177,7 +177,11 @@ target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::DBus Qt6::
 add_test(NAME companion-transfer COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
 add_test(NAME companion-policy COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" policyQueue policySnapshotsAndOwnerReplacement policyTransferPauseAndResume)
+add_test(NAME companion-control COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
+    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" serviceCliPolicy serviceCliTransactions)
 add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-queue.py"
+    "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
+add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-owner.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)

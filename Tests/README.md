@@ -147,7 +147,8 @@ progress and measured geometry. The i18n Node tests execute ConfigStore's shippe
 presentation methods. Settings coverage lives in `companion-config`, using the
 production shared reader, repository and QML-constructed `LocalConfig` facade.
 `companion-api` uses generated bindings against the actual service on a private
-bus. Neither suite contacts remote content providers.
+bus. It checks uint64 byte properties, job objects/signals, profile isolation,
+no-reply hints and revision conflicts. Neither suite contacts remote providers.
 
 `companion-transfer` exercises the actual serialized queue, HTTP transport,
 isolated decoder, persisted jobs/retries and injected weekly clock. It checks
@@ -174,6 +175,18 @@ the remaining clip. Mid-transfer metering retains partial bytes and resumes with
 Range. A delayed stale snapshot, property invalidation and observer name-owner
 replacement exercise the subscription-before-snapshot path. These are injected
 observations, not mutations or end-to-end proofs of the guest's real NM/UPower.
+
+`companion-control` repeats the policy matrix through the real service and
+`aerialctl` on a private bus. The actual CLI sets each toggle, observes a defer,
+manually acquires decoded media, then permits automatic fill. It covers sparse
+set/reset, profile mismatch, terminal jobs after service restart, cancellation
+with retained partial bytes, killing a waiting CLI, explicit source bands versus
+manual automatic-quality bypass, refresh/prune, nested JSON job details and
+token exclusion from ordinary status/logs. `companion-owner` checks independent
+private-bus ownership conflicts, fresh zero-cap status, bus-loss retirement and
+honest storage-error/unknown-usage reporting without adopting foreign files.
+`UsageKnown=false` means byte totals are unavailable, not an empty managed cache.
+These checks do not replace installed activation or rendered-lock acceptance.
 
 Inside the owned VM's Wayland session, after building the tests:
 
