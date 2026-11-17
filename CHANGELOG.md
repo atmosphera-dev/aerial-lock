@@ -3,12 +3,15 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.6] - 2026-11-16
 
-### Added
+### Fixed
 
-- Lock-screen power controls, with inline confirmation for restart and shutdown
-  and application-blocker messages. Only actions allowed by the system are shown.
+- The lock screen's power buttons did nothing. Sleep, restart and shut down now
+  work, with an inline "Are you sure?" for restart and shut down, and a message
+  naming the application when one blocks the action. Only actions the system
+  allows are shown, and controls with nothing behind them (Session, Switch User)
+  are no longer drawn.
 
 ## [0.1.5] - 2026-11-16
 
