@@ -1,24 +1,21 @@
 /*
- * aerial-lock-supervisor — owns the locker lifecycle; respawn-only recovery.
+ * aerial-lock-supervisor - owns normal and native-emergency locker lifecycles.
  *
  * Long-lived child process (the aerial-lock launcher): spawns the locker,
- * retries within three total attempts on abnormal death, and — when attempts run
- * out — reports failure without claiming an unavailable guard locked the
- * session. Recovery never unlocks automatically. An explicit Release() call
+ * retries within three total attempts per stage on abnormal death. Normal
+ * exhaustion or a known startup failure transitions to the emergency client;
+ * emergency failure never unlocks automatically. An explicit Release() call
  * on the user's session bus or SIGUSR1 requests a graceful locker release,
  * bypassing PAM and disabling further respawns. The shelved auto-release work (Takeover::run as a
  * supervisor call path, the escalation gate, probe-based state detection)
  * lives on the `shelved/auto-release` branch; the manual `aerial-unlock`
  * binary is unchanged as the ops/TTY tool.
  *
- * Decision matrix is exit-code only:
- *   compositor dead  → session over, clean exit (checked FIRST)
- *   exit 0           → clean unlock / PAM refusal / external invalidation → done
- *   exit 72          → this attempt never engaged (runner/guard unavailable;
- *                      a shell's 126/127 from the runner counts the same)
- *   exit 71          → guard monitor failed; engagement is unknown
- *   exit != 0        → respawn under limit; at limit, guard failures exit 3,
- *                      other failures exit 2. No automatic unlock.
+ * Compositor death is checked first; an explicit pending release prevents any
+ * restart or transition. Normal clean exit 0 retains its established meaning.
+ * Emergency refusal and exec failure end with failure; other abnormal emergency
+ * exits retry without ever returning to Qt. Fixed phase logs distinguish this
+ * from readiness, which still requires the actual current child's locked report.
  *
  * Engagement state is never inferred from a running process or a held bus
  * name. Each locker attempt reports the compositor's lock confirmation over a
@@ -66,6 +63,7 @@
 
 #include "../native/session-identity.h"
 #include "../native/shell-dir.h"
+#include "emergency-settings.h"
 
 #ifndef AERIAL_LOCK_DEFAULT_SHELL
 #define AERIAL_LOCK_DEFAULT_SHELL "/usr/share/aerial-lock"
@@ -75,6 +73,9 @@
 #endif
 #ifndef AERIAL_LOCK_DEFAULT_PLUGIN_ROOT
 #define AERIAL_LOCK_DEFAULT_PLUGIN_ROOT "/usr/lib/aerial-lock/qt-plugins"
+#endif
+#ifndef AERIAL_LOCK_DEFAULT_EMERGENCY
+#define AERIAL_LOCK_DEFAULT_EMERGENCY "/usr/libexec/aerial-lock/aerial-lock-emergency"
 #endif
 
 static const int RESPAWN_LIMIT = 3;
@@ -124,6 +125,7 @@ public:
     // failed:   respawns ran out (exit 2/3); no lock is maintained by us.
     // ended:    the episode finished (unlock, refusal, compositor gone).
     enum class LockState { Engaging, Locked, Failed, Ended };
+    enum class Stage { Normal, Emergency };
 
     explicit Supervisor(const QString &sessionSocket)
         : m_sessionSocket(sessionSocket)
@@ -264,8 +266,10 @@ private:
         // A new attempt has confirmed nothing yet, whatever an earlier one did.
         closeReport();
         m_reportAccepted = false;
+        m_releaseDelivered = false;
+        m_releaseOffset = 0;
         setState(LockState::Engaging, QStringLiteral("launch"));
-        m_video = nextVideo();
+        m_video = m_stage == Stage::Normal ? nextVideo() : QString();
 
         // On Hyprland a respawned locker is refused without the
         // session-lock-restore flag, so set it just-in-time before every
@@ -273,7 +277,8 @@ private:
         // config reload can reset it between attempts, so never cache success.
         if (isHyprland()) updateHyprlandRestoreFlag(true);
 
-        log(QStringLiteral("launching locker, attempt %1/%2%3")
+        log((m_stage == Stage::Normal ? QStringLiteral("launching locker, attempt %1/%2%3")
+                                     : QStringLiteral("launching emergency locker, attempt %1/%2%3"))
                 .arg(m_attempt).arg(RESPAWN_LIMIT)
                 .arg(m_video.isEmpty() ? QString()
                                        : QStringLiteral(" (video: %1)").arg(m_video)));
@@ -283,12 +288,18 @@ private:
         m_child->setProcessChannelMode(QProcess::ForwardedChannels);
         const QByteArray runner = qgetenv("AERIAL_LOCK_RUNNER");
         const QByteArray pluginRoot = qgetenv("AERIAL_LOCK_PLUGIN_ROOT");
-        m_child->setProgram(runner.isEmpty() ? QStringLiteral(AERIAL_LOCK_DEFAULT_RUNNER)
-                                           : QString::fromLocal8Bit(runner));
-        QStringList args{QStringLiteral("--shell-dir"), m_lockerCommand,
-                        QStringLiteral("--plugin-root"), pluginRoot.isEmpty()
-                            ? QStringLiteral(AERIAL_LOCK_DEFAULT_PLUGIN_ROOT) : QString::fromLocal8Bit(pluginRoot)};
-        m_child->setArguments(args);
+        if (m_stage == Stage::Normal) {
+            m_child->setProgram(runner.isEmpty() ? QStringLiteral(AERIAL_LOCK_DEFAULT_RUNNER)
+                                               : QString::fromLocal8Bit(runner));
+            m_child->setArguments({QStringLiteral("--shell-dir"), m_lockerCommand,
+                                  QStringLiteral("--plugin-root"), pluginRoot.isEmpty()
+                                      ? QStringLiteral(AERIAL_LOCK_DEFAULT_PLUGIN_ROOT) : QString::fromLocal8Bit(pluginRoot)});
+        } else {
+            const auto settings = emergencySettings(m_lockerCommand);
+            for (const auto &warning : settings.warnings) log(QStringLiteral("phase=emergency settings: ") + warning);
+            m_child->setProgram(QStringLiteral(AERIAL_LOCK_DEFAULT_EMERGENCY));
+            m_child->setArguments({settings.service, QString::number(settings.watchdog)});
+        }
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         if (!m_video.isEmpty())
             env.insert(QStringLiteral("AERIAL_LOCK_VIDEO"), m_video);
@@ -342,6 +353,9 @@ private:
         if (completed) completed->deleteLater();
         log(QStringLiteral("child finished: exit=%1 status=%2")
                 .arg(exitCode).arg(status));
+        log(QStringLiteral("phase=%1 attempt=%2 backend-exit=%3")
+                .arg(m_stage == Stage::Normal ? QStringLiteral("normal") : QStringLiteral("emergency"))
+                .arg(m_attempt).arg(exitCode));
         // A locker that is gone confirms nothing; the next attempt must report anew.
         closeReport();
         if (m_state == LockState::Locked)
@@ -369,7 +383,7 @@ private:
             return;
         }
 
-        if (exitCode == 0) {
+        if (exitCode == 0 && status == QProcess::NormalExit) {
             // clean unlock / PAM probe refusal (never locked) / external
             // invalidation (another client owns it) — all mean "do not
             // respawn".
@@ -385,6 +399,16 @@ private:
         // itself never ran, so it cannot have engaged either; qs and the
         // guard never exit with those codes.
         const bool notEngaged = exitCode == 72 || exitCode == 126 || exitCode == 127;
+        if (m_stage == Stage::Emergency && exitCode == 4) {
+            log("phase=emergency lock refused; protection unconfirmed; no automatic unlock");
+            finishEpisode(3);
+            return;
+        }
+        if (m_stage == Stage::Emergency && notEngaged) {
+            log("phase=emergency executable unavailable; current screen state unknown; no automatic unlock");
+            finishEpisode(3);
+            return;
+        }
         m_onlyPreEngagementFailures = m_onlyPreEngagementFailures && notEngaged;
         m_guardFailed = m_guardFailed || exitCode == 71 || notEngaged;
         if (exitCode == 72)
@@ -393,6 +417,13 @@ private:
             log("locker could not be started — this attempt did not engage the lock");
         else if (exitCode == 71)
             log("guard monitor failed — this attempt's engagement is unknown");
+        if (m_stage == Stage::Normal && (notEngaged || m_attempt >= RESPAWN_LIMIT)) {
+            log("phase=normal recovery exhausted or startup unavailable; switching to phase=emergency");
+            m_stage = Stage::Emergency;
+            m_attempt = 0;
+            launch();
+            return;
+        }
         if (m_attempt < RESPAWN_LIMIT) {
             log(QStringLiteral("locker died abnormally — respawning in %1 ms "
                                "(attempt %2/%3)")
@@ -403,7 +434,8 @@ private:
                 launch();
             });
         } else {
-            if (m_guardFailed) {
+            log(QStringLiteral("phase=emergency retries exhausted; episode-confirmed=%1").arg(m_episodeEngaged));
+            if (m_guardFailed && !m_episodeEngaged) {
                 if (m_onlyPreEngagementFailures)
                     // Only this episode is known: a lock left by an earlier
                     // episode (e.g. a clientless one) may still be held.
@@ -427,7 +459,7 @@ private:
                 log("respawn limit reached — no attempt confirmed the lock; the current screen state is "
                     "unknown. NO automatic unlock. Check the screen and recover manually from a TTY "
                     "if needed (see README)");
-            finishEpisode(2);
+            finishEpisode(m_guardFailed ? 3 : 2);
         }
     }
 
@@ -756,6 +788,7 @@ private:
     QString m_video;
     QString m_lastVideo;
     int m_attempt = 0;
+    Stage m_stage = Stage::Normal;
     bool m_attemptSettled = false;
     bool m_onlyPreEngagementFailures = true;
     bool m_guardFailed = false;

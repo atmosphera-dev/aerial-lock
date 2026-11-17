@@ -82,7 +82,9 @@ authentication works nested (`pam.d/aerial-lock` → `pam_unix` →
 Closing the owned nested compositor makes the guard exit 70 independently of
 GUI/media teardown. A locker crash while the compositor is still alive leaves
 the session locked; the installed supervisor retries within three total
-attempts. It never automatically unlocks. Guard startup refusal is 72; a
+attempts, then switches to the native emergency client. Known startup failures
+switch immediately; emergency crashes have a separate three-attempt budget.
+It never automatically unlocks. Guard startup refusal is 72; a
 running monitor failure is 71. See README recovery for supervisor exit 3 and
 its distinction between never engaged and uncertain engagement.
 
@@ -129,6 +131,16 @@ session shortly after launch (compositor keeps running headlessly). Drive
 it via `hyprctl -i "$SIG" dispatch exec "..."` in that case.
 
 ## Automation notes (SSH-driven runs)
+
+`Tests/emergency-integration.py` validates the owned VM/session/source/binary
+manifest before fault injection. `recovery` drives missing-runner and three
+confirmed normal-crash transitions through wrong/right real PAM and desktop
+input. `outputs` requires the actual dual-output niri DRM session, including
+mixed scale, rotation, focused-output removal and genuine zero mapped outputs.
+`failures` covers missing qs/plugins/helper/emergency, emergency retries and
+exhaustion, explicit release and compositor death in isolated nests. The
+Hyprland lane uses two render-backed virtual outputs, not physical connectors.
+Failed live lockers remain BLOCKED. See Tests/README.md for fixture ownership.
 
 - `wtype` text injection is not proof of compositor keybinds or platform IME
   composition. Use the VM's emulated keyboard for a native keybind test.

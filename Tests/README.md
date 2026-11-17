@@ -52,7 +52,15 @@ patch described below, so its keymap files stay on the container's writable
 disk, not a shared temporary directory. Failure never uses debug dismiss or
 an external release to turn a failed authentication cycle into a pass.
 
-This is one short platform smoke, not niri/Hyprland acceptance, media playback,
+`ci-emergency-smoke.py` then creates a separate unprivileged PAM fixture and
+fresh Sway session for each installed-supervisor recovery case: missing runner
+and three confirmed normal-locker crashes. Both must render the actual C client,
+reject a wrong answer without replacing it, authenticate through pam_unix,
+confirm unlock/sync and exit naturally. A desktop witness receives no injected
+F11 keys during crash gaps and receives F12 after authentication. No test-only
+product auth override or debug dismissal is used.
+
+These are short platform smokes, not niri/Hyprland acceptance, media playback,
 physical display, multi-output, IME or suspend coverage. The full VM drivers
 remain separate. To reproduce, use the exact image build and smoke container
 commands from `.github/workflows/qmllint.yml` inside a disposable test VM.

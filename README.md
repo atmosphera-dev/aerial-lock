@@ -23,7 +23,8 @@ Runtime requirements: [Quickshell 0.3.x](https://github.com/outfoxxed/quickshell
 [qt6-mpvqml ≥ 0.2.0](https://github.com/alexindigo/mpvqml), which plays the video
 background, and Qt6's `Qt5Compat.GraphicalEffects` module (`qt6-5compat` on
 Arch) for the frosted-clock effect and avatar masking, Qt6 Core/Gui/DBus
-(`qt6-base`), PAM and `wayland`. The guarded runner also requires Bash;
+(`qt6-base`), PAM, `wayland`, `libxkbcommon` and keyboard/Compose data
+(`xkeyboard-config`). The guarded runner also requires Bash;
 the optional signal-unlock examples below use `pkill` (`procps-ng` on Arch).
 With an empty
 `sources` list the player is never started and the screen stays
@@ -34,11 +35,12 @@ frame decodes. The `aerial-lock-fetch` pack downloader (optional) needs
 Building requires a C/C++ compiler, Make, pkg-config, Qt6 Core/Gui/DBus/Quick
 development files, PAM headers, wayland-client and wayland-protocols (including
 `wayland-scanner`). On Arch these are provided by `base-devel`, `qt6-base`,
-`qt6-declarative`, `pam`, `wayland` and `wayland-protocols`; Git is needed to build from a clone.
+`qt6-declarative`, `pam`, `wayland`, `wayland-protocols` and `libxkbcommon`; Git is needed to build from a clone.
 
 With the default `PREFIX=/usr`, installation includes `aerial-lock`,
 `aerial-lock-supervisor`, `aerial-unlock`, `aerial-lock-fetch` and `aerial-idle`
-in `/usr/bin`, the shared guarded runner under `/usr/libexec/aerial-lock`, its
+in `/usr/bin`, the shared guarded runner, `aerial-lock-auth` and
+`aerial-lock-emergency` under `/usr/libexec/aerial-lock`, its
 private plugin under `/usr/lib/aerial-lock/qt-plugins`, the QML/config/theme
 bundle under `/usr/share/aerial-lock`, and `/etc/pam.d/aerial-lock`. It also
 installs `/usr/lib/systemd/user/aerial-idle.service` and
@@ -360,9 +362,12 @@ see the per-compositor notes under [Recovery](#recovery-last-resort).
 ## Recovery (last resort)
 
 The supervisor (`aerial-lock-supervisor`, what `aerial-lock` actually execs)
-owns the locker lifecycle: it spawns the QML locker and respawns it up to
-three total attempts on abnormal death. When attempts run out it reports the
-failure — crash recovery never unlocks automatically. Normal interactive
+owns the locker lifecycle: it retries the QML locker within three total
+attempts, then switches to its native emergency password locker. A known
+startup failure (FailedToStart or exit 72/126/127) switches immediately.
+Emergency process crashes get their own three-attempt budget; wrong passwords
+do not count. It never returns to Qt during that episode. If emergency recovery
+also fails, use a TTY. Crash recovery never unlocks automatically. Normal interactive
 unlock goes through PAM. An explicit D-Bus `Release()` call on
 `org.aeriallock.Supervisor` at `/org/aeriallock/Supervisor` (on its
 session-scoped `org.aeriallock.Supervisor.s<hash>` bus name), or SIGUSR1 to
@@ -383,19 +388,34 @@ The compositor keeps the session locked; the supervisor retries a killed locker 
 its attempt limit. Killing the supervisor leaves the lock without respawns. Use SIGUSR1
 or `Release()` on the supervisor to unlock without a password, as with swaylock and hyprlock.
 
-**Automatic.** If the locker crashes while the session is locked, the
-supervisor retries within the three-attempt limit. Locker exit `0` means clean unlock / PAM
-refusal / external invalidation, so it does not respawn; anything else is an
-abnormal death and gets a respawn unless release was requested. Compositor death is detected first so the
-supervisor never spawns into a dead session. If all attempts fail, inspect the
-supervisor outcome before assuming that the screen is protected:
+**Emergency UI.** Every output shows only a centered input box, masking dots
+and a geometric arrow (left in RTL locales). Return submits; Backspace removes
+one Unicode scalar; Ctrl-U/Escape clears. Checking pauses typing and pulses the
+arrow; rejection clears the dots and briefly flashes the border red. The client
+uses the configured PAM service through the same exec helper, not a weaker
+fallback stack. XKB layouts, AltGr and Compose work; platform IME, clipboard,
+visible/extra PAM prompts and screen-reader support are not provided. Unsupported
+PAM interactions retain the lock and require TTY recovery.
+
+The emergency binary uses only libc, Wayland and XKB, not Qt, mpv, PAM libraries,
+GL or fonts. It is always installed beside the helper; `LIBEXECDIR=/usr/lib/aerial-lock`
+relocates both. Secret memory is wiped and excluded from dumps; if mlock fails,
+recovery remains usable with a warning and residual swap exposure. Missing helper
+or PAM policy leaves the emergency lock engaged with nontext error feedback.
+
+**Automatic.** Locker exit `0` retains its existing clean unlock / PAM refusal /
+external invalidation meaning. Explicit Release prevents retries or escalation.
+Compositor death is checked first. Emergency `locked` confirms protection, not
+that its first frame has appeared; phase and surface logs distinguish those.
+An unconfirmed normal attempt was never proof that the desktop was protected.
+If all recovery fails, inspect the outcome before assuming protection:
 
 | Supervisor exit | Meaning |
 |---|---|
 | 0 | Clean completion or compositor gone; for the supervisor on duty this is not a lock-readiness signal. A duplicate invocation for a session that is already protected exits 0 only after the supervisor on duty confirmed that its current locker holds the lock. |
 | 1 | The supervisor could not start: the session to protect, the session bus or its per-session name is unavailable. Nothing was launched. |
 | 2 | Other abnormal failures exhausted retries, or the locker exited abnormally after an explicit release request (without respawn); no automatic recovery unlock. After release the screen state is **unknown**. Otherwise the log says the session stays locked only if an attempt confirmed the lock; without confirmation the current screen state is **unknown**. Recover manually below. |
-| 3 | Guard unavailable or failed. If every attempt exited 72, none of this run's attempts engaged a lock, but the current screen state is **unknown**: a lock from an earlier run may still be held. If a monitor failed (71) or outcomes were mixed, engagement is not confirmed and the screen **may be unlocked**. Check the screen, inspect the installation and recover from a TTY if needed. |
+| 3 | Emergency refused/unavailable, or ultimate failure after guard/startup failure. Logs record phase and whether any attempt confirmed protection. Without confirmation the current screen state is **unknown** and may be unlocked; a previous episode's dead lock may also remain. Check the screen and recover from a TTY if needed. |
 | 4 | Duplicate invocation, lock not confirmed: another supervisor is on duty for this session, but it did not report a confirmed lock within 10 seconds (still engaging, failing or gone), or the name's owner gave no valid state. The screen **may be unlocked**; this invocation launched nothing. |
 
 **From a TTY (or SSH), as the same user — manual recovery / diagnostics:**
@@ -422,6 +442,12 @@ aerial-unlock --purge    # kill stale aerial-lock processes, then recover
 | 3 | refused — a live client holds the lock (PID + `--purge` hint) |
 
 **Compositor notes.** Dead-locker recovery is compositor policy:
+
+**Hyprland visual limitation:** the owned 0.57.2 virtual-output acceptance run
+captured desktop pixels during crash replacement, despite no lock-time desktop
+input and no unlock request. The emergency prompt does not eliminate this
+compositor flash. Do not equate successful takeover with continuous visual
+privacy; sampled captures also cannot exclude flashes between their samples.
 
 - **Niri / Sway (wlroots)** — takeover of a dead lock is unconditional; a
   respawned locker replaces the dead one with no flag. On Niri, a dead locker

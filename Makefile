@@ -3,6 +3,7 @@ DATADIR ?= $(PREFIX)/share/aerial-lock
 BINDIR ?= $(PREFIX)/bin
 LIBEXECDIR ?= $(PREFIX)/libexec/aerial-lock
 AUTH_HELPER = $(LIBEXECDIR)/aerial-lock-auth
+EMERGENCY_CLIENT = $(LIBEXECDIR)/aerial-lock-emergency
 PLUGINROOT ?= $(PREFIX)/lib/aerial-lock/qt-plugins
 PAMDIR ?= /etc/pam.d
 CONFDIR ?= $(DATADIR)/Config
@@ -55,6 +56,7 @@ DATADIR=$(DATADIR)
 BINDIR=$(BINDIR)
 LIBEXECDIR=$(LIBEXECDIR)
 AUTH_HELPER=$(AUTH_HELPER)
+EMERGENCY_CLIENT=$(EMERGENCY_CLIENT)
 PLUGINROOT=$(PLUGINROOT)
 endef
 
@@ -125,12 +127,13 @@ $(OBJDIR)/aerial-supervisor-proto.o: supervisor/ext-session-lock-v1-protocol.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(QT_PIC_FLAGS) -c $< \
 		$$(pkg-config --cflags wayland-client) -o $@
 
-$(OBJDIR)/aerial-supervisor-main.o: supervisor/aerial-lock-supervisor.cpp supervisor/aerial-lock-supervisor.moc supervisor/ext-session-lock-v1-client.h native/shell-dir.h
+$(OBJDIR)/aerial-supervisor-main.o: supervisor/aerial-lock-supervisor.cpp supervisor/emergency-settings.h supervisor/aerial-lock-supervisor.moc supervisor/ext-session-lock-v1-client.h native/shell-dir.h
 	@mkdir -p $(@D)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< -Isupervisor \
 		-DAERIAL_LOCK_DEFAULT_SHELL='"$(DATADIR)"' \
 		-DAERIAL_LOCK_DEFAULT_RUNNER='"$(LIBEXECDIR)/aerial-lock-run"' \
 		-DAERIAL_LOCK_DEFAULT_PLUGIN_ROOT='"$(PLUGINROOT)"' \
+		-DAERIAL_LOCK_DEFAULT_EMERGENCY='"$(EMERGENCY_CLIENT)"' \
 		$$(pkg-config --cflags Qt6Core Qt6DBus wayland-client) -o $@
 
 native/connection-guard.moc: native/connection-guard.cpp native/connection-guard.json
@@ -330,5 +333,6 @@ clean:
 dev: DEBUG_DISMISS=1
 dev: DEBUG_VERBOSE=1
 dev: AUTH_HELPER=$(CURDIR)/native/aerial-lock-auth
+dev: EMERGENCY_CLIENT=$(CURDIR)/emergency/aerial-lock-emergency
 dev: all
 	bash Scripts/dev/run.sh

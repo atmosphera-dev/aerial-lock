@@ -6,7 +6,7 @@ on:
       group:
         description: Real-session group
         type: choice
-        options: [niri-smoke]
+        options: [niri-smoke, niri-emergency]
         default: niri-smoke
       publish:
         description: Publish the tested image (master only)
@@ -78,11 +78,12 @@ jobs:
           (cd .ci-vm/image && sha256sum -c SHA256SUMS)
           df -h "$GITHUB_WORKSPACE"
 
-      - name: One nested niri unlock cycle
+      - name: Requested nested niri group
         # Boot, command, SSH/setup, export and stop budgets total 3780s.
         timeout-minutes: 65
         env:
           TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+          TEST_GROUP: ${{ inputs.group }}
         run: |
           stat -c '%n mode=%a uid=%u gid=%g inode=%i' /dev/kvm
           getfacl /dev/kvm
@@ -100,10 +101,10 @@ jobs:
           expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1 }' .ci-vm/image/SHA256SUMS)
           python3 Tests/vm/vm_platform.py run-group --config .ci-vm/config.json \
             --image "$image" --sha256 "$expected" --source "$GITHUB_WORKSPACE" \
-            --source-revision "$GITHUB_SHA" --group niri-smoke --results .ci-vm/results
+            --source-revision "$GITHUB_SHA" --group "$TEST_GROUP" --results .ci-vm/results
 
       - name: Prepare tested publication assets
-        if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
+        if: ${{ inputs.publish && inputs.group == 'niri-smoke' && github.ref == 'refs/heads/master' }}
         timeout-minutes: 2
         id: publication-assets
         env:
@@ -114,7 +115,7 @@ jobs:
           printf 'artifact_name=%s\n' "$IMAGE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Stage tested image on GitHub
-        if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
+        if: ${{ inputs.publish && inputs.group == 'niri-smoke' && github.ref == 'refs/heads/master' }}
         timeout-minutes: 15
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -165,12 +166,12 @@ jobs:
               stream.write('## niri VM smoke\n\n')
               stream.write(f'Source: `{os.environ["GITHUB_SHA"]}`\n\n')
               stream.write(f'Image: `{value.get("image_sha256", "not built")}`\n\n')
-              stream.write(f'Status: {value["status"]}; phase: {value.get("phase")}; exercised: {value.get("exercised", 0)}/1; result bytes: {total}\n')
+              stream.write(f'Group: {value.get("group")}; status: {value["status"]}; phase: {value.get("phase")}; exercised: {value.get("exercised", 0)}/{value.get("planned", 0)}; result bytes: {total}\n')
           PY
 
   publish-image:
     needs: niri-smoke
-    if: ${{ inputs.publish && github.ref == 'refs/heads/master' && needs.niri-smoke.result == 'success' }}
+    if: ${{ inputs.publish && inputs.group == 'niri-smoke' && github.ref == 'refs/heads/master' && needs.niri-smoke.result == 'success' }}
     permissions:
       contents: write
     runs-on: ubuntu-24.04

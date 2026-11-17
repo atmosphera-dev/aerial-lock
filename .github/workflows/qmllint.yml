@@ -68,7 +68,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
             aerial-lock-ci:ci bash .devcontainer/test.sh
 
-      - name: Real session-lock and PAM smoke offline
+      - name: Main and emergency session-lock PAM smoke offline
         timeout-minutes: 8
         run: |
           timeout 7m sudo podman run --rm --pull=never --network=none \

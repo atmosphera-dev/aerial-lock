@@ -7,6 +7,17 @@ are VMs and provide the CI execution boundary.
 
 ## First group
 
+`niri-emergency` is a separate group with exactly two recovery outcomes:
+`missing-runner` and `main-crash` (three confirmed normal-locker deaths). Both
+require the installed native emergency client, wrong/right real pam_unix,
+unlock/sync, natural supervisor exit and desktop input without transition-key
+leakage. Summaries reject missing, duplicate, mixed-backend or stale-identity
+cells; JUnit names both cases. The locked image already includes libxkbcommon;
+this feature does not regenerate its lock. Both helper and emergency bytes are
+installed at their compiled paths and hashed against the staged payload.
+The workflow dispatch choice propagates the group through request, guest and
+validation. Image publication remains exclusive to niri-smoke on master.
+
 `niri-smoke` runs the existing remediation driver's `niri / unlock / 1` case
 under headless Sway, using Mesa software OpenGL. Sway only hosts the nested
 niri window. Required outcomes are actual session-lock confirmation, real

@@ -3,6 +3,14 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- A minimal native password locker takes over when the normal locker cannot
+  start or exhausts its crash retries. It uses the configured PAM helper, keeps
+  the session locked on errors and needs no Qt, video, GPU or font stack.
+
 ## [0.1.6] - 2026-11-16
 
 ### Fixed

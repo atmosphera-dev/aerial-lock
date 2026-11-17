@@ -31,8 +31,9 @@ def run(argv, env, **kwargs):
 
 
 class ObservedProcess:
-    def __init__(self, argv, env, log):
+    def __init__(self, argv, env, log, protocol_sync=False):
         self.lines = deque(maxlen=4096)
+        self.protocol_sync = protocol_sync
         self.process = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, start_new_session=True)
         self.log = log
@@ -47,7 +48,8 @@ class ObservedProcess:
                 # Only this allowlist is retained, never raw keyboard/IME/data
                 # traffic (including text-input surrounding/commit strings).
                 if re.match(r"^\[\s*(?:\d+\.\d+|\d{2}:\d{2}:\d{2}\.\d+)\]", line):
-                    if not re.search(r"ext_session_lock(?:_surface)?_v1[@#].*\.(?:locked|finished|configure|unlock_and_destroy|destroy)\(", line):
+                    if not re.search(r"ext_session_lock(?:_surface)?_v1[@#].*\.(?:locked|finished|configure|unlock_and_destroy|destroy)\(", line) \
+                            and not (self.protocol_sync and re.search(r"(?:wl_display[@#].*\.sync|wl_callback[@#].*\.done)\(", line)):
                         continue
                 elif re.search(r"wl_keyboard|virtual_keyboard|text_input|input_method|data_device|primary_selection|clipboard|surrounding_text", line, re.I):
                     continue

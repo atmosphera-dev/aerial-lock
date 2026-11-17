@@ -85,13 +85,17 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
     auth_object = tree / "build/auth-context.o"
     installed_helper = b / "libexec/aerial-lock/aerial-lock-auth"
     dev_helper = tree / "native/aerial-lock-auth"
+    installed_emergency = b / "libexec/aerial-lock/aerial-lock-emergency"
+    dev_emergency = tree / "emergency/aerial-lock-emergency"
     emergency = b / "libexec/aerial-lock/aerial-lock-emergency"
     assert os.access(emergency, os.X_OK) and emergency.stat().st_mode & 0o777 == 0o755
     assert str(installed_helper).encode() in emergency.read_bytes()
     helper_path(plugin, installed_helper, dev_helper)
+    helper_path(b / "bin/aerial-lock-supervisor", installed_emergency, dev_emergency)
     installed_stamp = auth_object.stat().st_mtime_ns
     assert "DEV_RUNNER_STUB" in make(b, "dev").stdout
     helper_path(plugin, dev_helper, installed_helper)
+    helper_path(tree / "supervisor/aerial-lock-supervisor", dev_emergency, installed_emergency)
     dev_stamp = auth_object.stat().st_mtime_ns
     assert dev_stamp > installed_stamp, "dev helper-path selection reused auth-context.o"
     assert os.access(dev_helper, os.X_OK), "dev build omitted its helper"
@@ -99,6 +103,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
     assert auth_object.stat().st_mtime_ns == dev_stamp, "unchanged dev selection rebuilt auth-context.o"
     make(b, "install", "PAMDIR=" + str(root / "pam"))
     helper_path(b / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so", installed_helper, dev_helper)
+    helper_path(b / "bin/aerial-lock-supervisor", installed_emergency, dev_emergency)
     assert auth_object.stat().st_mtime_ns > dev_stamp, "install after dev reused auth-context.o"
     print("AUTH_HELPER_PATH_PASS installed dev dev_noop installed_again source_path_spaces", flush=True)
 
@@ -128,6 +133,9 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         payload = emergency.read_bytes()
         assert str(prefix / "libexec/aerial-lock/aerial-lock-auth").encode() in payload
         assert str(stage).encode() not in payload
+        helper_path(stage / bindir.relative_to("/") / "aerial-lock-supervisor",
+                    prefix / "libexec/aerial-lock/aerial-lock-emergency",
+                    stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency")
         print(f"UNIT_INSTALL_PASS {label} {commands[0]} mode=644", flush=True)
         make(prefix, "uninstall", *options)
         assert not any(p.is_file() for p in stage.rglob("*")), f"{label} uninstall left installed files"
@@ -137,6 +145,9 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
     emergency = arch_stage / "usr/lib/aerial-lock/aerial-lock-emergency"
     assert emergency.stat().st_mode & 0o777 == 0o755
     assert b"/usr/lib/aerial-lock/aerial-lock-auth" in emergency.read_bytes()
+    helper_path(arch_stage / "usr/bin/aerial-lock-supervisor",
+                Path("/usr/lib/aerial-lock/aerial-lock-emergency"),
+                Path("/usr/libexec/aerial-lock/aerial-lock-emergency"))
     needed = subprocess.check_output(["readelf", "-d", str(emergency)], text=True)
     assert not any(name in needed for name in ("libQt", "libpam", "libGL", "libEGL", "libcairo", "libfontconfig", "libmpv")), needed
     make("/usr", "uninstall", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")

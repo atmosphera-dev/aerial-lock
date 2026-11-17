@@ -425,7 +425,8 @@ with tempfile.TemporaryDirectory(prefix="idle-logind-") as directory:
         tree = root / "compiled-source"
         shutil.copytree(source, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__", "*.so"))
         for targets in (("clean",), ("idle/aerial-idle", "supervisor/aerial-lock-supervisor")):
-            result = subprocess.run(["make", "-C", str(tree), "DATADIR=" + str(source), *targets],
+            result = subprocess.run(["make", "-C", str(tree), "DATADIR=" + str(source),
+                                     "EMERGENCY_CLIENT=" + str(source / "Tests/supervisor-emergency-stub.py"), *targets],
                                     capture_output=True, text=True, timeout=120)
             assert result.returncode == 0, result.stdout + result.stderr
         for systemd in (False, True):

@@ -553,6 +553,31 @@ def validate_result_identity(summary, request):
 
 def validate_summary(summary, request):
     validate_result_identity(summary, request)
+    group = request.get('group', 'niri-smoke')
+    if group == 'niri-emergency':
+        expected = {'missing-runner', 'main-crash'}
+        outcomes = summary.get('outcomes', [])
+        if summary.get('status') != 'PASS' or summary.get('group') != group \
+                or summary.get('planned') != len(expected) or summary.get('exercised') != len(expected) \
+                or summary.get('no_surviving_locker') is not True or len(outcomes) != len(expected) \
+                or {o.get('case') for o in outcomes} != expected:
+            raise RuntimeError('required emergency case set absent or mixed')
+        for outcome in outcomes:
+            if outcome.get('status') != 'PASS' or outcome.get('backend') != 'niri' \
+                    or outcome.get('instance_uuid') != request['uuid'] \
+                    or outcome.get('source_identity') != request['source_freeze_identity'] \
+                    or outcome.get('exit') != 0 or not all(outcome.get(k) is True for k in
+                        ('real_pam', 'rejected', 'unlock_and_destroy', 'sync_confirmed', 'desktop_input', 'no_lock_time_desktop_input')) \
+                    or (outcome['case'] == 'main-crash' and len(set(outcome.get('main_pids', []))) != 3):
+                raise RuntimeError('emergency consumer outcome missing/stale')
+            if outcome['case'] == 'main-crash':
+                frames = outcome.get('sampled_frames') or {}
+                if not isinstance(frames.get('samples'), int) or frames['samples'] < 1 or frames.get('error') is not None \
+                        or frames.get('samples_with_desktop_marker') != 0:
+                    raise RuntimeError('real recovery frame observations absent')
+        return
+    if group != 'niri-smoke':
+        raise RuntimeError('unknown result group')
     cycle = summary.get('cycle', {})
     if summary.get('status') != 'PASS' or summary.get('group') != 'niri-smoke' \
             or summary.get('planned') != 1 or summary.get('exercised') != 1 \
@@ -573,7 +598,7 @@ def run_group(args, cfg):
     request = dict(root=cfg['guest_root'], source_files=inventory, source_freeze_identity=identity,
         image_sha256=args.sha256, domain=vm.name, host=cfg['host'], uuid=vm.uuid, mac=vm.mac,
         base_domain='aerial-ci-image-' + args.sha256[:12], build_seconds=cfg['build_seconds'],
-        group_seconds=cfg['group_seconds'], source_revision=args.source_revision)
+        group_seconds=cfg['group_seconds'], source_revision=args.source_revision, group=args.group)
     primary = None
     summary = None
 
@@ -665,10 +690,12 @@ def run_group(args, cfg):
         except Exception as error:
             primary = primary or error
             retain('diagnostic-error.json', failure_details(error))
-        suite = ET.Element('testsuite', name='niri-smoke', tests='1', failures='1' if primary else '0')
-        cell = ET.SubElement(suite, 'testcase', name='niri/unlock/1', classname='aerial-lock.vm')
-        if primary:
-            ET.SubElement(cell, 'failure', message=summary.get('status', 'INFRA_ERROR') if summary else 'INFRA_ERROR').text = str(primary)
+        names = ['niri/unlock/1'] if args.group == 'niri-smoke' else ['niri/emergency/missing-runner', 'niri/emergency/main-crash']
+        suite = ET.Element('testsuite', name=args.group, tests=str(len(names)), failures=str(len(names)) if primary else '0')
+        for name in names:
+            cell = ET.SubElement(suite, 'testcase', name=name, classname='aerial-lock.vm')
+            if primary:
+                ET.SubElement(cell, 'failure', message=summary.get('status', 'INFRA_ERROR') if summary else 'INFRA_ERROR').text = str(primary)
         try:
             ET.ElementTree(suite).write(results / 'junit.xml', encoding='utf-8', xml_declaration=True)
         except Exception as error:
@@ -778,7 +805,7 @@ def main():
     group.add_argument('--sha256', required=True)
     group.add_argument('--source', required=True)
     group.add_argument('--source-revision')
-    group.add_argument('--group', choices=['niri-smoke'], required=True)
+    group.add_argument('--group', choices=['niri-smoke', 'niri-emergency'], required=True)
     group.add_argument('--results', required=True)
     args = parser.parse_args()
     cfg = config(args.config)

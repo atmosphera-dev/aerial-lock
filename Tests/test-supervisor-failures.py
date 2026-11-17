@@ -14,7 +14,7 @@ from private_runtime import PrivateRuntime
 supervisor = Path(sys.argv[1]).resolve(strict=True)
 runner_path = Path(sys.argv[2]).resolve(strict=True)
 cases = [
-    ("pre-engagement", [72, 72, 72], 3, "these attempts did not engage a lock; the current screen state is unknown"),
+    ("pre-engagement", [72, 72, 72], 3, "lock engagement not confirmed; the screen may be unlocked"),
     ("monitor", [71, 71, 71], 3, "lock engagement not confirmed; the screen may be unlocked"),
     ("abnormal-then-monitor", [70, 71, 71], 3, "lock engagement not confirmed; the screen may be unlocked"),
     ("monitor-then-startup", [71, 72, 72], 3, "lock engagement not confirmed; the screen may be unlocked"),
@@ -23,11 +23,11 @@ cases = [
     # Only an attempt that confirmed the lock lets exit 2 say "staying locked".
     ("engaged", [70, 70, 70], 2, "staying locked. NO automatic unlock"),
     ("unlock", [0], 0, "clean exit — done"),
-    ("missing-runner", None, 3, "these attempts did not engage a lock; the current screen state is unknown"),
-    ("missing-plugin", None, 3, "these attempts did not engage a lock; the current screen state is unknown"),
-    ("missing-qs", None, 3, "these attempts did not engage a lock; the current screen state is unknown"),
-    ("shell-not-found", [127, 127, 127], 3, "these attempts did not engage a lock; the current screen state is unknown"),
-    ("shell-not-executable", [126, 72, 127], 3, "these attempts did not engage a lock; the current screen state is unknown"),
+    ("missing-runner", None, 3, "lock engagement not confirmed; the screen may be unlocked"),
+    ("missing-plugin", None, 3, "lock engagement not confirmed; the screen may be unlocked"),
+    ("missing-qs", None, 3, "lock engagement not confirmed; the screen may be unlocked"),
+    ("shell-not-found", [127, 127, 127], 3, "lock engagement not confirmed; the screen may be unlocked"),
+    ("shell-not-executable", [126, 72, 127], 3, "lock engagement not confirmed; the screen may be unlocked"),
     ("abnormal-then-not-found", [70, 127, 127], 3, "lock engagement not confirmed; the screen may be unlocked"),
 ]
 
@@ -143,7 +143,11 @@ with tempfile.TemporaryDirectory(prefix="aerial-failures-") as directory, ExitSt
         output = result.stdout + result.stderr
         assert result.returncode == expected, (name, result.returncode, output)
         assert message in output, (name, output)
-        assert output.count("launching locker, attempt") == (1 if name == "unlock" else 3), output
+        normal_attempts = next((i + 1 for i, code in enumerate(codes or []) if code in (0, 72, 126, 127)), 3 if codes else 1)
+        assert output.count("launching locker, attempt") == normal_attempts, output
+        assert output.count("launching emergency locker, attempt") == (0 if name == "unlock" else 3), output
+        if name != "unlock":
+            assert "switching to phase=emergency" in output and "phase=emergency retries exhausted" in output, output
         if expected == 3 or name != "engaged":
             assert "staying locked" not in output, output
         if expected == 2:
@@ -151,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-failures-") as directory, ExitSt
         if name in ("missing-plugin", "missing-qs"):
             # The real runner must run and refuse, not fail to start.
             assert "child process error" not in output, output
-            assert output.count("child finished: exit=72") == 3, output
+            assert output.count("child finished: exit=72") == 1, output
         if codes is not None and 71 in codes:
             assert "did not engage a lock" not in output, output
         assert "NOT locked" not in output, output

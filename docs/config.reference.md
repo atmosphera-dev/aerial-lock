@@ -244,20 +244,26 @@ and writes nothing.
 
 ## Recovery
 
-The supervisor (`aerial-lock-supervisor`, what `aerial-lock` execs) owns the
-locker lifecycle: spawns the QML locker, respawns on abnormal death (limit
-**3 total attempts**, short backoff). There is no automatic unlock. Locker exit
-`0` means clean unlock / PAM refusal / external invalidation; abnormal exits
-retry. Guard or launcher startup failure, including a missing `qs`, is `72`
-(that attempt never engaged); monitor
-failure is `71` (engagement unknown). At exhaustion the supervisor exits `3`
-for guard failures: all-72 attempts mean none of these attempts engaged a lock
-(the current screen state is still **unknown**, since an earlier lock may be
-held), while mixed outcomes or a monitor failure mean it **may be unlocked**. Other abnormal
-failures exit `2`; the supervisor reports that the session stays locked only
-when one of its attempts confirmed the lock. Manual recovery is `aerial-unlock`
-from a TTY (see the README's "Recovery (last resort)" section for exit codes
-and the per-compositor story).
+The supervisor retries the QML locker within three total attempts, then uses
+the installed native emergency locker. FailedToStart and exit 72/126/127 switch
+immediately. Emergency crashes have a separate three-attempt budget; wrong PAM
+answers keep the same client and never consume that budget. There is no
+automatic unlock or return to Qt in an emergency episode. Normal exit `0` keeps
+its clean unlock / PAM refusal / external invalidation semantics. Final failures
+exit `2`, or `3` for emergency refusal/unavailability and guard/startup failure.
+Logs distinguish the phase and previous confirmation from an unknown screen
+state. Manual last resort remains `aerial-unlock` from a TTY.
+
+Emergency authentication uses the same `pamService` and computation-only
+`pamWatchdogTimeoutMs`. A nonempty `AERIAL_LOCK_PAM_SERVICE` wins; otherwise a
+valid user field wins over the selected bundle, per field. Empty service uses
+`aerial-lock` only where the normal configuration does. A missing/broken bundle
+with no derivable service disables emergency authentication, never substitutes
+another PAM policy. Invalid/out-of-range watchdogs use 60000 ms with a warning.
+Neither client changes PAM throttling or writes configuration during recovery.
+The emergency UI supports only the first hidden prompt; other interactions fail
+closed with nontext feedback. Its keyboard/Compose path has no platform IME,
+clipboard or accessibility support. See README for the complete UI limitations.
 
 An explicit supervisor D-Bus `Release()` or SIGUSR1 request releases gracefully
 without PAM and disables further respawns for that episode. aerial-idle forwards

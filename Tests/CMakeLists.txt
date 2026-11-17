@@ -104,27 +104,40 @@ pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")
 target_link_libraries(emergency-unit PRIVATE PkgConfig::WAYLAND PkgConfig::XKBCOMMON)
 add_test(NAME emergency-unit COMMAND emergency-unit)
+add_executable(emergency-settings-probe emergency-settings-probe.cpp)
+target_link_libraries(emergency-settings-probe PRIVATE Qt6::Core Qt6::Qml)
+add_test(NAME emergency-settings COMMAND emergency-settings-probe "${AERIAL_LOCK_SOURCE}")
+add_test(NAME emergency-integration-contract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-emergency-integration.py")
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Gui PkgConfig::WAYLAND)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp")
+add_executable(supervisor-test "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc")
+target_include_directories(supervisor-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(supervisor-test PRIVATE AERIAL_LOCK_DEFAULT_EMERGENCY="${CMAKE_CURRENT_SOURCE_DIR}/supervisor-emergency-stub.py")
+target_link_libraries(supervisor-test PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
 add_library(guard-logger-trap SHARED guard-logger-trap.cpp)
 target_link_libraries(guard-logger-trap PRIVATE Qt6::Core ${CMAKE_DL_LIBS})
 add_test(NAME supervisor-session
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-session.py"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
+            "$<TARGET_FILE:supervisor-test>")
+add_test(NAME supervisor-emergency COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-emergency.py" "$<TARGET_FILE:supervisor-test>")
 add_test(NAME supervisor-output
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-output.py"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
+            "$<TARGET_FILE:supervisor-test>")
 add_test(NAME supervisor-hyprland
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-hyprland.py"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor")
+            "$<TARGET_FILE:supervisor-test>")
 add_executable(supervisor-terminal-probe supervisor-terminal-probe.cpp)
 target_link_libraries(supervisor-terminal-probe PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
+target_compile_definitions(supervisor-terminal-probe PRIVATE AERIAL_LOCK_DEFAULT_EMERGENCY="${CMAKE_CURRENT_SOURCE_DIR}/supervisor-emergency-stub.py")
 add_test(NAME supervisor-release
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-release.py"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor"
+            "$<TARGET_FILE:supervisor-test>"
             "$<TARGET_FILE:supervisor-terminal-probe>")
 add_test(NAME supervisor-failures
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-failures.py"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor"
+            "$<TARGET_FILE:supervisor-test>"
             "${AERIAL_LOCK_SOURCE}/Scripts/aerial-lock-run")
 add_test(NAME script-arguments
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-script-arguments.py"
@@ -205,7 +218,7 @@ add_test(NAME idle-shell-dir
 add_test(NAME idle-logind
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-idle-logind.py"
             "${AERIAL_LOCK_SOURCE}/idle/aerial-idle"
-            "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor"
+            "$<TARGET_FILE:supervisor-test>"
             "$<TARGET_FILE:idle-bus-fixture>")
 add_test(NAME fixture-publication
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-fixture-publication.py")

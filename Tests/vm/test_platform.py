@@ -490,6 +490,32 @@ class FailureCustody(unittest.TestCase):
 
 
 class ConsumerResults(unittest.TestCase):
+    def emergency(self):
+        value = self.summary() | dict(group='niri-emergency', planned=2, exercised=2)
+        value.pop('cycle')
+        value['outcomes'] = [dict(case=name, status='PASS', backend='niri', instance_uuid='owned',
+            source_identity='source', exit=0, real_pam=True, rejected=True, unlock_and_destroy=True,
+            sync_confirmed=True, desktop_input=True, no_lock_time_desktop_input=True,
+            sampled_frames=dict(samples=10, error=None, samples_with_desktop_marker=0) if name == 'main-crash' else None,
+            main_pids=[1, 2, 3] if name == 'main-crash' else []) for name in ('missing-runner', 'main-crash')]
+        return value
+
+    def test_emergency_group_requires_exact_fresh_consumer_outcomes(self):
+        request = self.request() | dict(group='niri-emergency')
+        platform.validate_summary(self.emergency(), request)
+        for field in ('real_pam', 'rejected', 'unlock_and_destroy', 'sync_confirmed', 'desktop_input', 'no_lock_time_desktop_input'):
+            value = self.emergency()
+            value['outcomes'][1][field] = False
+            with self.assertRaises(RuntimeError): platform.validate_summary(value, request)
+        for changes in ({'instance_uuid': 'old'}, {'source_identity': 'old'}, {'case': 'missing-runner'},
+                        {'backend': 'hyprland'}, {'main_pids': [1, 1, 1]}, {'exit': 2}, {'sampled_frames': None},
+                        {'sampled_frames': dict(samples=10, error=None, samples_with_desktop_marker=1)}):
+            value = self.emergency()
+            value['outcomes'][1].update(changes)
+            with self.assertRaises(RuntimeError): platform.validate_summary(value, request)
+        for changes in ({'group': 'niri-smoke'}, {'outcomes': []}, {'exercised': 1}, {'planned': 1}):
+            with self.assertRaises(RuntimeError): platform.validate_summary(self.emergency() | changes, request)
+        with self.assertRaises(RuntimeError): platform.validate_summary(self.emergency(), self.request())
     def request(self):
         return dict(uuid='owned', image_sha256='image', source_freeze_identity='source')
 
@@ -555,7 +581,7 @@ class EvidenceExport(unittest.TestCase):
 class ReviewRegressions(unittest.TestCase):
     def test_each_kvm_step_acquires_runner_device_access(self):
         workflow = (Path(__file__).parents[2] / '.github/workflows/vm-smoke.yml').read_text()
-        for name in ('Rebuild the locked Arch image', 'One nested niri unlock cycle'):
+        for name in ('Rebuild the locked Arch image', 'Requested nested niri group'):
             step = workflow.split('- name: ' + name, 1)[1].split('- name:', 1)[0]
             grant = 'sudo setfacl -m "u:$(id -un):rw" /dev/kvm'
             self.assertIn(grant, step)
@@ -571,7 +597,7 @@ class ReviewRegressions(unittest.TestCase):
         # Include cloud-init/account/transfer/summary SSH calls and shutdown,
         # not just the guest workload. Leave additional setup margin in the step.
         chain = sum(deadlines.values()) + 60 + 450 + 150 + 60
-        self.assertGreaterEqual(int(steps['One nested niri unlock cycle']) * 60, chain)
+        self.assertGreaterEqual(int(steps['Requested nested niri group']) * 60, chain)
         job = int(re.search(r'    timeout-minutes: (\d+)', workflow)[1])
         self.assertGreaterEqual(job, sum(map(int, steps.values())))
         self.assertIn('Compact diagnostic results', steps)
@@ -611,7 +637,7 @@ class ReviewRegressions(unittest.TestCase):
         cfg = dict(guest_root=str(root / 'inner'), storage=str(root), user='tester',
                    host='test', build_seconds=30, group_seconds=30, export_seconds=10)
         args = SimpleNamespace(image=str(image), sha256=platform.digest(image), source=str(source),
-                               results=str(root / 'results'), source_revision=None)
+                               results=str(root / 'results'), source_revision=None, group='niri-smoke')
         vm = Mock(spec=['name', 'uuid', 'mac', 'receipt', 'directory', 'wait_ready', 'ssh', 'stop', 'execute'])
         vm.name, vm.uuid, vm.mac = 'owned', 'owned-uuid', '52:54:00:00:00:01'
         vm.directory, vm.receipt = instance, dict(phase='starting', qemu_exit=0)
@@ -689,6 +715,8 @@ class ShadowBackupRegression(unittest.TestCase):
                                 raise OSError('partial backup')
                         else:
                             restored.append(argv)
+                    if argv[:3] == ['sudo', '-n', sys.executable] and argv[3] == str(source / 'Tests/shadow_fixture.py'):
+                        restored.append(argv)
                     if argv[:3] == ['sudo', '-n', 'chmod'] and phase == 'permissions':
                         raise OSError('unsecured backup')
                     if argv[:3] == ['sudo', '-n', 'chpasswd']:
@@ -716,7 +744,7 @@ class ShadowBackupRegression(unittest.TestCase):
                         patch.object(guest.subprocess, 'run', side_effect=run), \
                         patch.object(guest.subprocess, 'check_output', side_effect=output):
                     self.assertEqual(guest.run_group(request), 1)
-                self.assertEqual(len(restored), int(phase == 'after-backup'))
+                self.assertEqual(len(restored), int(phase == 'after-backup'), (root / 'results/summary.json').read_text())
                 self.assertFalse(backup.exists())
 
 
@@ -759,7 +787,7 @@ class ImagePublication(unittest.TestCase):
             self.assertIn(required, condition)
         for name in ('Prepare tested publication assets', 'Stage tested image on GitHub'):
             step = producer.split('- name: ' + name, 1)[1].split('- name:', 1)[0]
-            self.assertIn("inputs.publish && github.ref == 'refs/heads/master'", step)
+            self.assertIn("inputs.publish && inputs.group == 'niri-smoke' && github.ref == 'refs/heads/master'", step)
         budgets = [int(n) for n in re.findall(r'        timeout-minutes: (\d+)', release)]
         self.assertGreaterEqual(int(re.search(r'    timeout-minutes: (\d+)', release)[1]), sum(budgets))
 

@@ -13,9 +13,12 @@ import time
 spec = importlib.util.spec_from_file_location("emergency_observer", Path(__file__).with_name("remediation-driver.py"))
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
+spec = importlib.util.spec_from_file_location("emergency_acceptance", Path(__file__).with_name("emergency-integration.py"))
+acceptance = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(acceptance)
 
 
-def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial-lock-emergency", desktop_probe=None):
+def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial-lock-emergency", desktop_probe=None, mode="direct"):
     """Caller owns the VM/account/PAM fixture; credentials never enter argv."""
     assert os.geteuid() != 0 and password
     root = Path(root).resolve()
@@ -56,6 +59,24 @@ def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial
             if keyboard.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError("emergency virtual keyboard readiness failed")
             time.sleep(0.02)
+        if mode != "direct":
+            env["AERIAL_LOCK_PAM_SERVICE"] = service
+            (root / "config/aerial-lock").mkdir(parents=True, exist_ok=True)
+            (root / "config/aerial-lock/config.json").write_text('{"sources": []}\n')
+            recovery = acceptance.RecoveryProbe(root / "results/recovery", env,
+                "/usr/bin/aerial-lock-supervisor", "/usr/libexec/aerial-lock/aerial-lock-run",
+                "/usr/share/aerial-lock", "/usr/lib/aerial-lock/qt-plugins", desktop_probe)
+            try:
+                recovery.launch(mode)
+                locker = recovery.locker
+                outcome = recovery.authenticate(password.encode())
+                outcome.update(case=mode, seconds=time.monotonic() - start)
+                (root / "results/outcome.json").write_text(json.dumps(outcome, indent=2) + "\n")
+                print("EMERGENCY_SUPERVISOR_SMOKE_PASS " + json.dumps(outcome), flush=True)
+                return outcome
+            finally:
+                locker = recovery.locker
+                recovery.close()
         observed_env = dict(env, WAYLAND_DEBUG="1")  # observer filters all input before persistence
         locker = driver.ObservedProcess([str(binary), service, "60000"], observed_env, root / "results/emergency.log")
         locker.wait_line(lambda line: "lock-state: lock-confirmed" in line)
@@ -101,7 +122,7 @@ def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial
         if locker is None or locker.process.poll() is not None:
             compositor.process.terminate()
             compositor.finish(5)
-        for path in (root / "results").glob("*.log"):
+        for path in (root / "results").rglob("*.log"):
             payload = path.read_text()
             if password in payload or wrong in payload:
                 raise RuntimeError("fixture credential leak; do not export")
@@ -125,6 +146,13 @@ if __name__ == "__main__":
     parser.add_argument("--session", action="store_true")
     args = parser.parse_args()
     if args.session:
-        run_session("/work/emergency", "aerial-emergency-ci", sys.stdin.read())
+        password = sys.stdin.read()
+        desktop = "/work/emergency/desktop-input-probe"
+        flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "Qt6Quick"], text=True).split()
+        subprocess.run(["c++", "-std=c++17", "-fPIC", str(Path(__file__).with_name("desktop-input-probe.cpp")),
+                        "-o", desktop, *flags], check=True, timeout=60)
+        for mode in acceptance.RECOVERY_CASES:
+            run_session("/work/emergency/" + mode, "aerial-emergency-ci", password,
+                        desktop_probe=desktop, mode=mode)
     else:
         raise SystemExit(prepare())
