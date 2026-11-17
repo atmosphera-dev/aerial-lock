@@ -73,6 +73,18 @@ runpy.run_path(sys.argv[0], run_name='__main__')
                 (root / "stop").touch()
                 child.wait(8)
 
+    # The emergency supervisor's PID receipt uses the same complete-file
+    # publication: existence cannot precede a complete, parseable PID.
+    pid = root / "pid"
+    replace_pid = os.replace
+    def observe_pid_replace(temporary, target):
+        assert target == pid and not target.exists()
+        assert int(temporary.read_text()) == os.getpid()
+        replace_pid(temporary, target)
+    with patch("fixture_files.os.replace", side_effect=observe_pid_replace):
+        publish(pid, str(os.getpid()))
+    assert int(pid.read_text()) == os.getpid()
+
     # An updating journal must retain its complete previous snapshot until the
     # new one is published; failed replacement must not expose or lose data.
     journal = root / "launches"

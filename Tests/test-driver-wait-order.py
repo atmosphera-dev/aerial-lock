@@ -4,7 +4,6 @@
 Deterministic fakes reproduce the race: output (or state) that becomes
 available between the last scan and the exit observation must still count.
 """
-from collections import deque
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,10 +17,8 @@ spec.loader.exec_module(driver)
 
 def exited_process_with_late_line(line):
     """An exited process whose reader appends its last line only while it is joined."""
-    observed = driver.ObservedProcess.__new__(driver.ObservedProcess)
-    observed.lines = deque()
-    observed.log = Path("fake.log")
-    observed.process = SimpleNamespace(poll=lambda: 0)
+    observed = driver.ObservedProcess.from_process(SimpleNamespace(poll=lambda: 0),
+                                                  Path("fake.log"), start_reader=False)
     observed.thread = SimpleNamespace(join=lambda timeout=None: observed.lines.append((1, line)))
     return observed
 

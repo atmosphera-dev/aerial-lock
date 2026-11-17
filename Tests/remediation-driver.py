@@ -32,11 +32,28 @@ def run(argv, env, **kwargs):
 
 class ObservedProcess:
     def __init__(self, argv, env, log, protocol_sync=False):
+        process = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        self._initialize(process, log, protocol_sync)
+        self.start_reader()
+
+    @classmethod
+    def from_process(cls, process, log, protocol_sync=False, *, start_reader=True):
+        """Observe an existing process, optionally deferring its FIFO reader."""
+        observed = cls.__new__(cls)
+        observed._initialize(process, log, protocol_sync)
+        if start_reader:
+            observed.start_reader()
+        return observed
+
+    def _initialize(self, process, log, protocol_sync):
         self.lines = deque(maxlen=4096)
         self.protocol_sync = protocol_sync
-        self.process = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
-                                        stderr=subprocess.STDOUT, start_new_session=True)
+        self.process = process
         self.log = log
+        self.thread = None
+
+    def start_reader(self):
         self.thread = threading.Thread(target=self.consume, daemon=True)
         self.thread.start()
 

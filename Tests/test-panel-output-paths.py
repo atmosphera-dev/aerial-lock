@@ -113,17 +113,14 @@ class ProtocolRedaction(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "redacted.log"
-            process = driver.ObservedProcess.__new__(driver.ObservedProcess)
-            process.lines = driver.deque(maxlen=4096)
-            process.log = log
-            process.process = SimpleNamespace(stdout=[
+            process = driver.ObservedProcess.from_process(SimpleNamespace(stdout=[
                 b"[12345.67] wl_keyboard#2.key(1, 2, 3, 1)\n",
                 b"[16:27:22.123456] zwp_text_input_v3#7.commit_string(\"private-fixture-token\")\n",
                 b"[16:27:22.123457] wl_surface#8.commit()\n",
                 b"[12345.68] ext_session_lock_v1#9.locked()\n",
                 b"[16:27:23.123458] -> ext_session_lock_v1#9.unlock_and_destroy()\n",
                 b"qml: PANEL_SNAPSHOT {\"output\":\"recovery\"}\n",
-            ])
+            ]), log, start_reader=False)
             process.consume()
             output = log.read_text()
             self.assertNotIn("private-fixture-token", output)

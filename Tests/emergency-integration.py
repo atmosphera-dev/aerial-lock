@@ -51,12 +51,30 @@ class FrameWitness:
     This can detect a desktop flash at a sampled instant, not exclude shorter
     flashes between samples. Keep that limitation explicit in the result.
     """
-    def __init__(self, env, output, directory):
+    def __init__(self, env, output, directory, *, save_interval=0.25,
+                 frame_limit=64, byte_limit=64 * 1024 * 1024):
         self.env, self.output, self.directory = dict(env), output, Path(directory)
         self.env.pop('WAYLAND_DEBUG', None)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.stop = threading.Event()
         self.frames, self.error = [], None
+        self.save_interval_ns = int(save_interval * 1e9)
+        self.frame_limit, self.byte_limit = frame_limit, byte_limit
+        self.saved_frames = self.saved_bytes = 0
+        self.last_saved_ns = None
+
+    def save(self, raw, name, stamp, *, marker=False):
+        # Storage policy never delays or stops marker observations. Marker hits
+        # bypass the save interval, but not the total frame/byte budgets.
+        if self.saved_frames >= self.frame_limit or self.saved_bytes + len(raw) > self.byte_limit:
+            return False
+        if not marker and self.last_saved_ns is not None and stamp - self.last_saved_ns < self.save_interval_ns:
+            return False
+        (self.directory / name).write_bytes(raw)
+        self.saved_frames += 1
+        self.saved_bytes += len(raw)
+        self.last_saved_ns = stamp
+        return True
 
     def sample(self):
         raw = subprocess.check_output(['grim', '-t', 'ppm', '-o', self.output, '-'], env=self.env, timeout=5)
@@ -75,7 +93,8 @@ class FrameWitness:
             if visible: break
             if time.monotonic() >= deadline: raise RuntimeError('desktop pixel witness control not visible')
             time.sleep(0.02)
-        (self.directory / 'desktop-control.ppm').write_bytes(raw)
+        # The control is included in the same total storage budgets.
+        self.save(raw, 'desktop-control.ppm', time.monotonic_ns(), marker=True)
 
     def start(self):
         def observe():
@@ -83,10 +102,10 @@ class FrameWitness:
                 while not self.stop.is_set():
                     raw, visible = self.sample()
                     stamp = time.monotonic_ns()
-                    self.frames.append(dict(monotonic_ns=stamp, desktop_marker=visible))
                     # Exact full-frame observations remain guest-side until the
                     # evidence export. No input events or secret text is saved.
-                    (self.directory / (str(len(self.frames)).zfill(4) + '.ppm')).write_bytes(raw)
+                    saved = self.save(raw, str(len(self.frames) + 1).zfill(4) + '.ppm', stamp, marker=visible)
+                    self.frames.append(dict(monotonic_ns=stamp, desktop_marker=visible, saved=saved))
                     # The execution plan explicitly calls for recording any
                     # Hyprland desktop flash separately from input/auth state.
                     # Do not turn that observation into a zero-exposure claim.
@@ -98,7 +117,12 @@ class FrameWitness:
     def finish(self, require_samples=True):
         self.stop.set()
         if hasattr(self, 'thread'): self.thread.join(8)
+        if hasattr(self, 'thread') and self.thread.is_alive():
+            self.error = 'frame sampler did not stop'
         summary = dict(samples=len(self.frames), frames=self.frames, error=self.error,
+                       save_interval_ms=self.save_interval_ns / 1e6,
+                       frame_limit=self.frame_limit, byte_limit=self.byte_limit,
+                       saved_frames=self.saved_frames, saved_bytes=self.saved_bytes,
                        samples_with_desktop_marker=sum(frame['desktop_marker'] for frame in self.frames),
                        scope='sampled compositor output; sub-sample flashes not excluded')
         if self.frames:
@@ -171,6 +195,16 @@ class RecoveryProbe:
         self.flood = threading.Thread(target=flood, daemon=True)
         self.flood.start()
 
+    def finish_flood(self):
+        """Retire and validate the injector before any success or release."""
+        self.stop.set()
+        if self.flood:
+            self.flood.join(12)
+            if self.flood.is_alive():
+                raise RuntimeError('input injector did not stop')
+        if self.flood_error:
+            raise RuntimeError(self.flood_error)
+
     def launch(self, mode):
         self.validate()
         self.witness = driver.ObservedProcess([self.desktop, "--witness"], self.env, self.output / "desktop.log")
@@ -235,8 +269,7 @@ class RecoveryProbe:
             self.wait("lock-state: auth-prompt", after=rejected)
         # Join the transition witness injector before authenticated unlock can
         # legitimately return desktop focus; it ran throughout all crash gaps.
-        self.stop.set()
-        if self.flood: self.flood.join(12)
+        self.finish_flood()
         if self.frames: self.frame_summary = self.frames.finish()
         self.submit(password)
         self.wait("lock-state: auth-success")
@@ -255,9 +288,7 @@ class RecoveryProbe:
         # Stop input before the compositor returns focus to the desktop. The
         # last F11 might otherwise intentionally arrive after a valid unlock.
         # The flood stops on auth-success/release-requested below in watch().
-        self.stop.set()
-        if self.flood: self.flood.join(12)
-        if self.flood_error: raise RuntimeError(self.flood_error)
+        self.finish_flood()
         if self.locker.finish(15) != 0: raise RuntimeError("supervisor did not exit naturally 0")
         if Path(f"/proc/{self.emergency_pid}").exists(): raise RuntimeError("emergency child survived")
         if self.witness.process.poll() is not None:
@@ -529,8 +560,7 @@ class EmergencySession(driver.Session):
                         probe.retained()
                     key(self.env, '-k', 'Escape')
                 elif name == 'external-release':
-                    probe.stop.set()
-                    if probe.flood: probe.flood.join(12)
+                    probe.finish_flood()
                     os.kill(probe.locker.process.pid, signal.SIGUSR1)
                     outcome = probe.complete(authenticated=False)
                 elif name in ('emergency-missing', 'emergency-exhausted'):
@@ -548,13 +578,11 @@ class EmergencySession(driver.Session):
                         if probe.locker.finish(15) != 3: raise RuntimeError('emergency exhaustion exit class')
                     if any('.unlock_and_destroy()' in line for _, line in tuple(probe.locker.lines)):
                         raise RuntimeError('failed recovery issued unlock')
-                    probe.stop.set()
-                    if probe.flood: probe.flood.join(12)
+                    probe.finish_flood()
                     if probe.witness.process.poll() is not None: raise RuntimeError('failed recovery exposed desktop input')
                     outcome = dict(status='PASS', no_automatic_unlock=True, exit=3, protection_previously_confirmed=True)
                 elif name == 'compositor-death':
-                    probe.stop.set()
-                    if probe.flood: probe.flood.join(12)
+                    probe.finish_flood()
                     self.compositor.process.terminate()
                     self.compositor.finish(10)
                     if probe.locker.finish(15) != 0: raise RuntimeError('compositor-death-first outcome')
@@ -563,6 +591,7 @@ class EmergencySession(driver.Session):
                     self.compositor = None
                 if name in ('missing-qs', 'missing-plugin', 'emergency-retry', 'helper-missing'):
                     outcome = probe.authenticate(self.password(), wrong=False)
+                probe.finish_flood()
                 log = probe.locker.log.read_text()
                 if log.count('launching locker, attempt') != 1:
                     raise RuntimeError('unexpected normal retry after known startup failure/emergency transition')

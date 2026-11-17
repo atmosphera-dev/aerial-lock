@@ -88,13 +88,14 @@ with tempfile.TemporaryDirectory(prefix="emergency-supervisor-") as directory:
         listener.listen(32)
         runner = case / "normal"
         runner.write_text("#!/usr/bin/python3\nimport os,socket,sys,time\nfrom pathlib import Path\n"
+                          f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\nfrom fixture_files import publish\n"
                           f"root=Path({str(case)!r})\n"
                           "if '--emergency-stub' not in sys.argv: raise SystemExit(72)\n"
-                          "(root/'pid').write_text(str(os.getpid()))\n"
+                          "publish(root/'pid', str(os.getpid()))\n"
                           "while not (root/'engage').exists(): time.sleep(.01)\n"
                           "s=socket.socket(socket.AF_UNIX); s.connect(os.environ['AERIAL_LOCK_ENGAGEMENT_SOCKET']); s.sendall(b'locked\\n')\n"
                           "data=s.makefile('rb').readline(); assert data==b'release\\n'\n"
-                          "(root/'release').write_bytes(data)\n")
+                          "publish(root/'release', data)\n")
         runner.chmod(0o700)
         bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", "--address=unix:path=" + str(runtime / "bus")], stdout=subprocess.PIPE, text=True)
         address = bus.stdout.readline().strip()

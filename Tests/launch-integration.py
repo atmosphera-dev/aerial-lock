@@ -6,7 +6,6 @@ attempt on one private bus: it must wait while the real locker is engaging and
 exit 0 only once that locker confirmed the session lock, and exit 4 beside a
 supervisor whose attempts never engage.
 """
-from collections import deque
 import argparse
 import importlib.util
 import hashlib
@@ -83,14 +82,11 @@ def main():
         env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
         session.assert_control()
         def locker_log(path):
-            observed = driver.ObservedProcess.__new__(driver.ObservedProcess)
-            observed.lines = deque(maxlen=4096)
-            observed.log = path
             # Publish the process interface before starting its FIFO reader;
             # wait_for may run before the writer opens the pipe.
-            observed.process = SimpleNamespace(stdout=None,
+            process = SimpleNamespace(stdout=None,
                 poll=lambda: supervisor.process.poll() if supervisor else None)
-            return observed
+            return driver.ObservedProcess.from_process(process, path, start_reader=False)
         log = locker_log(session.output / "locker.redacted.log")
         def consume():
             with fifo.open("rb") as stream:
