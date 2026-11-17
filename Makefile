@@ -31,7 +31,7 @@ SUPERVISOR_OBJS := $(OBJDIR)/aerial-supervisor-proto.o $(OBJDIR)/aerial-supervis
 GUARD_OBJS := $(OBJDIR)/connection-guard.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
-INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o
+INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/power-actions.o
 GUARD_PLUGIN := native/qt-plugins/generic/libAerialLockConnectionGuard.so
 INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
@@ -149,11 +149,11 @@ supervisor/aerial-lock-supervisor: $(SUPERVISOR_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(OBJDIR)/aerial-supervisor-main.o $(OBJDIR)/aerial-supervisor-proto.o \
 		$$(pkg-config --libs Qt6Core Qt6DBus wayland-client)
 
-native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h
+native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h native/power-actions.h
 	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Quick) $< -o $@
 
-$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc $(OBJDIR)/native-config
-	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Quick) -o $@
+$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc native/power-actions.h $(OBJDIR)/native-config
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Quick Qt6DBus) -o $@
 
 native/auth-context.moc: native/auth-context.h
 	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Core) $< -o $@
@@ -165,12 +165,18 @@ $(OBJDIR)/auth-context.o: native/auth-context.cpp native/auth-context.h native/a
 $(OBJDIR)/aerial-lock-auth.o: native/aerial-lock-auth.c native/auth-protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+native/power-actions.moc: native/power-actions.h
+	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Core Qt6DBus) $< -o $@
+
+$(OBJDIR)/power-actions.o: native/power-actions.cpp native/power-actions.h native/power-actions.moc $(OBJDIR)/native-config
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
 native/aerial-lock-auth: $(AUTH_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -lpam
 
 $(INPUT_PLUGIN): $(INPUT_OBJS)
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -shared -o $@ $(INPUT_OBJS) $$(pkg-config --libs Qt6Quick) -ldl
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -shared -o $@ $(INPUT_OBJS) $$(pkg-config --libs Qt6Quick Qt6DBus) -ldl
 
 idle/ext-idle-notify-v1-client.h: $(IDLE_NOTIFY_XML)
 	wayland-scanner client-header $< $@
@@ -211,6 +217,8 @@ install: all
 	install -m 644 Modules/Lock/AuthEditor.qml Modules/Lock/AuthInputSink.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
 	install -m 644 Modules/Lock/Avatar.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
 	install -m 644 Modules/Lock/FrostedText.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
+	install -m 644 Modules/Lock/PowerActionControls.qml Modules/Lock/PowerActionButton.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
+	install -m 644 Modules/Lock/PowerActionMaterial.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
 	install -d $(DESTDIR)$(DATADIR)/Themes
 	install -m 644 Themes/Macintosh.qml $(DESTDIR)$(DATADIR)/Themes/
 	install -m 644 Themes/Windows7.qml $(DESTDIR)$(DATADIR)/Themes/
@@ -288,6 +296,7 @@ clean:
 	rm -f native/connection-guard.moc $(GUARD_PLUGIN)
 	rm -f native/surface-input.moc $(INPUT_PLUGIN) $(OBJDIR)/surface-input.o
 	rm -f native/auth-context.moc native/aerial-lock-auth $(INPUT_OBJS) $(AUTH_OBJS)
+	rm -f native/power-actions.moc
 	rm -f idle/aerial-idle idle/aerial-idle.moc idle/ext-idle-notify-v1-client.h idle/ext-idle-notify-v1-protocol.c
 	rm -f $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS)
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service

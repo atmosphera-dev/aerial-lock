@@ -40,6 +40,7 @@ Scope {
         pamService: "string",
         fallbackQuitMs: "number",
         pamWatchdogTimeoutMs: "number",
+        powerActions: ({ enabled: "boolean" }),
         idle: ({
             timeoutSeconds: "nonnegative-integer",
             respectInhibitors: "boolean",

@@ -6,7 +6,7 @@ import "../../Services"
 AuthEditor {
     required property LockContext context
     input: context.auth.input
-    inputBusy: context.auth.inProgress
+    inputBusy: context.auth.inProgress || context.power.interactionActive
     responseVisible: context.auth.responseVisible
     maxResponseSize: context.auth.maxResponseSize
     textColor: context.colors.input

@@ -3,6 +3,13 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Lock-screen power controls, with inline confirmation for restart and shutdown
+  and application-blocker messages. Only actions allowed by the system are shown.
+
 ## [0.1.5] - 2026-11-16
 
 ### Fixed

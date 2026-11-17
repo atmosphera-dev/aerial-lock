@@ -199,6 +199,10 @@ Item {
             ctx.session.loginName = "tester"
             // Simulate the controller: the initial prompt sits in the status.
             ctx.auth.status = ctx.labels.prompt
+            ctx.power.enabled = true
+            ctx.power.canReboot = true
+            ctx.power.canPowerOff = true
+            ctx.power.canSuspend = true
             theme = null
         }
 
@@ -255,34 +259,28 @@ Item {
                    what + ": actual " + actual + " vs expected " + expected)
         }
 
-        function disabledHonesty(name) {
-            var r = region(name)
-            compare(r.obj.Accessible.role, Accessible.Button, name + " has a button role")
-            verify(r.obj.opacity < 1, name + " must be visibly unavailable (dimmed)")
-            verify(r.obj.visible, name + " must remain visible")
-            var acc = r.obj.Accessible ? r.obj.Accessible.name : ""
-            verify(acc.indexOf("unavailable") !== -1 || acc.indexOf("not yet implemented") !== -1,
-                   name + " must carry an honest unavailable description")
+        function absent(name) {
+            verify(findByName(theme, name) === null, name + " has no backend and must not be drawn")
         }
 
-        function test_unavailable_controls_data() {
+        function test_unbacked_controls_absent_data() {
             return [
                 {tag: "Macintosh", filename: "Macintosh.qml", controls: []},
                 {tag: "Windows7", filename: "Windows7.qml",
-                 controls: ["switchUser", "sessionPill", "restartAction", "shutdownAction"]},
+                  controls: ["switchUser", "sessionPill", "sessionRow", "noticeLabel"]},
                 {tag: "MaterialYou", filename: "MaterialYou.qml",
-                 controls: ["userPill", "powerTile", "sessionTile", "rebootTile", "sleepTile"]},
+                  controls: ["userPill", "sessionTile", "noticeLabel"]},
                 {tag: "Enfield", filename: "Enfield.qml",
-                 controls: ["userName", "sessionAffordance", "restartAction", "shutdownAction"]},
+                  controls: ["sessionAffordance", "noticeLabel"]},
                 {tag: "Clockwork", filename: "Clockwork.qml",
-                 controls: ["userSelector", "sessionAction", "rebootAction", "shutdownAction"]}
+                  controls: ["userSelector", "sessionAction", "noticeLabel"]}
             ]
         }
 
-        function test_unavailable_controls(data) {
+        function test_unbacked_controls_absent(data) {
             load(data.filename)
             for (var i = 0; i < data.controls.length; i++)
-                disabledHonesty(data.controls[i])
+                absent(data.controls[i])
         }
 
         // ---- Windows7 ----
@@ -305,15 +303,12 @@ Item {
             close(arrow.w, 28 * s, "win7 arrow size")
             close(arrow.cy, field.cy, "win7 arrow shares the field's centerline")
 
-            var su = region("switchUser")
-            close(su.cx, 1280 / 2, "win7 Switch User centered")
-            close(su.h, 26 * s, "win7 Switch User height")
-            disabledHonesty("switchUser")
+            absent("switchUser")
 
             var footer = region("footerBar")
             close(footer.h, 52 * s, "win7 footer height")
             close(footer.y + footer.h, 800, "win7 footer at the bottom edge")
-            verify(region("sessionRow").x < region("clockRow").x, "win7 session left of clock")
+            absent("sessionRow")
             verify(region("powerRow").x > region("clockRow").x, "win7 power right of clock")
             close(region("clockRow").cx, 1280 / 2, "win7 footer clock centered")
         }
@@ -321,10 +316,9 @@ Item {
         function test_windows7_narrow_stacks_footer() {
             load("Windows7.qml", 492, 768)
             var clock = region("clockRow")
-            var session = region("sessionRow")
             var power = region("powerRow")
-            verify(clock.y > session.y, "narrow: clock drops to the second row")
-            verify(Math.abs(session.y - power.y) < 1, "narrow: session and power share the top row")
+            verify(clock.y > power.y, "narrow: clock drops below the power row")
+            verify(clock.y >= power.bottom - 0.75, "narrow: centered clock never overlaps buttons")
             var footer = region("footerBar")
             verify(footer.h > 52, "narrow: the footer grows instead of overlapping")
         }
@@ -359,19 +353,18 @@ Item {
             close(field.w, 336 * s, "material field width")
             close(field.h, 52 * s, "material field height")
 
-            var tileNames = ["powerTile", "sessionTile", "rebootTile", "sleepTile"]
+            var tileNames = ["powerTile", "rebootTile", "sleepTile"]
             for (var i = 0; i < tileNames.length; i++) {
                 var tile = region(tileNames[i]).obj
-                close(tile.width, 180 * s, tileNames[i] + ": material tile width")
+                close(tile.width, (tileNames[i] === "sleepTile" ? 376 : 180) * s, tileNames[i] + ": material tile width")
                 close(tile.height, 76 * s, tileNames[i] + ": material tile height")
-                verify(tile.opacity < 1, tileNames[i] + ": visibly unavailable")
+                compare(tile.opacity, 1, tileNames[i] + ": working control is not dimmed")
             }
 
             var unlock = region("unlockPill")
             close(unlock.h, 38 * s, "material unlock pill height")
-            var user = region("userPill")
-            close(user.h, 38 * s, "material user pill height")
-            disabledHonesty("userPill")
+            absent("userPill")
+            close(unlock.w, 336 * s, "UNLOCK fills the card without an inert user pill")
         }
 
         function test_materialyou_narrow_stacks() {
@@ -452,7 +445,7 @@ Item {
             close(sep.w, 1280 - 80 * s, "enfield footer separator width")
             close(sep.bottom, 800 - 40 * s, "enfield footer separator position")
             verify(region("footerBar").h > 0, "enfield footer bar present")
-            disabledHonesty("sessionAffordance")
+            absent("sessionAffordance")
         }
 
         // ---- Clockwork / Orbital ----

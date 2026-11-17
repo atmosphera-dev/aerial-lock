@@ -277,6 +277,21 @@ play your configured pool as-is. The authoring contract, the shared
 `LockContext` object, and the topic-matching semantics are documented in
 [`docs/theming.md`](docs/theming.md).
 
+### Lock-screen power controls
+
+Windows7, MaterialYou, Enfield and Clockwork show only power actions the system
+allows without additional authorization. Restart and shut down ask "Are you
+sure?" inline, with Cancel focused first and no password gate. Suspend acts at
+once; custom themes can also offer hibernate when the device supports it.
+Application blockers and failures appear on screen. Actions never unlock the
+session, bypass inhibitors or open a polkit prompt.
+
+Set `"powerActions": { "enabled": false }` to hide all power controls. Existing
+configs inherit `true`; nothing needs migration. User/session switching is not
+implemented, so those controls are not drawn. See the
+[configuration reference](docs/config.reference.md#poweractions-object) and
+[theme API](docs/theming.md#contextpower).
+
 ### Video backgrounds
 
 The `sources` list drives the background — local files and folders plus

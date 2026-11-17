@@ -2,6 +2,36 @@ import QtQuick.tooling 1.2
 
 Module {
     Component {
+        name: "PowerActions"
+        prototype: "QObject"
+        exports: ["AerialLock.Native/PowerActions 1.0"]
+        Property { name: "enabled"; type: "bool" }
+        Property { name: "secure"; type: "bool" }
+        Property { name: "canSuspend"; type: "bool"; isReadonly: true }
+        Property { name: "canHibernate"; type: "bool"; isReadonly: true }
+        Property { name: "canReboot"; type: "bool"; isReadonly: true }
+        Property { name: "canPowerOff"; type: "bool"; isReadonly: true }
+        Property { name: "suspendReason"; type: "QString"; isReadonly: true }
+        Property { name: "hibernateReason"; type: "QString"; isReadonly: true }
+        Property { name: "rebootReason"; type: "QString"; isReadonly: true }
+        Property { name: "powerOffReason"; type: "QString"; isReadonly: true }
+        Property { name: "state"; type: "QString"; isReadonly: true }
+        Property { name: "pendingAction"; type: "QString"; isReadonly: true }
+        Property { name: "activeAction"; type: "QString"; isReadonly: true }
+        Property { name: "blockerWho"; type: "QString"; isReadonly: true }
+        Property { name: "blockerWhy"; type: "QString"; isReadonly: true }
+        Property { name: "confirmationRequired"; type: "bool"; isReadonly: true }
+        Property { name: "busy"; type: "bool"; isReadonly: true }
+        Property { name: "interactionActive"; type: "bool"; isReadonly: true }
+        Property { name: "errorCode"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method { name: "request"; Parameter { name: "action"; type: "QString" } }
+        Method { name: "confirm" }
+        Method { name: "cancel" }
+        Method { name: "clearError" }
+        Method { name: "refresh" }
+    }
+    Component {
         name: "AuthContext"
         prototype: "QObject"
         exports: ["AerialLock.Native/AuthContext 1.0"]

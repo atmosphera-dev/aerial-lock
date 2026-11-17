@@ -90,6 +90,7 @@ Scope {
     function requestUnlock(reason) {
         if (!root.locked)
             return
+        root.powerEndpoint.cancel()
         logger.i("lock-state", "lock " + (root.secure ? "engaged" : "requested")
                  + " -> unlock-requested reason=" + reason)
         root.unlockRequested()
@@ -121,6 +122,11 @@ Scope {
     // Construct-time test seam (Tests/lock-lifecycle-shell.qml); the
     // production shell never overrides the real PAM context.
     property var pamEndpoint: pam
+    // Construct-time platform boundary, following pamEndpoint. Production
+    // always uses the native owner; the real-session test supplies its peer.
+    property var powerEndpoint: powerActions
+    readonly property bool powerEnabled: root.config.data.powerActions
+            ? root.config.data.powerActions.enabled : false
     readonly property LockContext context: lockContext
 
     property string panelScreenName: ""
@@ -178,6 +184,10 @@ Scope {
         Component.onCompleted: {
             submitRequested.connect(root.tryUnlock)
             dismissRequested.connect(root.dismissRequested)
+            powerRequested.connect(root.requestPower)
+            powerConfirmRequested.connect(function () { root.powerEndpoint.confirm() })
+            powerCancelRequested.connect(function () { root.powerEndpoint.cancel() })
+            powerErrorDismissRequested.connect(function () { root.powerEndpoint.clearError() })
         }
     }
 
@@ -189,6 +199,109 @@ Scope {
     Binding { target: lockContext.auth; property: "responseVisible"; value: root.pamEndpoint.active && root.pamEndpoint.responseRequired && root.pamEndpoint.responseVisible }
     Binding { target: lockContext.auth; property: "maxResponseSize"; value: config.pamLimits.maxResponseSize }
     Binding { target: lockContext.auth; property: "dismissAvailable"; value: config.buildFlags.debugAllowDismiss }
+
+    PowerActions { id: powerActions }
+    Binding { target: root.powerEndpoint; property: "enabled"; value: root.powerEnabled }
+    Binding { target: root.powerEndpoint; property: "secure"; value: root.locked && root.secure && !root.tearingDown }
+    Binding { target: lockContext.power; property: "enabled"; value: root.powerEnabled }
+    Binding { target: lockContext.power; property: "canSuspend"; value: root.powerEndpoint.canSuspend }
+    Binding { target: lockContext.power; property: "canHibernate"; value: root.powerEndpoint.canHibernate }
+    Binding { target: lockContext.power; property: "canReboot"; value: root.powerEndpoint.canReboot }
+    Binding { target: lockContext.power; property: "canPowerOff"; value: root.powerEndpoint.canPowerOff }
+    Binding { target: lockContext.power; property: "suspendReason"; value: root.powerReason(root.powerEndpoint.suspendReason) }
+    Binding { target: lockContext.power; property: "hibernateReason"; value: root.powerReason(root.powerEndpoint.hibernateReason) }
+    Binding { target: lockContext.power; property: "rebootReason"; value: root.powerReason(root.powerEndpoint.rebootReason) }
+    Binding { target: lockContext.power; property: "powerOffReason"; value: root.powerReason(root.powerEndpoint.powerOffReason) }
+    Binding { target: lockContext.power; property: "state"; value: root.powerEndpoint.state }
+    Binding { target: lockContext.power; property: "pendingAction"; value: root.powerEndpoint.pendingAction }
+    Binding { target: lockContext.power; property: "activeAction"; value: root.powerEndpoint.activeAction }
+    Binding { target: lockContext.power; property: "blockerWho"; value: root.powerEndpoint.blockerWho }
+    Binding { target: lockContext.power; property: "blockerWhy"; value: root.powerEndpoint.blockerWhy }
+    Binding { target: lockContext.power; property: "confirmationRequired"; value: root.powerEndpoint.confirmationRequired }
+    Binding { target: lockContext.power; property: "busy"; value: root.powerEndpoint.busy }
+    Binding { target: lockContext.power; property: "error"; value: {
+            if (root.powerEndpoint.errorCode === "inhibited") {
+                var who = root.powerEndpoint.blockerWho
+                var why = root.powerEndpoint.blockerWhy
+                var pattern = !who ? lockContext.labels.powerBlockedByApplication
+                        : why ? lockContext.labels.powerBlockedBy : lockContext.labels.powerBlockedByName
+                var values = [root.powerActionLabel(root.powerEndpoint.activeAction), who, why]
+                return pattern.replace(/%([123])/g, function(match, number) { return values[Number(number) - 1] })
+            }
+            if (root.powerEndpoint.errorCode === "failed") {
+                switch (root.powerEndpoint.activeAction) {
+                case "reboot": return lockContext.labels.powerRestartFailed
+                case "powerOff": return lockContext.labels.powerOffFailed
+                case "suspend": return lockContext.labels.powerSuspendFailed
+                case "hibernate": return lockContext.labels.powerHibernateFailed
+                }
+            }
+            return root.powerReason(root.powerEndpoint.errorCode)
+        } }
+    Binding { target: lockContext.power; property: "status"; value: {
+            if (root.powerEndpoint.state === "checking") return lockContext.labels.powerChecking
+            if (root.powerEndpoint.state === "executing" || root.powerEndpoint.state === "waiting") {
+                switch (root.powerEndpoint.pendingAction) {
+                case "reboot": return lockContext.labels.powerRestarting
+                case "powerOff": return lockContext.labels.powerShuttingDown
+                case "suspend": return lockContext.labels.powerSuspending
+                case "hibernate": return lockContext.labels.powerHibernating
+                }
+            }
+            return ""
+        } }
+
+    function powerActionLabel(action) {
+        switch (action) {
+        case "suspend": return lockContext.labels.powerSuspend
+        case "hibernate": return lockContext.labels.powerHibernate
+        case "reboot": return lockContext.labels.powerReboot
+        case "powerOff": return lockContext.labels.powerOff
+        }
+        return ""
+    }
+
+    function powerReason(reason) {
+        switch (reason) {
+        case "": return ""
+        case "unknown": return lockContext.labels.powerChecking
+        case "unsupported": return lockContext.labels.powerNotSupported
+        case "authorization": return lockContext.labels.powerAuthorizationRequired
+        case "denied": return lockContext.labels.powerDenied
+        case "inhibited": return lockContext.labels.powerInhibited
+        case "service": return lockContext.labels.powerServiceUnavailable
+        case "uncertain": return lockContext.labels.powerUncertain
+        case "cancelled": return lockContext.labels.powerCancelled
+        case "in-progress": return lockContext.labels.powerAlreadyInProgress
+        case "failed": return lockContext.labels.powerFailed
+        }
+        return lockContext.labels.powerUnavailable
+    }
+
+    function requestPower(action) {
+        if (!root.powerEnabled || !root.locked || !root.secure || root.tearingDown
+                || lockContext.power.interactionActive)
+            return
+        var available = action === "suspend" ? root.powerEndpoint.canSuspend
+                : action === "hibernate" ? root.powerEndpoint.canHibernate
+                : action === "reboot" ? root.powerEndpoint.canReboot
+                : action === "powerOff" ? root.powerEndpoint.canPowerOff : false
+        if (available) {
+            root.attemptCancelled = true
+            root.acceptedResponse = null
+            root.pamEndpoint.abort()
+            root.enterPrompting("", "power-interaction")
+        }
+        root.powerEndpoint.request(action)
+    }
+
+    Connections {
+        target: lockContext.power
+        function onInteractionActiveChanged() {
+            if (!lockContext.power.interactionActive && root.locked)
+                Qt.callLater(themeHost.focusInput)
+        }
+    }
 
     // A hint overlays the current auth status only until the next content
     // change. Every PAM status update replaces it, even an identical prompt.
@@ -247,6 +360,41 @@ Scope {
     Binding { target: lockContext.labels; property: "timedOut"; value: i18n.timedOut || "Authentication timed out — try again" }
     Binding { target: lockContext.labels; property: "dismissDebug"; value: i18n.dismissDebug || "Dismiss (debug)" }
     Binding { target: lockContext.labels; property: "unlocked"; value: i18n.unlocked || "Unlocked" }
+    Binding { target: lockContext.labels; property: "powerSuspend"; value: i18n.powerSuspend || "Suspend" }
+    Binding { target: lockContext.labels; property: "powerHibernate"; value: i18n.powerHibernate || "Hibernate" }
+    Binding { target: lockContext.labels; property: "powerReboot"; value: i18n.powerReboot || "Restart" }
+    Binding { target: lockContext.labels; property: "powerOff"; value: i18n.powerOff || "Shut down" }
+    Binding { target: lockContext.labels; property: "powerTitlePower"; value: i18n.powerTitlePower || "Power" }
+    Binding { target: lockContext.labels; property: "powerTitleReboot"; value: i18n.powerTitleReboot || "Reboot" }
+    Binding { target: lockContext.labels; property: "powerTitleSleep"; value: i18n.powerTitleSleep || "Sleep" }
+    Binding { target: lockContext.labels; property: "powerTitleShutDown"; value: i18n.powerTitleShutDown || "Shut Down" }
+    Binding { target: lockContext.labels; property: "powerTitleShutdown"; value: i18n.powerTitleShutdown || "Shutdown" }
+    Binding { target: lockContext.labels; property: "powerConfirmQuestion"; value: i18n.powerConfirmQuestion || "Are you sure?" }
+    Binding { target: lockContext.labels; property: "powerCancel"; value: i18n.powerCancel || "Cancel" }
+    Binding { target: lockContext.labels; property: "powerDismiss"; value: i18n.powerDismiss || "Dismiss" }
+    Binding { target: lockContext.labels; property: "powerChecking"; value: i18n.powerChecking || "Checking availability..." }
+    Binding { target: lockContext.labels; property: "powerRequesting"; value: i18n.powerRequesting || "Requesting %1..." }
+    Binding { target: lockContext.labels; property: "powerRestarting"; value: i18n.powerRestarting || "Restarting..." }
+    Binding { target: lockContext.labels; property: "powerShuttingDown"; value: i18n.powerShuttingDown || "Shutting down..." }
+    Binding { target: lockContext.labels; property: "powerSuspending"; value: i18n.powerSuspending || "Suspending..." }
+    Binding { target: lockContext.labels; property: "powerHibernating"; value: i18n.powerHibernating || "Hibernating..." }
+    Binding { target: lockContext.labels; property: "powerRestartFailed"; value: i18n.powerRestartFailed || "The system could not restart." }
+    Binding { target: lockContext.labels; property: "powerOffFailed"; value: i18n.powerOffFailed || "The system could not shut down." }
+    Binding { target: lockContext.labels; property: "powerSuspendFailed"; value: i18n.powerSuspendFailed || "The system could not suspend." }
+    Binding { target: lockContext.labels; property: "powerHibernateFailed"; value: i18n.powerHibernateFailed || "The system could not hibernate." }
+    Binding { target: lockContext.labels; property: "powerBlockedBy"; value: i18n.powerBlockedBy || "%1 is blocked by %2: %3" }
+    Binding { target: lockContext.labels; property: "powerBlockedByName"; value: i18n.powerBlockedByName || "%1 is blocked by %2." }
+    Binding { target: lockContext.labels; property: "powerBlockedByApplication"; value: i18n.powerBlockedByApplication || "%1 is blocked by an application." }
+    Binding { target: lockContext.labels; property: "powerUnavailable"; value: i18n.powerUnavailable || "This action is not available." }
+    Binding { target: lockContext.labels; property: "powerNotSupported"; value: i18n.powerNotSupported || "This system does not support this action." }
+    Binding { target: lockContext.labels; property: "powerAuthorizationRequired"; value: i18n.powerAuthorizationRequired || "This action needs additional authorization and is unavailable while locked." }
+    Binding { target: lockContext.labels; property: "powerDenied"; value: i18n.powerDenied || "The system did not allow this action." }
+    Binding { target: lockContext.labels; property: "powerInhibited"; value: i18n.powerInhibited || "An application is preventing this action. Try again after it finishes." }
+    Binding { target: lockContext.labels; property: "powerServiceUnavailable"; value: i18n.powerServiceUnavailable || "System power controls are unavailable. Try again later." }
+    Binding { target: lockContext.labels; property: "powerFailed"; value: i18n.powerFailed || "The system could not complete this action." }
+    Binding { target: lockContext.labels; property: "powerUncertain"; value: i18n.powerUncertain || "The system did not confirm the request. It may still happen." }
+    Binding { target: lockContext.labels; property: "powerCancelled"; value: i18n.powerCancelled || "The system cancelled this action." }
+    Binding { target: lockContext.labels; property: "powerAlreadyInProgress"; value: i18n.powerAlreadyInProgress || "A system action is already in progress." }
 
     // Video playback export for LockContext — exactly one producer, the
     // selected surface's background (null when there is none).
@@ -537,7 +685,7 @@ Scope {
                 id: surfaceInput
                 panelAttached: root.selectedSurface !== null && root.selectedSurface.surface === lockSurface
                 input: lockContext.auth.input
-                inputBusy: lockContext.auth.inProgress
+                inputBusy: lockContext.auth.inProgress || lockContext.power.interactionActive
                 responseVisible: lockContext.auth.responseVisible
                 maxResponseSize: lockContext.auth.maxResponseSize
                 onSubmitRequested: lockContext.auth.submit()
@@ -741,6 +889,8 @@ Scope {
     }
 
     function tryUnlock() {
+        if (lockContext.power.interactionActive)
+            return
         logger.d("Lock", "tryUnlock: unlockInProgress=" + unlockInProgress +
             " pam.responseRequired=" + root.pamEndpoint.responseRequired)
         if (unlockInProgress) {

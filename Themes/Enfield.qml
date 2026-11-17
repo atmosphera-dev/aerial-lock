@@ -15,9 +15,9 @@ import "../Modules/Lock/AccentTone.js" as AccentTone
 //
 // Intentional deviations (d44 plan): the reference's dark base gradient is
 // replaced by the lock's own background (the video or solid color shows
-// through); the vignette/mist/tint/petals stay; the username and footer
-// affordances are visible but unavailable (system actions are a follow-up
-// TODO); native AuthField masking/caret instead of the reference's NoEcho
+// through); the vignette/mist/tint/petals stay; username is a plain label,
+// power uses context.power, unbacked selectors are absent;
+// native AuthField masking/caret instead of the reference's NoEcho
 // editor + manual star row; no entrance fade (input is never delayed);
 // decorative animations stop when the surface is not shown. Compact
 // stacking (d44 §9.1): the column already stacks vertically; field width
@@ -56,7 +56,10 @@ FocusScope {
     readonly property color sakuraLight: seeded ? tone("#f0c4d4") : "#f0c4d4"
     readonly property color mistWhite: "#e8eef2"
 
-    function focusInput() { field.focusField() }
+    function focusInput() {
+        if (context.power.confirmationRequired) powerRow.focusFirst()
+        else field.focusField()
+    }
 
     // ---- Atmosphere over the video ----
     RadialGradient {
@@ -214,16 +217,6 @@ FocusScope {
             font.pixelSize: 18 * root.s
             font.weight: Font.Light
             font.letterSpacing: 4 * root.s
-            opacity: 0.75
-
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                onEntered: root.hoverNotice = "Switching users is not implemented yet"
-                onExited: root.hoverNotice = ""
-            }
-            Accessible.role: Accessible.Button
-            Accessible.name: "User " + root.context.session.loginName + " (switching unavailable: system actions are not yet implemented)"
         }
 
         Item { width: 1; height: 6 * root.s }
@@ -310,6 +303,7 @@ FocusScope {
                 cursorDelegate: Component {
                     Text {
                         id: caret
+                        visible: field.hasActiveFocus && !field.inputBusy
                         text: "✦"
                         color: root.sakuraPink
                         font.family: root.uiFont
@@ -394,21 +388,6 @@ FocusScope {
         }
     }
 
-    // Hover notice for unavailable affordances; never interactive.
-    property string hoverNotice: ""
-    Text {
-        objectName: "noticeLabel"
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: footerBar.top
-        anchors.bottomMargin: 8 * root.s
-        visible: root.hoverNotice.length > 0
-        text: root.hoverNotice
-        textFormat: Text.PlainText
-        font.family: root.uiFont
-        font.pixelSize: 11 * root.s
-        color: root.sakuraLight
-    }
-
     // Footer separator + affordance bar.
     Rectangle {
         id: footerSeparator
@@ -431,76 +410,116 @@ FocusScope {
         anchors.rightMargin: 40 * root.s
         height: 42 * root.s
 
-        // Left: session affordance (unavailable).
-        Item {
-            objectName: "sessionAffordance"
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: sessionSwitchRow.implicitWidth
-            height: sessionSwitchRow.implicitHeight
-            opacity: 0.6
-
-            Row {
-                id: sessionSwitchRow
-                spacing: 8 * root.s
-                Text {
-                    text: "✦"
-                    color: root.sakuraPink
-                    font.pixelSize: 8 * root.s
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Text {
-                    text: "Session"
-                    color: "white"
-                    font.family: root.uiFont
-                    font.pixelSize: 11 * root.s
-                    font.letterSpacing: 1 * root.s
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                onEntered: root.hoverNotice = "Session selection is not implemented yet"
-                onExited: root.hoverNotice = ""
-            }
-            Accessible.role: Accessible.Button
-            Accessible.name: "Session selection (unavailable: system actions are not yet implemented)"
-        }
-
-        // Right: power actions (unavailable), Restart then Shut Down.
-        Row {
+        LockModule.PowerActionControls {
             id: powerRow
             objectName: "powerRow"
+            context: root.context
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 30 * root.s
-            Repeater {
-                model: [
-                    { name: "restartAction", label: "Restart", notice: "Restart is not implemented yet" },
-                    { name: "shutdownAction", label: "Shut Down", notice: "Shut down is not implemented yet" }
-                ]
-                delegate: Text {
-                    required property var modelData
-                    objectName: modelData.name
-                    text: modelData.label
-                    textFormat: Text.PlainText
-                    color: "white"
-                    // Unavailable: statically dimmed, never brightening into
-                    // an active look on hover; hover shows the notice only.
-                    opacity: 0.4
-                    font.family: root.uiFont
-                    font.pixelSize: 11 * root.s
-                    font.letterSpacing: 1 * root.s
-                    MouseArea {
-                        id: powerHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onEntered: root.hoverNotice = modelData.notice
-                        onExited: root.hoverNotice = ""
+            anchors.bottom: parent.bottom
+            actions: [
+                {action: "reboot", label: root.context.labels.powerReboot, name: "restartAction", available: root.context.power.canReboot},
+                {action: "powerOff", label: root.context.labels.powerTitleShutDown, name: "shutdownAction", available: root.context.power.canPowerOff}
+            ]
+            visible: active || controls.length > 0
+            readonly property real messageWidth: Math.ceil(messageText.implicitWidth)
+            readonly property bool stacked: message.length > 0
+                    && messageWidth + choices.implicitWidth + 30 * root.s > footerBar.width
+            width: stacked ? footerBar.width : choices.implicitWidth
+                    + (message.length > 0 ? messageWidth + 30 * root.s : 0)
+                    + (waiting ? 18 * root.s : 0)
+            height: 42 * root.s + (stacked ? messageText.implicitHeight + 10 * root.s : 0)
+            focusControl: function(index) {
+                var button = powerRepeater.itemAt(index) as LockModule.PowerActionButton
+                if (button) button.focusControl()
+            }
+            Item {
+                anchors.right: parent.right
+                width: powerRow.waiting ? powerRow.messageWidth + 18 * root.s : choices.width
+                height: 5 * root.s
+                anchors.top: choices.top
+                visible: powerRow.active
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 8 * root.s
+                    Rectangle { width: Math.min(40 * root.s, Math.max(0, (parent.parent.width - 21 * root.s) / 2)); height: 1 * root.s; color: root.sakuraPink; opacity: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 5 * root.s; height: 5 * root.s; radius: width / 2; color: root.sakuraPink; opacity: 0.8 }
+                    Rectangle { width: Math.min(40 * root.s, Math.max(0, (parent.parent.width - 21 * root.s) / 2)); height: 1 * root.s; color: root.sakuraPink; opacity: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                }
+            }
+            Text {
+                id: messageText
+                objectName: "powerMessage"
+                text: powerRow.message
+                textFormat: Text.PlainText
+                visible: text.length > 0
+                font.family: root.uiFont
+                font.pixelSize: 11 * root.s
+                font.letterSpacing: 1 * root.s
+                color: powerRow.failed ? "#e08090" : Qt.rgba(root.mistWhite.r, root.mistWhite.g, root.mistWhite.b, 0.7)
+                horizontalAlignment: Text.AlignRight
+                wrapMode: Text.Wrap
+                anchors.right: powerRow.stacked ? parent.right : choices.left
+                anchors.rightMargin: powerRow.stacked ? 0 : 30 * root.s
+                anchors.top: powerRow.stacked ? parent.top : undefined
+                anchors.verticalCenter: powerRow.stacked ? undefined : choices.verticalCenter
+                width: powerRow.stacked ? parent.width : powerRow.messageWidth
+            }
+            Rectangle {
+                objectName: "powerProgress"
+                anchors.right: messageText.left
+                anchors.rightMargin: 12 * root.s
+                anchors.verticalCenter: messageText.verticalCenter
+                width: 6 * root.s; height: width; radius: width / 2
+                color: root.sakuraPink
+                visible: powerRow.waiting
+                SequentialAnimation on opacity {
+                    running: powerRow.visible && powerRow.waiting
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.3; duration: 600 }
+                    NumberAnimation { to: 1; duration: 600 }
+                }
+            }
+            Row {
+                id: choices
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 42 * root.s
+                spacing: 30 * root.s
+                Repeater {
+                    id: powerRepeater
+                    model: powerRow.controls
+                    LockModule.PowerActionButton {
+                        id: linkButton
+                        required property var modelData
+                        objectName: modelData.name
+                        label: modelData.label
+                        width: linkText.implicitWidth
+                        height: 26 * root.s
+                        anchors.verticalCenter: parent.verticalCenter
+                        trapNavigation: powerRow.confirming
+                        onActivated: powerRow.activate(modelData.action)
+                        onNavigate: function(direction) { powerRow.navigate(direction) }
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.leftMargin: -12 * root.s
+                            anchors.rightMargin: -12 * root.s
+                            color: "#1affffff"
+                            border.color: Qt.rgba(root.sakuraPink.r, root.sakuraPink.g, root.sakuraPink.b, 0.6)
+                            radius: height / 2
+                            visible: linkButton.activeFocus
+                        }
+                        Text {
+                            id: linkText
+                            anchors.centerIn: parent
+                            text: linkButton.label
+                            textFormat: Text.PlainText
+                            color: linkButton.activeFocus || linkButton.hovered ? "white"
+                                    : powerRow.confirming ? root.sakuraLight : "#66ffffff"
+                            font.family: root.uiFont
+                            font.pixelSize: 11 * root.s
+                            font.letterSpacing: 1 * root.s
+                        }
                     }
-                    Accessible.role: Accessible.Button
-                    Accessible.name: modelData.label + " (unavailable: system actions are not yet implemented)"
                 }
             }
         }

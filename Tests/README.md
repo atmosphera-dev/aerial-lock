@@ -128,6 +128,65 @@ runner in the disposable VM, with its shell-root loader and bundled imports.
 
 ### Native tests
 
+`power-actions` runs the actual native service against an independent login1
+peer on a caller-created private session bus, selected only through the C++
+constructor seam. It covers strict capability mapping, confirmation and
+retirement, inhibitors, wire flags/noninteractive headers, failures, service
+replacement and lifecycle ordering. No portable test sends a real OS action.
+`tst_power_actions.qml` drives all four actual themes at wide/narrow sizes,
+including Cancel-first keyboard flow, hidden controls, literal error text,
+progress and measured geometry. Config/i18n Node tests execute ConfigStore's
+shipped methods, not a second merge implementation.
+
+Inside the owned VM's Wayland session, after building the tests:
+
+```sh
+python3 Tests/test-power-controller.py --build "$ROOT/build/debug/aerial-tests"
+```
+
+This cold-loads the real Quickshell controller/context and native service using
+a test-only QML plugin whose constructor selects the private peer bus. Only PAM
+and the compositor boundary are synthetic; no native lock is acquired. It
+checks abort-before-synchronous-success, retained draft/selection, blocked
+submission, literal inhibitor projection, hibernate dispatch/status/resume and
+external Release retiring an unsent transaction. It is not real-logind policy,
+multi-output or physical sleep/shutdown proof.
+
+`power-actions-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --backend niri
+--case <case>` adds installed-lock and real-login1 acceptance. Launch it through
+the recorded active graphical session's spawn path, not an SSH/root subject.
+Cases are `themes`, `controller`, `outputs`, `policy`, `inhibited`, `error` and
+`supported-{suspend,hibernate,reboot,poweroff}`. The theme wrapper observes the
+public context and measured named controls; it never replaces the system bus.
+Secure coverage, absence of power-triggered release, and ordinary independent
+PAM cleanup are recorded in filtered logs. It does not capture lock surfaces.
+Visual evidence is a separate normal-window render of actual themes with a
+scripted context, not a capture of the live lock.
+
+Prepare the operator manifest and a TMPDIR-only workspace-local wtype at
+`$ROOT/tools/bin/wtype`, then prepare credentials inside that disposable guest:
+
+```sh
+sudo python3 Tests/power-actions-vm-fixtures.py --root "$ROOT" --vm-record "$VM_RECORD" prepare
+python3 Tests/power-actions-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --backend niri --prepare
+```
+
+The root fixture helper validates the recorded DMI UUID and caller/workspace,
+saves the original account line root-only, and owns only its temporary PAM,
+other-user session and tester/action-scoped policy files. Policy checks include
+systemd's `set-reboot-*` implication paths; the original installed policy is
+never edited. `policy restore` removes those fixtures; after all lanes, run
+the helper's `restore` operation to restore the original account line exactly
+and remove the credential file. Never copy credentials into evidence.
+
+Terminal cells publish pre-dispatch records before the OS can terminate the
+driver. An external UUID-bound VM operator must independently attest changed
+boot ID, shut off, or kernel PM entry/exit with the same boot/lock after resume.
+SSH loss alone is not success. Unsupported hibernate is `UNAVAILABLE`. Masked
+targets may make Can* refuse before dispatch: that is unavailable/denied, not
+a passed real dispatch-error cell. Persistent live-lock failures use BLOCKED;
+there is no automatic locker kill or external Release to manufacture success.
+
 `auth-helper` runs the actual exec worker against a test-only PAM module in a
 private config directory. It covers batched info/error/hidden/visible prompts,
 empty and newline responses, rejection, max tries, errors, abort/EOF, malformed

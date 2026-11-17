@@ -10,16 +10,15 @@ import "../Modules/Lock" as LockModule
 // the screen edge, rotating so the current value sits at the reading axis;
 // the empty reading pill with its divider; the 110s zero-padded hour left
 // of it; the date/weekday column right of it; the top-right
-// SESSION/REBOOT/SHUTDOWN strip; and the right-aligned lower-right auth
+// REBOOT/SHUTDOWN strip; and the right-aligned lower-right auth
 // group with the borderless star-mask input, WAITING FOR KEY placeholder
 // and real ENTER KEY submit.
 //
 // Intentional deviations (d44 plan): scale targets come from
 // context.clock.now (1 Hz) with native Behavior interpolation — never a
 // 16 ms wall-clock poll; no windup/sparks/flash sequences (they delayed
-// the reference's doLogin); no user menu or fabricated session data (the
-// SESSION/REBOOT/SHUTDOWN and username affordances are visible but
-// unavailable — TODO ~/Documents/Aerial/TODO.md:132-146); no opaque
+// the reference's doLogin); no user menu or fabricated session data;
+// working power controls use context.power and username is a plain label; no opaque
 // full-screen background paint (video/solid background shows through);
 // native AuthField masking/caret instead of the reference's custom editor
 // row. Compact stacking (d44 §9.1): on narrow surfaces the reading
@@ -55,7 +54,10 @@ FocusScope {
     readonly property color inputWaitColor: "#888888"
     readonly property color errorColor: "#ff4444"
 
-    function focusInput() { field.focusField() }
+    function focusInput() {
+        if (context.power.confirmationRequired) actionsRow.focusFirst()
+        else field.focusField()
+    }
 
     // ---- Scale rotation, ticked from the shared 1 Hz clock ----
     // Revolution counters + per-tick fractions: targets decrease
@@ -291,39 +293,76 @@ FocusScope {
         }
     }
 
-    // ---- Top-right actions strip (unavailable) ----
-    Row {
+    LockModule.PowerActionControls {
         id: actionsRow
         objectName: "actionsRow"
+        context: root.context
         anchors.right: parent.right
         anchors.rightMargin: root.marginR
         anchors.top: parent.top
         anchors.topMargin: 50 * root.s
-        spacing: 25 * root.s
-
-        CwAction { objectName: "sessionAction"; label: "Session"; notice: "Session selection is not implemented yet" }
-        Rectangle { width: 1 * root.s; height: 10 * root.s; color: root.pillBorder; anchors.verticalCenter: parent.verticalCenter }
-        CwAction { objectName: "rebootAction"; label: "Reboot"; notice: "Reboot is not implemented yet" }
-        Rectangle { width: 1 * root.s; height: 10 * root.s; color: root.pillBorder; anchors.verticalCenter: parent.verticalCenter }
-        CwAction { objectName: "shutdownAction"; label: "Shutdown"; notice: "Shut down is not implemented yet" }
-    }
-
-    // Hover notice for unavailable controls; never interactive.
-    property string hoverNotice: ""
-    Text {
-        objectName: "noticeLabel"
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 16 * root.s
-        visible: root.hoverNotice.length > 0
-        text: root.hoverNotice
-        textFormat: Text.PlainText
-        font.family: root.uiFont
-        font.pixelSize: 11 * root.s
-        font.letterSpacing: 2 * root.s
-        color: root.dimText
-        style: Text.Raised
-        styleColor: "#80000000"
+        actions: [
+            {action: "reboot", label: root.context.labels.powerTitleReboot, name: "rebootAction", available: root.context.power.canReboot},
+            {action: "powerOff", label: root.context.labels.powerTitleShutdown, name: "shutdownAction", available: root.context.power.canPowerOff}
+        ]
+        visible: active || controls.length > 0
+        width: Math.min(root.width - 2 * root.marginR, Math.max(actionButtons.implicitWidth, powerMessage.implicitWidth))
+        height: Math.max(15 * root.s, actionButtons.height) + (powerMessage.visible ? powerMessage.implicitHeight + 12 * root.s : 0)
+        focusControl: function(index) {
+            var item = actionRepeater.itemAt(index)
+            if (item) item.forceActiveFocus(Qt.TabFocusReason)
+        }
+        Row {
+            id: actionButtons
+            anchors.top: parent.top
+            anchors.right: parent.right
+            spacing: 25 * root.s
+            Repeater {
+                id: actionRepeater
+                model: actionsRow.controls
+                Row {
+                    required property var modelData
+                    required property int index
+                    spacing: 25 * root.s
+                    function focusControl() { control.focusControl() }
+                    onActiveFocusChanged: { if (activeFocus) control.focusControl() }
+                    Rectangle {
+                        objectName: "powerSeparator"
+                        width: 1 * root.s; height: 10 * root.s
+                        color: root.pillBorder
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: index > 0
+                    }
+                    CwAction {
+                        id: control
+                        objectName: modelData.name
+                        label: modelData.label
+                        trapNavigation: actionsRow.confirming
+                        onActivated: actionsRow.activate(modelData.action)
+                        onNavigate: function(direction) { actionsRow.navigate(direction) }
+                    }
+                }
+            }
+        }
+        Text {
+            id: powerMessage
+            objectName: "powerMessage"
+            anchors.right: parent.right
+            anchors.top: actionButtons.bottom
+            anchors.topMargin: 12 * root.s
+            width: parent.width
+            visible: text.length > 0
+            text: actionsRow.waiting ? actionsRow.message.toUpperCase() : actionsRow.message
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignRight
+            font.family: root.uiFont
+            font.pixelSize: 10 * root.s
+            font.letterSpacing: (actionsRow.waiting ? 3 : 2) * root.s
+            color: actionsRow.failed ? "#ff4444" : actionsRow.waiting ? "white" : root.dimText
+            style: Text.Raised
+            styleColor: "#80000000"
+        }
     }
 
     // ---- Lower-right auth group ----
@@ -340,12 +379,11 @@ FocusScope {
 
         transform: Translate { id: shakeShift }
 
-        // Username (selector unavailable).
+        // Plain login name, not a selector.
         Item {
-            objectName: "userSelector"
+            objectName: "loginName"
             width: parent.width
             height: 32 * root.s
-            opacity: 0.7
             Text {
                 id: userNameDisp
                 objectName: "userName"
@@ -360,14 +398,6 @@ FocusScope {
                 style: Text.Raised
                 styleColor: "#80000000"
             }
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                onEntered: root.hoverNotice = "Switching users is not implemented yet"
-                onExited: root.hoverNotice = ""
-            }
-            Accessible.role: Accessible.Button
-            Accessible.name: "User " + root.context.session.loginName + " (switching unavailable: system actions are not yet implemented)"
         }
 
         // Borderless star-mask input, right-aligned, needle caret.
@@ -573,31 +603,30 @@ FocusScope {
         }
     }
 
-    // Reference action-strip style, used only for the unavailable top-right
-    // controls (private inline style component, not a dispatcher).
-    component CwAction: Item {
-        property string label: ""
-        property string notice: ""
+    // Reference strip styling over the common intent/focus control.
+    component CwAction: LockModule.PowerActionButton {
+        id: actionButton
         width: actTxt.width + 20 * root.s
         height: 15 * root.s
-        opacity: 0.7
         Text {
             id: actTxt
             anchors.right: parent.right
+            anchors.rightMargin: actionButton.activeFocus || actionButton.hovered ? 15 * root.s : 0
             text: label.toUpperCase()
             textFormat: Text.PlainText
-            color: root.dimText
+            color: actionButton.activeFocus || actionButton.hovered ? "white" : root.dimText
             font.family: root.uiFont
             font.pixelSize: 10 * root.s
             font.letterSpacing: 3 * root.s
         }
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            onEntered: root.hoverNotice = notice
-            onExited: root.hoverNotice = ""
+        Image {
+            anchors.left: actTxt.right
+            anchors.leftMargin: 4 * root.s
+            anchors.verticalCenter: actTxt.verticalCenter
+            width: 8 * root.s; height: width
+            sourceSize.width: width * 2; sourceSize.height: height * 2
+            source: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><path d='M4 0C4.35 2.6 5.4 3.65 8 4 5.4 4.35 4.35 5.4 4 8 3.65 5.4 2.6 4.35 0 4 2.6 3.65 3.65 2.6 4 0Z' fill='white'/></svg>"
+            visible: actionButton.activeFocus || actionButton.hovered
         }
-        Accessible.role: Accessible.Button
-        Accessible.name: label + " (unavailable: system actions are not yet implemented)"
     }
 }

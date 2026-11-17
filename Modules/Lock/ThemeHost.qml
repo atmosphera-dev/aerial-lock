@@ -317,6 +317,11 @@ Item {
     }
 
     function focusInput() {
+        if (root.context.power.interactionActive) {
+            if (root.visible && root.enabled && root.windowActive && internal.useTheme && candidate.themeItem)
+                root.focusTheme(candidate.themeItem)
+            return
+        }
         if (!root.visible || !root.enabled || root.context.auth.input.themeWriter < 0)
             return
         root.context.auth.input.setWindowActive(root.context.auth.input.themeWriter, root.windowActive)

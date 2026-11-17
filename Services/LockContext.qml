@@ -20,6 +20,42 @@ QtObject {
     // Debug dismiss — Lock.qml no-ops it unless debugAllowDismiss.
     signal dismissRequested()
 
+    signal powerRequested(string action)
+    signal powerConfirmRequested()
+    signal powerCancelRequested()
+    signal powerErrorDismissRequested()
+
+    property alias power: powerObj
+    property QtObject _powerObj: QtObject {
+        id: powerObj
+        property bool enabled: false
+        property bool canSuspend: false
+        property bool canHibernate: false
+        property bool canReboot: false
+        property bool canPowerOff: false
+        property string suspendReason: ""
+        property string hibernateReason: ""
+        property string rebootReason: ""
+        property string powerOffReason: ""
+        property string state: "idle"
+        property string pendingAction: ""
+        property string activeAction: ""
+        property string blockerWho: ""
+        property string blockerWhy: ""
+        property bool confirmationRequired: false
+        property bool busy: false
+        readonly property bool interactionActive: confirmationRequired || busy
+        property string error: ""
+        property string status: ""
+        function requestSuspend() { root.powerRequested("suspend") }
+        function requestHibernate() { root.powerRequested("hibernate") }
+        function requestReboot() { root.powerRequested("reboot") }
+        function requestPowerOff() { root.powerRequested("powerOff") }
+        function confirm() { root.powerConfirmRequested() }
+        function cancel() { root.powerCancelRequested() }
+        function clearError() { root.powerErrorDismissRequested() }
+    }
+
     property alias auth: authObj
     property QtObject _authObj: QtObject {
         id: authObj
@@ -141,6 +177,41 @@ QtObject {
         property string timedOut: "Authentication timed out — try again"
         property string dismissDebug: "Dismiss (debug)"
         property string unlocked: "Unlocked"
+        property string powerSuspend: "Suspend"
+        property string powerHibernate: "Hibernate"
+        property string powerReboot: "Restart"
+        property string powerOff: "Shut down"
+        property string powerTitlePower: "Power"
+        property string powerTitleReboot: "Reboot"
+        property string powerTitleSleep: "Sleep"
+        property string powerTitleShutDown: "Shut Down"
+        property string powerTitleShutdown: "Shutdown"
+        property string powerConfirmQuestion: "Are you sure?"
+        property string powerCancel: "Cancel"
+        property string powerDismiss: "Dismiss"
+        property string powerChecking: "Checking availability..."
+        property string powerRequesting: "Requesting %1..."
+        property string powerRestarting: "Restarting..."
+        property string powerShuttingDown: "Shutting down..."
+        property string powerSuspending: "Suspending..."
+        property string powerHibernating: "Hibernating..."
+        property string powerRestartFailed: "The system could not restart."
+        property string powerOffFailed: "The system could not shut down."
+        property string powerSuspendFailed: "The system could not suspend."
+        property string powerHibernateFailed: "The system could not hibernate."
+        property string powerBlockedBy: "%1 is blocked by %2: %3"
+        property string powerBlockedByName: "%1 is blocked by %2."
+        property string powerBlockedByApplication: "%1 is blocked by an application."
+        property string powerUnavailable: "This action is not available."
+        property string powerNotSupported: "This system does not support this action."
+        property string powerAuthorizationRequired: "This action needs additional authorization and is unavailable while locked."
+        property string powerDenied: "The system did not allow this action."
+        property string powerInhibited: "An application is preventing this action. Try again after it finishes."
+        property string powerServiceUnavailable: "System power controls are unavailable. Try again later."
+        property string powerFailed: "The system could not complete this action."
+        property string powerUncertain: "The system did not confirm the request. It may still happen."
+        property string powerCancelled: "The system cancelled this action."
+        property string powerAlreadyInProgress: "A system action is already in progress."
     }
 
     function updateClock() {

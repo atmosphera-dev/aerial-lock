@@ -13,6 +13,29 @@ target_link_libraries(native-input-probe PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 
 enable_testing()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/power-actions.h" -o "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/native/power-actions.h")
+add_executable(power-actions-probe power-actions-probe.cpp "${AERIAL_LOCK_SOURCE}/native/power-actions.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc")
+target_include_directories(power-actions-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(power-actions-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
+add_executable(power-actions-bus-fixture power-actions-bus-fixture.cpp)
+target_link_libraries(power-actions-bus-fixture PRIVATE Qt6::Core Qt6::DBus)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/power-actions-controller.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/power-actions-controller.cpp"
+        -o "${CMAKE_CURRENT_BINARY_DIR}/power-actions-controller.moc"
+    DEPENDS power-actions-controller.cpp)
+add_library(power-actions-controller MODULE power-actions-controller.cpp
+    "${AERIAL_LOCK_SOURCE}/native/power-actions.cpp" "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/power-actions-controller.moc")
+set_target_properties(power-actions-controller PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/power-test/AerialLock/PowerTest")
+target_include_directories(power-actions-controller PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(power-actions-controller PRIVATE Qt6::Qml Qt6::DBus)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/power-test/AerialLock/PowerTest")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/power-test/AerialLock/PowerTest/qmldir"
+    "module AerialLock.PowerTest\nplugin power-actions-controller\n")
 add_library(auth-pam-fixture MODULE auth-pam-fixture.c)
 add_library(auth-timezone-hammer SHARED auth-timezone-hammer.c)
 target_link_libraries(auth-timezone-hammer PRIVATE pthread)
@@ -45,6 +68,8 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"
+    "$<TARGET_FILE:power-actions-probe>" "$<TARGET_FILE:power-actions-bus-fixture>")
 add_test(NAME auth-helper COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-auth-helper.py"
     "${AERIAL_LOCK_SOURCE}/native/aerial-lock-auth" "$<TARGET_FILE:auth-pam-fixture>")
 add_test(NAME surface-input-teardown

@@ -37,19 +37,18 @@ Bundled themes:
 | Theme | Look | Topic preference |
 |---|---|---|
 | `Macintosh.qml` (default) | Centered date + large frosted clock top; name/field bottom, over video | none |
-| `Windows7.qml` | Faithful qylock `windows_7` adaptation: centered glass-framed square avatar, field + attached arrow, Switch User and full footer bar | none |
+| `Windows7.qml` | Faithful qylock `windows_7` adaptation: centered glass-framed square avatar, field + attached arrow, clock and power footer | none |
 | `MaterialYou.qml` | qylock `material-you` light-variant composition: stacked clock + date pill, QUICK SETTINGS grid, notification-style auth card. The tonal palette follows the video's sensed accent hue (static lavender when unsensed) | none |
 | `Enfield.qml` | qylock `enfield`: Orbitron clock top-left, line-dot divider, password pill with star mask + glowing star caret, footer. The sakura accent tier follows the video's sensed accent hue | `mountain`, `mountains` |
 | `Clockwork.qml` | qylock `orbital`: two numbered minute/second scales cropped at the left edge, reading pill + hour + date, top-right actions, right-aligned auth. Brighter grays and text shadows improve contrast over video | none |
 
 The four qylock-derived themes adapt `Darkkal44/qylock` @ `f6561e2` (GPLv3;
 `material-you`'s metadata separately declares MIT) — see
-`Themes/ATTRIBUTION.md` for the full notice. Their system-action controls
-(user switching, session selection, restart/shutdown/suspend) are drawn in
-their reference positions but **visibly unavailable** (dimmed, with a hover
-notice): the backend is a follow-up TODO, not a hidden no-op. The real
-authentication submit controls (arrow/UNLOCK/ENTER KEY) work through the
-shared input core.
+`Themes/ATTRIBUTION.md` for the full notice. Their power controls use
+`context.power` in their reference positions, with inline confirmation,
+progress and failure states. Unavailable actions and unimplemented user/session
+selectors are not drawn; the layout closes up. Login names are plain labels.
+Authentication submit controls (arrow/UNLOCK/ENTER KEY) use the shared input core.
 
 ## Writing a theme
 
@@ -225,6 +224,56 @@ LockModule.AuthField {
     initialSpaceScope: context.auth.input.scopeLock
 }
 ```
+
+### `context.power`
+
+The native service owns capability, confirmation and execution state, once per
+lock episode. Themes only render this facade and invoke its callbacks; never
+call D-Bus, launch a power command or use authentication to authorize an action.
+
+| Member | Type | Meaning |
+|---|---|---|
+| `enabled` | bool | Config permission to show power controls, not OS authorization |
+| `canSuspend`, `canHibernate`, `canReboot`, `canPowerOff` | bool | Latest exact-`yes` logind capability, filtered by enabled and secure lock |
+| `suspendReason`, `hibernateReason`, `rebootReason`, `powerOffReason` | string | Translated unavailable explanation, empty when available |
+| `state` | string | `idle`, `confirming`, `checking`, `executing`, `waiting`, `uncertain` |
+| `pendingAction` | string | Current transaction ID: `suspend`, `hibernate`, `reboot`, `powerOff`, or empty |
+| `activeAction` | string | Transaction ID retained for inline failure presentation until dismissal |
+| `confirmationRequired`, `busy` | bool | Confirmation versus preflight/execution/waiting |
+| `interactionActive` | bool | Confirmation or busy: pause authentication input and submission |
+| `error`, `status` | string | Translated plain text, separate from PAM's status |
+| `blockerWho`, `blockerWhy` | string | Application-provided plain text, bounded to 40/80 Unicode characters including `...` |
+| `requestSuspend()`, `requestHibernate()` | callbacks | Immediate preflight and execution, no confirmation or password |
+| `requestReboot()`, `requestPowerOff()` | callbacks | Begin confirmation, never execute until confirmed |
+| `confirm()`, `cancel()`, `clearError()` | callbacks | Confirm pending action, retire unsent intent, dismiss failure text |
+
+Hide controls with false `can*`; never show inert placeholders. While confirming,
+waiting or showing a failure, render only that action's inline state. Cancel
+starts focused; Tab/Backtab stay within confirmation, Escape cancels, and a
+fresh Enter/Space activates the focused control. `focusInput()` must route an
+active confirmation to its public focus method rather than the password field.
+`PowerActionControls` is the decoration-free context/intent adapter used by the
+bundled themes; `PowerActionButton` shares pointer, keyboard and Accessible
+activation. Themes own the actual layout and visual styling.
+
+Capabilities refresh periodically and after logind/session/resume changes.
+Only exact `yes` permits an action, checked again before dispatch together with
+matching `block`/`block-weak` inhibitors. `challenge`, missing service, unsupported
+hardware and other replies never request administrator authorization or display
+a polkit prompt. Delay inhibitors remain logind's responsibility. The preflight
+is not an atomic reservation; logind remains the final dispatch authority.
+
+Accepted requests keep waiting, never release the lock. Resume restores normal
+authentication with the same draft. An uncertain reply means the operation may
+still happen; dismissing its text does not cancel it or authorize a retry.
+Definite failures restore authentication while retaining the inline error.
+Moving or parking the one theme across outputs does not recreate the service.
+
+Use `Text.PlainText` for every label/message, especially application inhibitor
+data. The translated `power*` label families live in `context.labels` and follow
+the same user/bundle/English fallback as authentication labels. No bundled
+theme adds a hibernate control, but custom themes may use its callback when
+`canHibernate` is true. Macintosh and the fallback have no power controls.
 
 ### `context.clock`
 

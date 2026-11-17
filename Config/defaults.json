@@ -6,6 +6,9 @@
   "pamService": "aerial-lock",
   "fallbackQuitMs": 3000,
   "pamWatchdogTimeoutMs": 60000,
+  "powerActions": {
+    "enabled": true
+  },
   "idle": {
     "timeoutSeconds": 0,
     "respectInhibitors": true,

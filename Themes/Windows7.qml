@@ -7,14 +7,13 @@ import "../Modules/Lock" as LockModule
 // (Darkkal44/qylock @ f6561e2, GPLv3; see Themes/ATTRIBUTION.md) over
 // Aerial's video: centered login column at the reference −10s offset with
 // the rounded-square glass avatar frame, name and Locked label, the compact
-// field with its attached glossy arrow, Switch User beneath, and the full
-// 52s bottom bar (session left, time/date center, power right).
+// field with its attached glossy arrow, and the footer with time/date center
+// and working power controls right. Unbacked selectors are not drawn.
 //
 // Intentional deviations (d44 plan): native AuthField masking instead of
 // the reference's transparent editor + separate dot row; the session's own
 // avatar via the shared Avatar (never the reference's bundled picture); the
-// system-action controls are visible but unavailable (backend is a TODO —
-// ~/Documents/Aerial/TODO.md:132-146); no entrance fade (input is never
+// power controls use context.power; no entrance fade (input is never
 // delayed); status renders genuine PAM prompts/errors and grows when
 // wrapping. Narrow/portrait (d44 §9.1, compact stacking): the column
 // already stacks vertically; the field and footer clamp to the surface.
@@ -29,7 +28,10 @@ FocusScope {
     readonly property real s: Math.max(1, height) / 768
     readonly property string uiFont: "Segoe UI, Ubuntu, sans-serif"
 
-    function focusInput() { field.focusField() }
+    function focusInput() {
+        if (context.power.confirmationRequired) powerRow.focusFirst()
+        else field.focusField()
+    }
 
     // Reference's boot vignette over the (possibly video) background.
     RadialGradient {
@@ -39,23 +41,6 @@ FocusScope {
             GradientStop { position: 0.0; color: "transparent" }
             GradientStop { position: 1.0; color: "#1a0d1a30" }
         }
-    }
-
-    // One hover notice for every unavailable control; never interactive.
-    property string hoverNotice: ""
-    Text {
-        id: noticeLabel
-        objectName: "noticeLabel"
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: bottomBar.top
-        anchors.bottomMargin: 12 * root.s
-        visible: root.hoverNotice.length > 0
-        text: root.hoverNotice
-        textFormat: Text.PlainText
-        font.pixelSize: 12 * root.s
-        color: "#c8dce8"
-        style: Text.Raised
-        styleColor: "#60000000"
     }
 
     // ---- Centered login column ----
@@ -324,53 +309,6 @@ FocusScope {
             styleColor: "#60000000"
         }
 
-        Item { width: 1; height: 20 * root.s }
-
-        // Unavailable until the system-actions API lands (follow-up TODO).
-        Item {
-            id: switchUserBtn
-            objectName: "switchUser"
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: switchUserText.implicitWidth + 36
-            height: 26 * root.s
-            opacity: 0.55
-
-            Rectangle {
-                anchors.fill: parent
-                radius: 3 * root.s
-                color: "transparent"
-                border.color: "#40708898"
-                border.width: 1 * root.s
-            }
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: 1 * root.s
-                radius: 2 * root.s
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#60a0c4e8" }
-                    GradientStop { position: 0.5; color: "#404870a0" }
-                    GradientStop { position: 1.0; color: "#505888b0" }
-                }
-            }
-            Text {
-                id: switchUserText
-                anchors.centerIn: parent
-                text: "Switch User"
-                font.family: root.uiFont
-                font.pixelSize: 13 * root.s
-                color: "white"
-                style: Text.Raised
-                styleColor: "#30000000"
-            }
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                onEntered: root.hoverNotice = "Switching users is not implemented yet"
-                onExited: root.hoverNotice = ""
-            }
-            Accessible.role: Accessible.Button
-            Accessible.name: "Switch User (unavailable: system actions are not yet implemented)"
-        }
     }
 
     // ---- Footer bar ----
@@ -380,13 +318,11 @@ FocusScope {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        // Compact stacking (d44 §9.1): below the width where the three
-        // reference groups fit without overlap, the bar grows a second row —
-        // session/power on top, the centered time/date below. Nothing is
-        // hidden.
-        readonly property bool narrow: root.width < sessionRow.implicitWidth
-                + clockRow.implicitWidth + powerRow.implicitWidth + 60 * root.s
-        height: narrow ? 82 * root.s : 52 * root.s
+        // Compare the free half beside the centered clock, not a removed
+        // Session selector. A long message stacks above its controls.
+        readonly property bool narrow: powerRow.visible && root.width / 2 - clockRow.implicitWidth / 2
+                < powerRow.normalWidth + 40 * root.s
+        height: (narrow ? 30 * root.s : 0) + Math.max(52 * root.s, powerRow.height)
 
         Rectangle {
             anchors.fill: parent
@@ -401,66 +337,6 @@ FocusScope {
             anchors.right: parent.right
             height: 1 * root.s
             color: "#30a0c8e0"
-        }
-
-        // Left: session affordance (unavailable).
-        Row {
-            id: sessionRow
-            objectName: "sessionRow"
-            anchors.left: parent.left
-            anchors.leftMargin: 20 * root.s
-            anchors.top: parent.top
-            height: 52 * root.s
-            spacing: 12 * root.s
-
-            Text {
-                text: "Session:"
-                font.family: root.uiFont
-                font.pixelSize: 12 * root.s
-                color: "#c0d8e8"
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Item {
-                objectName: "sessionPill"
-                width: sessionPillText.implicitWidth + 24
-                height: 24 * root.s
-                anchors.verticalCenter: parent.verticalCenter
-                opacity: 0.55
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 3 * root.s
-                    color: "transparent"
-                    border.color: "#40607888"
-                    border.width: 1 * root.s
-                }
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: 1 * root.s
-                    radius: 2 * root.s
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#60a0c4e8" }
-                        GradientStop { position: 0.5; color: "#404870a0" }
-                        GradientStop { position: 1.0; color: "#505888b0" }
-                    }
-                }
-                Text {
-                    id: sessionPillText
-                    anchors.centerIn: parent
-                    // The current session; there is no selector backend.
-                    text: "Session"
-                    font.family: root.uiFont
-                    font.pixelSize: 12 * root.s
-                    color: "white"
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: root.hoverNotice = "Session selection is not implemented yet"
-                    onExited: root.hoverNotice = ""
-                }
-                Accessible.role: Accessible.Button
-                Accessible.name: "Session (unavailable: system actions are not yet implemented)"
-            }
         }
 
         // Center: time / separator / date, from the shared clock.
@@ -501,18 +377,91 @@ FocusScope {
             }
         }
 
-        // Right: power actions (unavailable), Restart then Shut down.
-        Row {
+        LockModule.PowerActionControls {
             id: powerRow
             objectName: "powerRow"
+            context: root.context
             anchors.right: parent.right
             anchors.rightMargin: 20 * root.s
             anchors.top: parent.top
-            height: 52 * root.s
-            spacing: 8 * root.s
-
-            Win7GlassButton { objectName: "restartAction"; label: "Restart"; notice: "Restart is not implemented yet"; anchors.verticalCenter: parent.verticalCenter }
-            Win7GlassButton { objectName: "shutdownAction"; label: "Shut down"; notice: "Shut down is not implemented yet"; anchors.verticalCenter: parent.verticalCenter }
+            actions: [
+                {action: "reboot", label: root.context.labels.powerReboot, name: "restartAction", available: root.context.power.canReboot},
+                {action: "powerOff", label: root.context.labels.powerOff, name: "shutdownAction", available: root.context.power.canPowerOff}
+            ]
+            visible: active || controls.length > 0
+            // Measure the renderer's unwrapped natural width, including its
+            // shaping/spacing, rather than a second font-metrics layout.
+            readonly property real normalWidth: naturalButtons.implicitWidth
+            readonly property real messageWidth: Math.ceil(messageText.implicitWidth)
+            readonly property real freeWidth: bottomBar.narrow ? root.width - 40 * root.s
+                    : Math.max(0, root.width / 2 - clockRow.implicitWidth / 2 - 40 * root.s)
+            readonly property bool stacked: message.length > 0
+                    && messageWidth + buttons.implicitWidth + 12 * root.s > freeWidth
+            width: stacked ? root.width - 40 * root.s
+                    : buttons.implicitWidth + (message.length ? messageWidth + 12 * root.s : 0)
+                        + (waiting ? 24 * root.s : 0)
+            height: 52 * root.s + (stacked ? messageText.implicitHeight + 12 * root.s : 0)
+            focusControl: function(index) {
+                var button = buttonRepeater.itemAt(index) as LockModule.PowerActionButton
+                if (button) button.focusControl()
+            }
+            Row {
+                id: naturalButtons
+                visible: false
+                spacing: 8 * root.s
+                Repeater {
+                    model: powerRow.availableActions
+                    Win7GlassButton { required property var modelData; label: modelData.label }
+                }
+            }
+            Text {
+                id: messageText
+                objectName: "powerMessage"
+                text: powerRow.message
+                textFormat: Text.PlainText
+                font.family: root.uiFont
+                font.pixelSize: 12 * root.s
+                color: powerRow.failed ? "#ffddaa" : "#c0d8e8"
+                horizontalAlignment: Text.AlignRight
+                wrapMode: Text.Wrap
+                anchors.right: powerRow.stacked ? parent.right : buttons.left
+                anchors.rightMargin: powerRow.stacked ? 0 : 12 * root.s
+                anchors.top: powerRow.stacked ? parent.top : undefined
+                anchors.verticalCenter: powerRow.stacked ? undefined : buttons.verticalCenter
+                width: powerRow.stacked ? parent.width : powerRow.messageWidth
+                visible: text.length > 0
+            }
+            Image {
+                objectName: "powerProgress"
+                anchors.right: messageText.left
+                anchors.rightMargin: 8 * root.s
+                anchors.verticalCenter: messageText.verticalCenter
+                width: 16 * root.s; height: width
+                visible: powerRow.waiting
+                sourceSize.width: width * 2; sourceSize.height: height * 2
+                source: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%2396c3e6' stroke-opacity='.35' stroke-width='2.6'/><path d='M8 2a6 6 0 0 1 6 6' fill='none' stroke='%23e6f6ff' stroke-width='2.6' stroke-linecap='round'/></svg>"
+                RotationAnimator on rotation { running: powerRow.visible && powerRow.waiting; from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
+            }
+            Row {
+                id: buttons
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 52 * root.s
+                spacing: 8 * root.s
+                Repeater {
+                    id: buttonRepeater
+                    model: powerRow.controls
+                    Win7GlassButton {
+                        required property var modelData
+                        objectName: modelData.name
+                        label: modelData.label
+                        anchors.verticalCenter: parent.verticalCenter
+                        trapNavigation: powerRow.confirming
+                        onActivated: powerRow.activate(modelData.action)
+                        onNavigate: function(direction) { powerRow.navigate(direction) }
+                    }
+                }
+            }
         }
 
         states: State {
@@ -544,19 +493,24 @@ FocusScope {
         NumberAnimation { target: shakeShift; property: "y"; to: 0; duration: 50 }
     }
 
-    // Reference-style glass button, used only for the unavailable footer
-    // power actions (a private inline style component, not a dispatcher).
-    component Win7GlassButton: Item {
-        property string label: ""
-        property string notice: ""
+    // Reference glass styling; intents and focus live in the shared control.
+    component Win7GlassButton: LockModule.PowerActionButton {
+        id: glassButton
         width: pwText.implicitWidth + 24
         height: 26 * root.s
-        opacity: 0.55
+        layer.enabled: hovered || activeFocus
+        layer.effect: DropShadow {
+            color: "#598cc8ff"
+            radius: 6 * root.s
+            samples: 13
+            horizontalOffset: 0
+            verticalOffset: 0
+        }
         Rectangle {
             anchors.fill: parent
             radius: 3 * root.s
             color: "transparent"
-            border.color: "#40708898"
+            border.color: glassButton.hovered || glassButton.activeFocus ? "#80b0ccee" : "#40708898"
             border.width: 1 * root.s
         }
         Rectangle {
@@ -564,9 +518,9 @@ FocusScope {
             anchors.margins: 1 * root.s
             radius: 2 * root.s
             gradient: Gradient {
-                GradientStop { position: 0.0; color: "#60a0c4e8" }
-                GradientStop { position: 0.5; color: "#404870a0" }
-                GradientStop { position: 1.0; color: "#505888b0" }
+                GradientStop { position: 0.0; color: glassButton.hovered || glassButton.activeFocus ? "#88c8e0ff" : "#60a0c4e8" }
+                GradientStop { position: 0.5; color: glassButton.hovered || glassButton.activeFocus ? "#666090b4" : "#404870a0" }
+                GradientStop { position: 1.0; color: glassButton.hovered || glassButton.activeFocus ? "#886090b8" : "#505888b0" }
             }
         }
         Rectangle {
@@ -591,13 +545,20 @@ FocusScope {
             font.pixelSize: 13 * root.s
             color: "white"
         }
-        MouseArea {
+        Canvas {
             anchors.fill: parent
-            hoverEnabled: true
-            onEntered: root.hoverNotice = notice
-            onExited: root.hoverNotice = ""
+            anchors.margins: 3 * root.s
+            visible: glassButton.activeFocus
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                ctx.strokeStyle = "#bfffffff"
+                ctx.lineWidth = 1
+                ctx.setLineDash([root.s, root.s])
+                ctx.strokeRect(0.5, 0.5, width - 1, height - 1)
+            }
         }
-        Accessible.role: Accessible.Button
-        Accessible.name: label + " (unavailable: system actions are not yet implemented)"
     }
 }

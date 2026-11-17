@@ -14,9 +14,8 @@ import "../Modules/Lock/AccentTone.js" as AccentTone
 // are the reference's).
 //
 // Intentional deviations (d44 plan): the video stays visible under a light
-// veil so the light composition keeps its contrast; the quick-settings
-// tiles and the user pill are visible but unavailable (system actions are
-// a follow-up TODO — ~/Documents/Aerial/TODO.md:132-146); the card grows
+// veil so the light composition keeps its contrast; quick-settings tiles
+// use context.power and unbacked selectors are absent; the card grows
 // when a real PAM message needs wrapping room; native AuthField masking
 // ("•" per the reference) instead of a custom editor; no entrance
 // animation (input is never delayed). Compact stacking (d44 §9.1): the two
@@ -76,7 +75,10 @@ FocusScope {
     }
     readonly property bool statusNeedsWrap: slotMetrics.advanceWidth > 296 * s
 
-    function focusInput() { field.focusField() }
+    function focusInput() {
+        if (context.power.confirmationRequired) powerArea.focusFirst()
+        else field.focusField()
+    }
 
     // Light veil: the light composition keeps its contrast hierarchy over
     // Aerial's (arbitrarily dark) video, which still plays beneath.
@@ -85,9 +87,6 @@ FocusScope {
         color: "#F2ECF7"
         opacity: 0.5
     }
-
-    // One hover notice for every unavailable control; never interactive.
-    property string hoverNotice: ""
 
     // A single presentation transform fits the actual, message-sized group.
     // Reserve a notice lane on either side of its centered height so its
@@ -100,27 +99,7 @@ FocusScope {
         scale: Math.max(0, Math.min(1,
             (root.width - 40 * root.s) / Math.max(1, width),
             (root.height - 40 * root.s)
-                / Math.max(1, height + 2 * (12 * root.s + noticeLabel.height))))
-    }
-
-    Text {
-        id: noticeLabel
-        objectName: "noticeLabel"
-        parent: composition
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: group.bottom
-        anchors.topMargin: 12 * root.s
-        width: parent.width
-        height: Math.max(implicitHeight, 14 * root.s)
-        wrapMode: Text.WordWrap
-        horizontalAlignment: Text.AlignHCenter
-        visible: root.hoverNotice.length > 0
-        text: root.hoverNotice
-        textFormat: Text.PlainText
-        font.family: root.uiFont
-        font.pixelSize: 11 * root.s
-        font.bold: true
-        color: inkMid
+                / Math.max(1, height + 52 * root.s)))
     }
 
     readonly property bool stacked: width < clockCol.implicitWidth + rightCol.implicitWidth
@@ -205,6 +184,7 @@ FocusScope {
 
             Text {
                 text: "QUICK SETTINGS"
+                visible: powerArea.visible
                 font.family: root.uiFont
                 font.pixelSize: 11 * root.s
                 font.bold: true
@@ -212,35 +192,88 @@ FocusScope {
                 color: root.muted
             }
 
-            Grid {
+            LockModule.PowerActionControls {
+                id: powerArea
+                objectName: "powerArea"
+                context: root.context
+                width: 376 * root.s
+                property int retainedRows: 2
+                readonly property int rows: Math.max(1, Math.ceil(availableActions.length / 2))
+                height: active ? Math.max(retainedRows * 76 * root.s + (retainedRows - 1) * 16 * root.s, activeState.implicitHeight)
+                        : availableActions.length ? rows * 76 * root.s + (rows - 1) * 16 * root.s : 0
+                visible: active || availableActions.length > 0
+                onActiveChanged: { if (active) retainedRows = rows }
+                focusControl: function(index) { activeState.focusControl(index) }
+                actions: [
+                    {action: "powerOff", label: powerTile.sublabel, name: "powerTile", available: root.context.power.canPowerOff, icon: powerTile.iconSource},
+                    {action: "reboot", label: rebootTile.sublabel, name: "rebootTile", available: root.context.power.canReboot, icon: rebootTile.iconSource},
+                    {action: "suspend", label: sleepTile.sublabel, name: "sleepTile", available: root.context.power.canSuspend, icon: sleepTile.iconSource}
+                ]
+            GridLayout {
                 id: settingsGrid
                 objectName: "settingsGrid"
+                anchors.fill: parent
+                visible: !powerArea.active
                 columns: 2
-                spacing: 16 * root.s
+                columnSpacing: 16 * root.s
+                rowSpacing: 16 * root.s
 
                 MyTile {
+                    id: powerTile
                     objectName: "powerTile"
-                    label: "POWER"; sublabel: "SHUT DOWN"
+                    visible: root.context.power.canPowerOff && root.context.power.enabled
+                    label: root.context.labels.powerTitlePower.toUpperCase()
+                    sublabel: root.context.labels.powerOff.toUpperCase()
+                    Layout.columnSpan: !root.context.power.canReboot && !root.context.power.canSuspend ? 2 : 1
+                    Layout.fillWidth: true
                     iconSource: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M18.36 6.64a9 9 0 1 1-12.73 0'/><line x1='12' y1='2' x2='12' y2='12'/></svg>"
-                    notice: "Shut down is not implemented yet"
+                    onActivated: powerArea.activate("powerOff")
                 }
                 MyTile {
-                    objectName: "sessionTile"
-                    label: "SESSION"; sublabel: "CURRENT"
-                    iconSource: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82.33.06.06 0 0 1 2.83 0l-.06.06a1.65 1.65 0 0 0 .33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>"
-                    notice: "Session selection is not implemented yet"
-                }
-                MyTile {
+                    id: rebootTile
                     objectName: "rebootTile"
-                    label: "REBOOT"; sublabel: "RESTART"
+                    visible: root.context.power.canReboot && root.context.power.enabled
+                    label: root.context.labels.powerTitleReboot.toUpperCase()
+                    sublabel: root.context.labels.powerReboot.toUpperCase()
+                    Layout.columnSpan: !root.context.power.canSuspend && powerArea.availableActions.length % 2 === 1 ? 2 : 1
+                    Layout.fillWidth: true
                     iconSource: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><path d='M20.49 15a9 9 0 1 1-2.12-9.36L23 10'/></svg>"
-                    notice: "Restart is not implemented yet"
+                    onActivated: powerArea.activate("reboot")
                 }
                 MyTile {
+                    id: sleepTile
                     objectName: "sleepTile"
-                    label: "SLEEP"; sublabel: "SUSPEND"
+                    visible: root.context.power.canSuspend && root.context.power.enabled
+                    label: root.context.labels.powerTitleSleep.toUpperCase()
+                    sublabel: root.context.labels.powerSuspend.toUpperCase()
+                    Layout.columnSpan: powerArea.availableActions.length % 2 === 1 ? 2 : 1
+                    Layout.fillWidth: true
                     iconSource: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>"
-                    notice: "Suspend is not implemented yet"
+                    onActivated: powerArea.activate("suspend")
+                }
+            }
+                LockModule.PowerActionMaterial {
+                    id: activeState
+                    anchors.fill: parent
+                    visible: powerArea.active
+                    unit: root.s
+                    compact: powerArea.retainedRows === 1
+                    fontFamily: root.uiFont
+                    message: powerArea.message
+                    controls: powerArea.controls
+                    selectedIcon: powerArea.selected.icon || ""
+                    actionLabel: powerArea.selected.label
+                    confirming: powerArea.confirming
+                    waiting: powerArea.waiting
+                    failed: powerArea.failed
+                    inkDark: root.inkDark
+                    inkMid: root.inkMid
+                    accentSurface: root.accentSurface
+                    cardSurface: root.cardSurface
+                    fieldSurface: root.fieldSurface
+                    errorText: root.errorText
+                    onActivate: function(action) { powerArea.activate(action) }
+                    onNavigate: function(direction) { powerArea.navigate(direction) }
                 }
             }
 
@@ -362,45 +395,15 @@ FocusScope {
                         color: root.context.auth.isError ? root.errorText : root.muted
                     }
 
-                    // Bottom row: user pill (unavailable) + real UNLOCK pill.
+                    // Working UNLOCK fills the card's bottom row.
                     Row {
                         width: parent.width
                         spacing: 12 * root.s
 
-                        Rectangle {
-                            id: userPill
-                            objectName: "userPill"
-                            width: userText.implicitWidth + 32 * root.s
-                            height: 38 * root.s
-                            radius: 19 * root.s
-                            color: root.userPillSurface
-                            opacity: 0.65
-                            Text {
-                                id: userText
-                                objectName: "userPillText"
-                                anchors.centerIn: parent
-                                text: root.context.session.loginName.toUpperCase()
-                                textFormat: Text.PlainText
-                                font.family: root.uiFont
-                                font.pixelSize: 10 * root.s
-                                font.bold: true
-                                font.letterSpacing: 1 * root.s
-                                color: root.fieldText
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onEntered: root.hoverNotice = "Switching users is not implemented yet"
-                                onExited: root.hoverNotice = ""
-                            }
-                            Accessible.role: Accessible.Button
-                            Accessible.name: "User " + root.context.session.loginName + " (switching unavailable: system actions are not yet implemented)"
-                        }
-
                         Item {
                             id: unlockPill
                             objectName: "unlockPill"
-                            width: parent.width - (userText.implicitWidth + 32 * root.s) - 12 * root.s
+                            width: parent.width
                             height: 38 * root.s
 
                             Rectangle {
@@ -486,18 +489,22 @@ FocusScope {
         NumberAnimation { target: cardShake; property: "x"; to: 0; duration: 50 }
     }
 
-    // Reference tile style, used only for the unavailable quick-settings
-    // grid (private inline style component, not a dispatcher).
-    component MyTile: Rectangle {
-        property string label: ""
+    // Reference tile styling over the shared intent/focus control.
+    component MyTile: LockModule.PowerActionButton {
+        id: tileButton
         property string sublabel: ""
         property string iconSource: ""
-        property string notice: ""
-        width: 180 * root.s
-        height: 76 * root.s
-        radius: 38 * root.s
-        color: accentSurface
-        opacity: 0.6
+        implicitWidth: 180 * root.s
+        implicitHeight: 76 * root.s
+        Layout.preferredWidth: implicitWidth
+        Layout.preferredHeight: implicitHeight
+        Rectangle {
+            anchors.fill: parent
+            radius: 38 * root.s
+            color: root.accentSurface
+            border.width: tileButton.activeFocus ? 2 * root.s : 0
+            border.color: root.inkDark
+        }
 
         Row {
             anchors { fill: parent; leftMargin: 16 * root.s; rightMargin: 16 * root.s }
@@ -507,7 +514,7 @@ FocusScope {
                 width: 48 * root.s
                 height: 48 * root.s
                 radius: 24 * root.s
-                color: root.accentSurface
+                color: "#D9C9EB"
                 anchors.verticalCenter: parent.verticalCenter
                 Image {
                     id: tileIcon
@@ -547,14 +554,5 @@ FocusScope {
             }
         }
 
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.ArrowCursor
-            onEntered: root.hoverNotice = notice
-            onExited: root.hoverNotice = ""
-        }
-        Accessible.role: Accessible.Button
-        Accessible.name: label + " (" + sublabel + ") (unavailable: system actions are not yet implemented)"
     }
 }

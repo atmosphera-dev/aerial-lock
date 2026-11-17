@@ -9,3 +9,6 @@ AuthEditor AuthEditor.qml
 AuthInputSink AuthInputSink.qml
 Avatar Avatar.qml
 FrostedText FrostedText.qml
+PowerActionControls PowerActionControls.qml
+PowerActionButton PowerActionButton.qml
+PowerActionMaterial PowerActionMaterial.qml

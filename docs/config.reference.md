@@ -94,6 +94,28 @@ timeout. It is an example only and is never loaded automatically. Copy its
 wrong-typed fields (including negative or fractional timeouts) fall back to
 their individual defaults with a warning. The companion never rewrites the file.
 
+### `powerActions` (object)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Show supported theme power controls while securely locked; false hides all power controls and prevents their requests. |
+
+Read once per lock. Existing configs inherit the default without a migration
+or rewrite. Partial objects merge normally; invalid types fall back per field.
+To hide every power control:
+
+```json
+{ "powerActions": { "enabled": false } }
+```
+
+Only logind's exact `Can*` reply `yes` permits an action, checked again before
+execution. Additional administrator authorization is never requested. Restart
+and shutdown ask for inline confirmation with Cancel focused first; suspend
+and hibernate act immediately. Hibernate availability depends on the device.
+Matching application block inhibitors are respected, not overridden. Actions
+never unlock the session; sleep/resume retains the lock and editable draft.
+This setting does not change hardware keys, logind policy or `aerial-idle`.
+
 ### `panel` (object)
 
 | Field         | Type   | Default | Description                     |

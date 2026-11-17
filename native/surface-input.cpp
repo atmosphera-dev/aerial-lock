@@ -3,6 +3,7 @@
 #endif
 #include "surface-input.h"
 #include "auth-context.h"
+#include "power-actions.h"
 #include <QGenericPlugin>
 #include <qqml.h>
 #include <cstdlib>
@@ -37,6 +38,7 @@ public:
             if (!qGuiApp) ::_exit(72);
             pinModule();
             qmlRegisterType<AuthContext>("AerialLock.Native", 1, 0, "AuthContext");
+            qmlRegisterType<PowerActions>("AerialLock.Native", 1, 0, "PowerActions");
             new SurfaceInputFilter(qGuiApp);
             if (!qputenv("AERIAL_LOCK_SURFACE_INPUT_PID", QByteArray::number(getpid()))) ::_exit(72);
         }

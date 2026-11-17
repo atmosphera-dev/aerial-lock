@@ -74,3 +74,22 @@ test('missing or broken bundled language still permits a user-only language', ()
         assert.equal(strings.authFailed, english.authFailed)
     }
 })
+
+test('every power label supports partial user/bundle/English fallback', () => {
+    const keys = Object.keys(english).filter(key => key.startsWith('power'))
+    assert.ok(keys.length > 30)
+    for (const key of keys) {
+        const { strings, warnings } = load(JSON.stringify({ [key]: 'User ' + key }),
+            JSON.stringify({ powerCancel: 'Bundled cancel', powerConfirmQuestion: 'Bundled question' }))
+        assert.equal(strings[key], 'User ' + key)
+        for (const other of keys.filter(other => other !== key))
+            assert.equal(strings[other], other === 'powerCancel' ? 'Bundled cancel'
+                : other === 'powerConfirmQuestion' ? 'Bundled question' : english[other])
+        assert.equal(warnings.length, 0)
+    }
+    const { strings } = load('{"powerCancel":"","powerReboot":false,"powerBlockedBy":null}',
+        '{"powerCancel":"Bundled cancel"}')
+    assert.equal(strings.powerCancel, 'Bundled cancel')
+    assert.equal(strings.powerReboot, english.powerReboot)
+    assert.equal(strings.powerBlockedBy, english.powerBlockedBy)
+})
