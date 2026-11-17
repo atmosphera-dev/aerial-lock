@@ -5,13 +5,14 @@
 #include <QJsonArray>
 #include <QSet>
 #include <functional>
+#include <optional>
 
 namespace Aerial {
 struct CacheUsage { quint64 bytes = 0, partial = 0, reserved = 0; bool safe = false; };
 
 class CacheStore {
 public:
-    explicit CacheStore(const QString &root);
+    explicit CacheStore(const QString &root, std::optional<quint64> initialMaximum = std::nullopt);
     ~CacheStore();
     bool valid() const { return owned; }
     QString path() const { return directory.path(); }
@@ -20,6 +21,7 @@ public:
     bool reserve(quint64 remaining);
     void releaseReservation() { remaining = 0; }
     bool canWrite(quint64 bytes, bool useReservation = false) const;
+    bool canAcquire(const Representation &representation) const;
     bool writeMetadata(const QString &relative, const QJsonObject &object);
     QJsonObject metadata(const QString &relative) const;
     bool contains(const QString &key) const;
@@ -30,7 +32,8 @@ public:
     bool complete(const Representation &rep, const QJsonObject &probe, qint64 now);
     bool discardPartial(const QString &key);
     QJsonObject prune(bool dryRun, const QSet<QString> &protectedKeys = {}, quint64 needed = 0);
-    bool persistIndex();
+    bool evict(const QString &key);
+    bool persistIndex(bool reclamation = false);
     const OwnedDirectory &files() const { return directory; }
 private:
     bool removeFile(const QString &relative);

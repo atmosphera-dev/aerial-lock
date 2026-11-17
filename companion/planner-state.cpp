@@ -125,4 +125,52 @@ bool PlannerState::reconcile(const QSet<QString> &catalogue, const QSet<QString>
     }
     return next == document ? ready : save(next);
 }
+
+bool PlannerState::saveJob(const QString &key, const QJsonObject &job)
+{
+    if (!contentKey(key)) return false;
+    auto next = document;
+    auto jobs = next.value("jobs").toObject();
+    jobs[key] = job;
+    // Retain current jobs and one week of terminal receipts. This bounds old
+    // bookkeeping without limiting accepted acquisition or the configured cache.
+    for (auto it = jobs.begin(); it != jobs.end();) {
+        const auto finished = it.value().toObject().value("finishedAt").toInteger();
+        if (it.key() != key && finished > 0 && clock() - finished > 7 * 86400) it = jobs.erase(it);
+        else ++it;
+    }
+    next["jobs"] = jobs;
+    return save(next);
+}
+
+bool PlannerState::beginRotation(const QString &victim, const QString &replacement)
+{
+    if (!contentKey(victim) || !contentKey(replacement) || victim == replacement) return false;
+    auto next = document;
+    next["rotation"] = QJsonObject{{"victim", victim}, {"replacement", replacement}};
+    return save(next);
+}
+
+bool PlannerState::finishRotation()
+{
+    const auto victim = rotation().value("victim").toString();
+    if (!contentKey(victim)) return false;
+    auto next = document;
+    auto retired = next.value("retired").toObject(); retired[victim] = clock();
+    next["retired"] = retired; next["lastRotation"] = clock(); next.remove("rotation");
+    return save(next);
+}
+
+bool PlannerState::reintroduced(const QString &key)
+{
+    auto retired = document.value("retired").toObject();
+    if (!retired.contains(key)) return ready;
+    retired.remove(key); auto next = document; next["retired"] = retired;
+    return save(next);
+}
+
+bool PlannerState::clearRotation()
+{
+    auto next = document; next.remove("rotation"); return save(next);
+}
 }

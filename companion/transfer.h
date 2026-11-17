@@ -4,6 +4,7 @@
 #include "http-operation.h"
 #include "local-probe.h"
 #include <QPointer>
+#include <QCryptographicHash>
 #include <functional>
 
 namespace Aerial {
@@ -28,6 +29,8 @@ signals:
 private:
     QString headers(const HttpResult &response);
     QString chunk(const QByteArray &bytes);
+    void request();
+    void hashPartial();
     bool persist();
     void probe();
     void finish(const QString &error);
@@ -44,6 +47,9 @@ private:
     QByteArray validator;
     qint64 offset = 0, expected = -1, resumeOffset = 0;
     int file = -1;
+    int hashInput = -1;
+    qint64 hashed = 0;
+    QCryptographicHash checksum{QCryptographicHash::Sha256};
     bool terminal = false, resumedComplete = false, started = false;
 };
 }
