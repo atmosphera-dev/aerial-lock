@@ -2,6 +2,22 @@ import QtQuick.tooling 1.2
 
 Module {
     Component {
+        name: "LocalContent"
+        prototype: "QObject"
+        exports: ["AerialLock.Native/LocalContent 1.0"]
+        Property { name: "generation"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method {
+            name: "freeze"
+            Parameter { name: "cacheRoot"; type: "QString" }
+            Parameter { name: "stateRoot"; type: "QString" }
+            Parameter { name: "sources"; type: "QVariantList" }
+        }
+        Method { name: "forSource"; type: "QVariantList"; Parameter { name: "sourceId"; type: "QString" } }
+        Method { name: "lookup"; type: "QVariantMap"; Parameter { name: "path"; type: "QString" } }
+        Method { name: "reportPlayback"; Parameter { name: "path"; type: "QString" } }
+    }
+    Component {
         name: "LocalConfig"
         prototype: "QObject"
         exports: ["AerialLock.Native/LocalConfig 1.0"]

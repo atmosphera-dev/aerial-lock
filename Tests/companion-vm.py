@@ -82,7 +82,7 @@ def prepare(args):
                 ("aerial-lock-run", "aerial-lock-auth", "aerial-lock-emergency", "aerial-companion")]
     required += [stage / "lib/aerial-lock/qt-plugins/generic" / name for name in
                  ("libAerialLockConnectionGuard.so", "libAerialLockSurfaceInput.so")]
-    required += [paths["build"] / name for name in ("desktop-input-probe", "libfull-caller-faults.so")]
+    required += [paths["build"] / name for name in ("desktop-input-probe", "libfull-caller-faults.so", "companion-transfer-probe")]
     for path in required:
         if not path.is_file() or path.is_symlink():
             raise RuntimeError("missing built/staged artifact: " + str(path))

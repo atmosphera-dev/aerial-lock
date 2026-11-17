@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(AERIAL_LOCK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
     "aerial-lock source tree used by the test fixtures")
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Test DBus)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Test DBus Network)
 
 add_executable(native-input-probe native-input-probe.cpp)
 target_link_libraries(native-input-probe PRIVATE
@@ -130,6 +130,45 @@ add_test(NAME blocked-latch
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-blocked-latch.py"
             "$<TARGET_FILE:connection-loss-probe>")
 find_package(PkgConfig REQUIRED)
+pkg_check_modules(ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-content-probe.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-content-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-content-probe.moc"
+    DEPENDS companion-content-probe.cpp)
+add_executable(companion-content-probe companion-content-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp" "${AERIAL_LOCK_SOURCE}/companion/cache-store.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/planner-state.cpp" "${AERIAL_LOCK_SOURCE}/companion/acquisition-planner.cpp"
+    "${AERIAL_LOCK_SOURCE}/native/local-content.cpp" "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/companion-content-probe.moc")
+target_include_directories(companion-content-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(companion-content-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+target_link_libraries(companion-content-probe PRIVATE Qt6::Core Qt6::Test PkgConfig::ARCHIVE)
+add_test(NAME companion-provider COMMAND companion-content-probe resolver selectedTarMember)
+add_test(NAME companion-cache COMMAND companion-content-probe cacheAccountingAndOwnership)
+add_test(NAME companion-snapshot COMMAND companion-content-probe snapshotPinningAndRestart nonblockingAndCorruption nativeEpisodeGeneration)
+add_test(NAME companion-planner COMMAND companion-content-probe plannerDurability plannerSelectionAndCadence)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
+    COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/local-content.h" -o "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
+    DEPENDS "${AERIAL_LOCK_SOURCE}/native/local-content.h")
+foreach(stem IN ITEMS http-operation local-probe transfer manifest-store)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
+        COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/companion/${stem}.h" -o "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
+        DEPENDS "${AERIAL_LOCK_SOURCE}/companion/${stem}.h")
+endforeach()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-transfer-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc"
+    DEPENDS companion-transfer-probe.cpp)
+add_executable(companion-transfer-probe companion-transfer-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/cache-store.cpp" "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/http-operation.cpp" "${AERIAL_LOCK_SOURCE}/companion/local-probe.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/transfer.cpp" "${CMAKE_CURRENT_BINARY_DIR}/http-operation.moc"
+    "${AERIAL_LOCK_SOURCE}/companion/manifest-store.cpp" "${CMAKE_CURRENT_BINARY_DIR}/manifest-store.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/local-probe.moc" "${CMAKE_CURRENT_BINARY_DIR}/transfer.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc")
+target_include_directories(companion-transfer-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::Network Qt6::Test PkgConfig::ARCHIVE)
+add_test(NAME companion-transfer COMMAND companion-transfer-probe "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")
@@ -143,7 +182,9 @@ target_link_libraries(connection-loss-probe PRIVATE Qt6::Gui PkgConfig::WAYLAND)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp")
-add_executable(supervisor-test "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc")
+set(SUPERVISOR_LOCAL_SOURCES "${AERIAL_LOCK_SOURCE}/common/config-document.cpp"
+    "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp")
+add_executable(supervisor-test "${AERIAL_LOCK_SOURCE}/supervisor/aerial-lock-supervisor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/aerial-lock-supervisor.moc" ${SUPERVISOR_LOCAL_SOURCES})
 target_include_directories(supervisor-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(supervisor-test PRIVATE AERIAL_LOCK_DEFAULT_EMERGENCY="${CMAKE_CURRENT_SOURCE_DIR}/supervisor-emergency-stub.py")
 target_link_libraries(supervisor-test PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
@@ -152,6 +193,8 @@ target_link_libraries(guard-logger-trap PRIVATE Qt6::Core ${CMAKE_DL_LIBS})
 add_test(NAME supervisor-session
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-session.py"
             "$<TARGET_FILE:supervisor-test>")
+add_test(NAME companion-episode COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-episode.py"
+    "$<TARGET_FILE:supervisor-test>")
 add_test(NAME supervisor-emergency COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-emergency.py" "$<TARGET_FILE:supervisor-test>")
 add_test(NAME supervisor-output
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-output.py"
@@ -159,7 +202,7 @@ add_test(NAME supervisor-output
 add_test(NAME supervisor-hyprland
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-supervisor-hyprland.py"
             "$<TARGET_FILE:supervisor-test>")
-add_executable(supervisor-terminal-probe supervisor-terminal-probe.cpp)
+add_executable(supervisor-terminal-probe supervisor-terminal-probe.cpp ${SUPERVISOR_LOCAL_SOURCES})
 target_link_libraries(supervisor-terminal-probe PRIVATE Qt6::Core Qt6::DBus PkgConfig::WAYLAND)
 target_compile_definitions(supervisor-terminal-probe PRIVATE AERIAL_LOCK_DEFAULT_EMERGENCY="${CMAKE_CURRENT_SOURCE_DIR}/supervisor-emergency-stub.py")
 add_test(NAME supervisor-release

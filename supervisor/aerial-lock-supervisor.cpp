@@ -63,6 +63,8 @@
 
 #include "../native/session-identity.h"
 #include "../native/shell-dir.h"
+#include "../common/config-document.h"
+#include "../common/content-snapshot.h"
 #include "emergency-settings.h"
 
 #ifndef AERIAL_LOCK_DEFAULT_SHELL
@@ -156,6 +158,8 @@ public:
             log(QStringLiteral("engagement channel unavailable (%1) — locking anyway, but a duplicate "
                                "invocation cannot confirm this lock").arg(why));
         m_lockerCommand = lockerCommandLine();
+        m_cacheRoot = Aerial::ConfigPaths::environment(m_lockerCommand).cache;
+        m_content = std::make_unique<Aerial::ContentSnapshot>(m_cacheRoot);
         m_attempt = 0;
         launch();
     }
@@ -301,6 +305,14 @@ private:
             m_child->setArguments({settings.service, QString::number(settings.watchdog)});
         }
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        // This episode's generation (including empty) outlives all normal
+        // clients. The supervisor retains the shared playback FD throughout.
+        env.remove(QStringLiteral("AERIAL_LOCK_CONTENT_ROOT"));
+        env.remove(QStringLiteral("AERIAL_LOCK_CONTENT_GENERATION"));
+        if (m_stage == Stage::Normal) {
+            env.insert(QStringLiteral("AERIAL_LOCK_CONTENT_ROOT"), m_cacheRoot);
+            env.insert(QStringLiteral("AERIAL_LOCK_CONTENT_GENERATION"), m_content->generation());
+        }
         if (!m_video.isEmpty())
             env.insert(QStringLiteral("AERIAL_LOCK_VIDEO"), m_video);
         // Never let an inherited value point this attempt at another channel.
@@ -787,6 +799,8 @@ private:
     QString m_lockerCommand;
     QString m_video;
     QString m_lastVideo;
+    QString m_cacheRoot;
+    std::unique_ptr<Aerial::ContentSnapshot> m_content;
     int m_attempt = 0;
     Stage m_stage = Stage::Normal;
     bool m_attemptSettled = false;

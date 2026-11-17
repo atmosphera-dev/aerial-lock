@@ -5,6 +5,7 @@
 #include "auth-context.h"
 #include "power-actions.h"
 #include "local-config.h"
+#include "local-content.h"
 #include <QGenericPlugin>
 #include <qqml.h>
 #include <cstdlib>
@@ -41,6 +42,7 @@ public:
             qmlRegisterType<AuthContext>("AerialLock.Native", 1, 0, "AuthContext");
             qmlRegisterType<PowerActions>("AerialLock.Native", 1, 0, "PowerActions");
             qmlRegisterType<LocalConfig>("AerialLock.Native", 1, 0, "LocalConfig");
+            qmlRegisterType<LocalContent>("AerialLock.Native", 1, 0, "LocalContent");
             new SurfaceInputFilter(qGuiApp);
             if (!qputenv("AERIAL_LOCK_SURFACE_INPUT_PID", QByteArray::number(getpid()))) ::_exit(72);
         }
