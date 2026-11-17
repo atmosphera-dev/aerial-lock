@@ -30,16 +30,18 @@ OBJDIR ?= build
 UNLOCK_OBJS := $(OBJDIR)/aerial-unlock-proto.o $(OBJDIR)/aerial-unlock-main.o
 SUPERVISOR_OBJS := $(OBJDIR)/aerial-supervisor-proto.o $(OBJDIR)/aerial-supervisor-main.o
 GUARD_OBJS := $(OBJDIR)/connection-guard.o
-IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o
+CONFIG_OBJS := $(OBJDIR)/config-document.o
+IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o $(CONFIG_OBJS)
+COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/companion-service.o $(OBJDIR)/companion_adaptor.o $(CONFIG_OBJS)
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
-INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o
+INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(CONFIG_OBJS)
 GUARD_PLUGIN := native/qt-plugins/generic/libAerialLockConnectionGuard.so
 INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 .PHONY: all install uninstall dev clean pam-limits build-flags force-native-config
 
-all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN)
+all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial-companion
 
 # Make cannot see variable changes in a command line. One content-stable
 # prerequisite records the effective native configuration, so an incremental
@@ -67,7 +69,7 @@ $(OBJDIR)/native-config: force-native-config | $(OBJDIR)
 	$(file >$@.tmp,$(NATIVE_CONFIG))
 	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
 
-$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS): $(OBJDIR)/native-config
+$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS) $(COMPANION_OBJS): $(OBJDIR)/native-config
 
 # Phony on purpose: the value can come from the environment, which Make
 # cannot express as a file prerequisite. The generator is sub-second, so
@@ -153,10 +155,10 @@ supervisor/aerial-lock-supervisor: $(SUPERVISOR_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(OBJDIR)/aerial-supervisor-main.o $(OBJDIR)/aerial-supervisor-proto.o \
 		$$(pkg-config --libs Qt6Core Qt6DBus wayland-client)
 
-native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h native/power-actions.h
+native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h native/power-actions.h native/local-config.h
 	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Quick) $< -o $@
 
-$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc native/power-actions.h $(OBJDIR)/native-config
+$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc native/power-actions.h native/local-config.h $(OBJDIR)/native-config
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Quick Qt6DBus) -o $@
 
 native/auth-context.moc: native/auth-context.h
@@ -215,13 +217,49 @@ idle/aerial-idle.moc: idle/aerial-idle.cpp
 $(OBJDIR)/aerial-idle-proto.o: idle/ext-idle-notify-v1-protocol.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags wayland-client) -o $@
 
-$(OBJDIR)/aerial-idle-main.o: idle/aerial-idle.cpp idle/aerial-idle.moc idle/ext-idle-notify-v1-client.h native/session-identity.h native/shell-dir.h
+$(OBJDIR)/aerial-idle-main.o: idle/aerial-idle.cpp idle/aerial-idle.moc idle/ext-idle-notify-v1-client.h native/session-identity.h native/shell-dir.h common/config-document.h
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< -Iidle \
 		-DAERIAL_IDLE_DATADIR='"$(DATADIR)"' -DAERIAL_IDLE_LOCK_COMMAND='"$(BINDIR)/aerial-lock"' \
 		$$(pkg-config --cflags Qt6Core Qt6DBus wayland-client) -o $@
 
 idle/aerial-idle: $(IDLE_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(IDLE_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus wayland-client)
+
+$(OBJDIR)/config-document.o: common/config-document.cpp common/config-document.h $(OBJDIR)/native-config
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Core) -o $@
+
+$(OBJDIR)/local-config.moc: native/local-config.h | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/local-config.o: native/local-config.cpp native/local-config.h common/config-document.h $(OBJDIR)/local-config.moc $(OBJDIR)/native-config
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core) -o $@
+
+$(OBJDIR)/config-repository.moc: companion/config-repository.h | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/service.moc: companion/service.h | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h &: dbus/org.aeriallock.Companion1.xml | $(OBJDIR)
+	/usr/lib/qt6/bin/qdbusxml2cpp -m -a $(OBJDIR)/companion_adaptor -l Aerial::CompanionService -i companion/service.h $<
+
+$(OBJDIR)/config-repository.o: companion/config-repository.cpp companion/config-repository.h common/config-document.h $(OBJDIR)/config-repository.moc
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core) -o $@
+
+$(OBJDIR)/companion-service.o: companion/service.cpp companion/service.h companion/config-repository.h $(OBJDIR)/companion_adaptor.h $(OBJDIR)/service.moc
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+$(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/companion_adaptor.o: $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp companion/service.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+$(OBJDIR)/companion-main.o: companion/main.cpp companion/config-repository.h companion/service.h common/config-document.h native/shell-dir.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+
+companion/aerial-companion: $(COMPANION_OBJS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(COMPANION_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus)
 
 install: all
 	install -d $(DESTDIR)$(DATADIR)
@@ -280,6 +318,7 @@ install: all
 	install -m 644 Services/Compositor/NiriBackend.qml $(DESTDIR)$(DATADIR)/Services/Compositor/
 	install -m 644 Services/Compositor/HyprlandBackend.qml $(DESTDIR)$(DATADIR)/Services/Compositor/
 	install -m 644 Config/defaults.json $(DESTDIR)$(CONFDIR)/
+	install -m 644 Config/settings-schema.json $(DESTDIR)$(CONFDIR)/
 	install -m 644 Config/pam-limits.json $(DESTDIR)$(CONFDIR)/
 	install -m 644 Config/build-flags.json $(DESTDIR)$(CONFDIR)/
 	install -m 644 Config/i18n/en.json $(DESTDIR)$(I18NDIR)/
@@ -295,6 +334,9 @@ install: all
 	install -d $(DESTDIR)$(LIBEXECDIR) $(DESTDIR)$(PLUGINROOT)/generic
 	install -m 755 Scripts/aerial-lock-run $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run
 	install -m 755 native/aerial-lock-auth $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
+	install -m 755 companion/aerial-companion $(DESTDIR)$(LIBEXECDIR)/aerial-companion
+	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces
+	install -m 644 dbus/org.aeriallock.Companion1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	install -d $(DESTDIR)$(DATADIR)/AerialLock/Native
 	install -m 644 AerialLock/Native/qmldir AerialLock/Native/native.qmltypes $(DESTDIR)$(DATADIR)/AerialLock/Native/
@@ -313,6 +355,7 @@ uninstall:
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockConnectionGuard.so
 	rm -f $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockSurfaceInput.so
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
+	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-companion $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Companion1.xml
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	rm -f $(DESTDIR)$(PAMDIR)/aerial-lock
 
@@ -328,6 +371,7 @@ clean:
 	rm -f $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS)
 	rm -f emergency/aerial-lock-emergency emergency/ext-session-lock-v1-client.h emergency/ext-session-lock-v1-protocol.c $(EMERGENCY_OBJS)
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service
+	rm -f companion/aerial-companion $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	@rmdir $(OBJDIR) 2>/dev/null || true
 
 dev: DEBUG_DISMISS=1

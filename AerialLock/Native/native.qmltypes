@@ -2,6 +2,23 @@ import QtQuick.tooling 1.2
 
 Module {
     Component {
+        name: "LocalConfig"
+        prototype: "QObject"
+        exports: ["AerialLock.Native/LocalConfig 1.0"]
+        Property { name: "data"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "rawUser"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "diagnostics"; type: "QStringList"; isReadonly: true }
+        Property { name: "profile"; type: "QString"; isReadonly: true }
+        Property { name: "revision"; type: "QString"; isReadonly: true }
+        Property { name: "ready"; type: "bool"; isReadonly: true }
+        Signal { name: "changed" }
+        Method {
+            name: "load"; type: "bool"
+            Parameter { name: "bundle"; type: "QString" }
+            Parameter { name: "userPath"; type: "QString" }
+        }
+    }
+    Component {
         name: "PowerActions"
         prototype: "QObject"
         exports: ["AerialLock.Native/PowerActions 1.0"]

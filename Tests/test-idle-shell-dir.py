@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory(prefix="idle-shell-dir-") as directory:
         value = json.loads(json.dumps(defaults))
         value["idle"]["timeoutSeconds"] = timeout
         (shell / "Config/defaults.json").write_text(json.dumps(value))
+        shutil.copyfile(source / "Config/settings-schema.json", shell / "Config/settings-schema.json")
         return shell, value["idle"]
 
     compiled, compiled_idle = bundle("compiled", 17)

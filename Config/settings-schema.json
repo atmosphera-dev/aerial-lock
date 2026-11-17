@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "language": {"type": "string"},
+    "backgroundColor": {"type": "string"},
+    "theme": {"type": "string"},
+    "sources": {"type": "array", "sourceItem": {"type": "object", "properties": {
+      "type": {"type": "string", "enum": ["file", "folder", "apple", "community"]},
+      "name": {"type": "string", "minLength": 1},
+      "source": {"type": "string", "minLength": 1},
+      "id": {"type": "string", "minLength": 1, "optional": true},
+      "minResolution": {"type": "integer", "enum": [1080, 2160], "optional": true},
+      "maxResolution": {"type": "integer", "enum": [1080, 2160], "optional": true}
+    }}},
+    "preferredResolution": {"type": "integer", "enum": [1080, 2160], "optional": true},
+    "pamService": {"type": "string"},
+    "fallbackQuitMs": {"type": "number"},
+    "pamWatchdogTimeoutMs": {"type": "number"},
+    "powerActions": {"type": "object", "properties": {"enabled": {"type": "boolean"}}},
+    "idle": {"type": "object", "properties": {
+      "timeoutSeconds": {"type": "integer", "minimum": 0},
+      "respectInhibitors": {"type": "boolean"},
+      "lockOnSuspend": {"type": "boolean"},
+      "logindLockUnlock": {"type": "boolean"}
+    }},
+    "panel": {"type": "object", "properties": {
+      "widthMax": {"type": "number"}, "fieldHeight": {"type": "number"},
+      "radius": {"type": "number"}, "fieldRadius": {"type": "number"},
+      "outerMargin": {"type": "number"}, "spacing": {"type": "number"}, "fontSize": {"type": "number"}
+    }},
+    "colors": {"type": "object", "properties": {
+      "text": {"type": "string"}, "textError": {"type": "string"}, "input": {"type": "string"},
+      "panelFill": {"type": "string"}, "panelBorder": {"type": "string"}, "fieldFill": {"type": "string"},
+      "fieldBorderFocused": {"type": "string"}, "fieldBorder": {"type": "string"}
+    }},
+    "acquisition": {"type": "object", "properties": {
+      "automatic": {"type": "object", "properties": {
+        "enabled": {"type": "boolean"},
+        "allowedResolutions": {"type": "array", "items": {"type": "integer", "enum": [1080, 2160]}, "uniqueItems": true},
+        "allowMetered": {"type": "boolean"},
+        "connectionTypes": {"type": "object", "properties": {
+          "ethernet": {"type": "boolean"}, "wifi": {"type": "boolean"}, "cellular": {"type": "boolean"},
+          "bluetooth": {"type": "boolean"}, "vpn": {"type": "boolean"}, "other": {"type": "boolean"}, "unknown": {"type": "boolean"}
+        }},
+        "power": {"type": "object", "properties": {
+          "ac": {"type": "boolean"}, "battery": {"type": "boolean"}, "unknown": {"type": "boolean"}
+        }}
+      }},
+      "checkIntervalSeconds": {"type": "integer", "minimum": 1}
+    }},
+    "cache": {"type": "object", "properties": {
+      "maxBytes": {"type": "integer", "minimum": 0},
+      "rotationDays": {"type": "integer", "minimum": 0},
+      "minFreeBytes": {"type": "integer", "minimum": 0}
+    }}
+  }
+}

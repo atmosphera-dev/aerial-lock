@@ -32,6 +32,7 @@
 #include "ext-idle-notify-v1-client.h"
 #include "../native/session-identity.h"
 #include "../native/shell-dir.h"
+#include "../common/config-document.h"
 
 #ifndef AERIAL_IDLE_DATADIR
 #define AERIAL_IDLE_DATADIR "/usr/share/aerial-lock"
@@ -64,66 +65,12 @@ Q_DECLARE_METATYPE(UnitExecs)
 Q_DECLARE_METATYPE(AuxiliaryUnit)
 Q_DECLARE_METATYPE(AuxiliaryUnits)
 
-static QJsonObject deepMerge(QJsonObject base, const QJsonObject &overrides)
-{
-    for (auto it = overrides.begin(); it != overrides.end(); ++it) {
-        base[it.key()] = base[it.key()].isObject() && it.value().isObject()
-            ? QJsonValue(deepMerge(base[it.key()].toObject(), it.value().toObject())) : it.value();
-    }
-    return base;
-}
-
-static bool readObject(const QString &path, QJsonObject &object, bool required)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        if (required || file.exists()) qWarning().noquote() << "aerial-idle: cannot read" << path;
-        return !required && !file.exists();
-    }
-    QJsonParseError error;
-    auto doc = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-        qWarning().noquote() << "aerial-idle: invalid config object at" << path;
-        return false;
-    }
-    object = doc.object();
-    return true;
-}
-
-static bool validTimeout(const QJsonValue &value)
-{
-    return value.isDouble() && value.toDouble() >= 0
-        && std::isfinite(value.toDouble())
-        && std::floor(value.toDouble()) == value.toDouble();
-}
-
 static bool loadConfig(const QString &shell, QJsonObject &idle)
 {
-    QJsonObject defaults;
-    if (!readObject(shell + QStringLiteral("/Config/defaults.json"), defaults, true))
-        return false;
-    const auto baseline = defaults.value("idle").toObject();
-    if (!validTimeout(baseline.value("timeoutSeconds"))
-        || !baseline.value("respectInhibitors").isBool()
-        || !baseline.value("lockOnSuspend").isBool()
-        || !baseline.value("logindLockUnlock").isBool()) {
-        qWarning("aerial-idle: invalid bundled idle defaults");
-        return false;
-    }
-    QString configHome = qEnvironmentVariable("XDG_CONFIG_HOME");
-    if (configHome.isEmpty()) configHome = QDir::homePath() + QStringLiteral("/.config");
-    QJsonObject user;
-    readObject(configHome + QStringLiteral("/aerial-lock/config.json"), user, false);
-    idle = deepMerge(defaults, user).value("idle").toObject();
-    for (auto it = baseline.begin(); it != baseline.end(); ++it) {
-        const bool valid = it.key() == "timeoutSeconds" ? validTimeout(idle.value(it.key()))
-                                                        : idle.value(it.key()).isBool();
-        if (!valid) {
-            qWarning().noquote() << "aerial-idle: idle." + it.key() << "invalid; using default";
-            idle[it.key()] = it.value();
-        }
-    }
-    return true;
+    const auto document = Aerial::readConfig(Aerial::ConfigPaths::environment(shell));
+    for (const auto &warning : document.diagnostics) qWarning().noquote() << "aerial-idle:" << warning;
+    idle = document.effective.value("idle").toObject();
+    return document.bundleValid;
 }
 
 class Idle : public QObject {
