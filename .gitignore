@@ -43,3 +43,6 @@ idle/ext-idle-notify-v1-protocol.c
 native/surface-input.moc
 native/auth-context.moc
 native/aerial-lock-auth
+emergency/aerial-lock-emergency
+emergency/ext-session-lock-v1-client.h
+emergency/ext-session-lock-v1-protocol.c

@@ -39,7 +39,8 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         "aerial-unlock-main.o", "aerial-unlock-proto.o",
         "aerial-supervisor-main.o", "aerial-supervisor-proto.o",
         "aerial-idle-main.o", "aerial-idle-proto.o", "connection-guard.o", "surface-input.o",
-        "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o"
+        "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o",
+        "emergency-main.o", "emergency-wayland.o", "emergency-render.o", "emergency-input.o", "emergency-proto.o"
     }, objects
     before = [p.stat().st_mtime_ns for p in objects]
     make(b, "install", "PAMDIR=" + str(root / "pam"))
@@ -84,6 +85,9 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
     auth_object = tree / "build/auth-context.o"
     installed_helper = b / "libexec/aerial-lock/aerial-lock-auth"
     dev_helper = tree / "native/aerial-lock-auth"
+    emergency = b / "libexec/aerial-lock/aerial-lock-emergency"
+    assert os.access(emergency, os.X_OK) and emergency.stat().st_mode & 0o777 == 0o755
+    assert str(installed_helper).encode() in emergency.read_bytes()
     helper_path(plugin, installed_helper, dev_helper)
     installed_stamp = auth_object.stat().st_mtime_ns
     assert "DEV_RUNNER_STUB" in make(b, "dev").stdout
@@ -119,9 +123,24 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
         helper_path(stage / prefix.relative_to("/") / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so",
                     prefix / "libexec/aerial-lock/aerial-lock-auth", dev_helper)
+        emergency = stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency"
+        assert emergency.stat().st_mode & 0o777 == 0o755
+        payload = emergency.read_bytes()
+        assert str(prefix / "libexec/aerial-lock/aerial-lock-auth").encode() in payload
+        assert str(stage).encode() not in payload
         print(f"UNIT_INSTALL_PASS {label} {commands[0]} mode=644", flush=True)
         make(prefix, "uninstall", *options)
         assert not any(p.is_file() for p in stage.rglob("*")), f"{label} uninstall left installed files"
+
+    arch_stage = root / "arch-stage"
+    make("/usr", "install", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")
+    emergency = arch_stage / "usr/lib/aerial-lock/aerial-lock-emergency"
+    assert emergency.stat().st_mode & 0o777 == 0o755
+    assert b"/usr/lib/aerial-lock/aerial-lock-auth" in emergency.read_bytes()
+    needed = subprocess.check_output(["readelf", "-d", str(emergency)], text=True)
+    assert not any(name in needed for name in ("libQt", "libpam", "libGL", "libEGL", "libcairo", "libfontconfig", "libmpv")), needed
+    make("/usr", "uninstall", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")
+    assert not any(p.is_file() for p in arch_stage.rglob("*"))
 
     # Exercise the distributor's code-generation phase too. With LTO, Qt's
     # position-independence requirement must survive the final executable link,

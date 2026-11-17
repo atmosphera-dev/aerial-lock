@@ -31,13 +31,14 @@ SUPERVISOR_OBJS := $(OBJDIR)/aerial-supervisor-proto.o $(OBJDIR)/aerial-supervis
 GUARD_OBJS := $(OBJDIR)/connection-guard.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
+EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
 INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o
 GUARD_PLUGIN := native/qt-plugins/generic/libAerialLockConnectionGuard.so
 INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 .PHONY: all install uninstall dev clean pam-limits build-flags force-native-config
 
-all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth $(GUARD_PLUGIN) $(INPUT_PLUGIN)
+all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN)
 
 # Make cannot see variable changes in a command line. One content-stable
 # prerequisite records the effective native configuration, so an incremental
@@ -64,7 +65,7 @@ $(OBJDIR)/native-config: force-native-config | $(OBJDIR)
 	$(file >$@.tmp,$(NATIVE_CONFIG))
 	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
 
-$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS): $(OBJDIR)/native-config
+$(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS): $(OBJDIR)/native-config
 
 # Phony on purpose: the value can come from the environment, which Make
 # cannot express as a file prerequisite. The generator is sub-second, so
@@ -177,6 +178,24 @@ $(OBJDIR)/power-actions.o: native/power-actions.cpp native/power-actions.h nativ
 native/aerial-lock-auth: $(AUTH_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -lpam
 
+emergency/ext-session-lock-v1-client.h: $(SESSION_LOCK_XML)
+	wayland-scanner client-header $< $@
+
+emergency/ext-session-lock-v1-protocol.c: $(SESSION_LOCK_XML)
+	wayland-scanner private-code $< $@
+
+$(OBJDIR)/emergency-proto.o: emergency/ext-session-lock-v1-protocol.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< $$(pkg-config --cflags wayland-client) -o $@
+
+$(OBJDIR)/emergency-main.o: emergency/aerial-lock-emergency.c emergency/locker.h emergency/ext-session-lock-v1-client.h native/auth-client.h native/auth-protocol.h
+	$(CC) -std=c11 $(CPPFLAGS) $(CFLAGS) -c $< -Iemergency -DAERIAL_LOCK_AUTH_HELPER='"$(AUTH_HELPER)"' $$(pkg-config --cflags wayland-client xkbcommon) -o $@
+
+$(OBJDIR)/emergency-%.o: emergency/%.c emergency/locker.h emergency/ext-session-lock-v1-client.h native/auth-client.h native/auth-protocol.h
+	$(CC) -std=c11 $(CPPFLAGS) $(CFLAGS) -c $< -Iemergency $$(pkg-config --cflags wayland-client xkbcommon) -o $@
+
+emergency/aerial-lock-emergency: $(EMERGENCY_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(EMERGENCY_OBJS) -Wl,--as-needed $$(pkg-config --libs wayland-client xkbcommon)
+
 $(INPUT_PLUGIN): $(INPUT_OBJS)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -shared -o $@ $(INPUT_OBJS) $$(pkg-config --libs Qt6Quick Qt6DBus) -ldl
@@ -273,6 +292,7 @@ install: all
 	install -d $(DESTDIR)$(LIBEXECDIR) $(DESTDIR)$(PLUGINROOT)/generic
 	install -m 755 Scripts/aerial-lock-run $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run
 	install -m 755 native/aerial-lock-auth $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
+	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	install -d $(DESTDIR)$(DATADIR)/AerialLock/Native
 	install -m 644 AerialLock/Native/qmldir AerialLock/Native/native.qmltypes $(DESTDIR)$(DATADIR)/AerialLock/Native/
 	install -m 755 $(GUARD_PLUGIN) $(DESTDIR)$(PLUGINROOT)/generic/
@@ -290,6 +310,7 @@ uninstall:
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockConnectionGuard.so
 	rm -f $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockSurfaceInput.so
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
+	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	rm -f $(DESTDIR)$(PAMDIR)/aerial-lock
 
 clean:
@@ -302,6 +323,7 @@ clean:
 	rm -f native/power-actions.moc
 	rm -f idle/aerial-idle idle/aerial-idle.moc idle/ext-idle-notify-v1-client.h idle/ext-idle-notify-v1-protocol.c
 	rm -f $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS)
+	rm -f emergency/aerial-lock-emergency emergency/ext-session-lock-v1-client.h emergency/ext-session-lock-v1-protocol.c $(EMERGENCY_OBJS)
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service
 	@rmdir $(OBJDIR) 2>/dev/null || true
 

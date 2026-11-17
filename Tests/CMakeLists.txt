@@ -100,6 +100,10 @@ add_test(NAME blocked-latch
             "$<TARGET_FILE:connection-loss-probe>")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
+pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
+add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")
+target_link_libraries(emergency-unit PRIVATE PkgConfig::WAYLAND PkgConfig::XKBCOMMON)
+add_test(NAME emergency-unit COMMAND emergency-unit)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Gui PkgConfig::WAYLAND)
 add_library(guard-logger-trap SHARED guard-logger-trap.cpp)
 target_link_libraries(guard-logger-trap PRIVATE Qt6::Core ${CMAKE_DL_LIBS})
@@ -148,6 +152,33 @@ set_tests_properties(media-fallback-render PROPERTIES SKIP_REGULAR_EXPRESSION "S
 add_executable(desktop-input-probe desktop-input-probe.cpp)
 target_link_libraries(desktop-input-probe PRIVATE Qt6::Gui Qt6::Quick)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
+pkg_get_variable(EMERGENCY_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+set(EMERGENCY_XML "${EMERGENCY_PROTOCOLS_DIR}/staging/ext-session-lock/ext-session-lock-v1.xml")
+foreach(kind IN ITEMS client server)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/emergency-${kind}.h"
+        COMMAND "${WAYLAND_SCANNER}" ${kind}-header "${EMERGENCY_XML}" "${CMAKE_CURRENT_BINARY_DIR}/emergency-${kind}.h"
+        DEPENDS "${EMERGENCY_XML}")
+endforeach()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/emergency-protocol.c"
+    COMMAND "${WAYLAND_SCANNER}" private-code "${EMERGENCY_XML}" "${CMAKE_CURRENT_BINARY_DIR}/emergency-protocol.c"
+    DEPENDS "${EMERGENCY_XML}")
+add_executable(emergency-peer emergency-peer.c "${CMAKE_CURRENT_BINARY_DIR}/emergency-server.h" "${CMAKE_CURRENT_BINARY_DIR}/emergency-protocol.c")
+target_include_directories(emergency-peer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(emergency-peer PRIVATE PkgConfig::WAYLAND_SERVER PkgConfig::XKBCOMMON)
+add_executable(emergency-test-client "${AERIAL_LOCK_SOURCE}/emergency/aerial-lock-emergency.c"
+    "${AERIAL_LOCK_SOURCE}/emergency/wayland.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c" "${AERIAL_LOCK_SOURCE}/emergency/input.c"
+    "${AERIAL_LOCK_SOURCE}/native/auth-client.c" "${CMAKE_CURRENT_BINARY_DIR}/emergency-client.h" "${CMAKE_CURRENT_BINARY_DIR}/emergency-protocol.c")
+# The production include name stays identical; only this build's helper path differs.
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ext-session-lock-v1-client.h"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_BINARY_DIR}/emergency-client.h" "${CMAKE_CURRENT_BINARY_DIR}/ext-session-lock-v1-client.h"
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/emergency-client.h")
+target_sources(emergency-test-client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/ext-session-lock-v1-client.h")
+target_include_directories(emergency-test-client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(emergency-test-client PRIVATE AERIAL_LOCK_AUTH_HELPER="${CMAKE_CURRENT_SOURCE_DIR}/emergency-fake-helper.py")
+target_link_libraries(emergency-test-client PRIVATE PkgConfig::WAYLAND PkgConfig::XKBCOMMON)
+add_test(NAME emergency-peer COMMAND emergency-peer "$<TARGET_FILE:emergency-test-client>")
+set_tests_properties(emergency-peer PROPERTIES TIMEOUT 90)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/virtual-pointer-client.h"
     COMMAND "${WAYLAND_SCANNER}" client-header "${CMAKE_CURRENT_SOURCE_DIR}/virtual-pointer.xml"
             "${CMAKE_CURRENT_BINARY_DIR}/virtual-pointer-client.h"
@@ -202,3 +233,7 @@ add_executable(idle-inhibit-probe idle-inhibit-probe.c
     "${CMAKE_CURRENT_BINARY_DIR}/idle-xdg-shell-protocol.c")
 target_include_directories(idle-inhibit-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(idle-inhibit-probe PRIVATE PkgConfig::WAYLAND)
+add_executable(emergency-render-preview emergency-render-preview.c "${AERIAL_LOCK_SOURCE}/emergency/render.c"
+    "${CMAKE_CURRENT_BINARY_DIR}/idle-xdg-shell-client.h" "${CMAKE_CURRENT_BINARY_DIR}/idle-xdg-shell-protocol.c")
+target_include_directories(emergency-render-preview PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(emergency-render-preview PRIVATE PkgConfig::WAYLAND PkgConfig::XKBCOMMON)
