@@ -164,6 +164,7 @@ bool OwnedDirectory::remove(const QString &relative, const struct stat &expected
     const bool ok = fstatat(dir, name.constData(), &current, AT_SYMLINK_NOFOLLOW) == 0
         && S_ISREG(current.st_mode) && current.st_uid == getuid() && current.st_nlink == 1
         && same(current, expected) && unlinkat(dir, name.constData(), 0) == 0;
+    if (ok) fsync(dir);
     close(dir);
     return ok;
 }

@@ -43,6 +43,7 @@ private:
     void armCheck();
     void pump();
     void nextManifest();
+    bool reconcile();
     void sizeCandidates();
     void nextTransfer();
     void finish(const QString &error = {});

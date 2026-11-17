@@ -10,7 +10,21 @@
 #include <unistd.h>
 
 namespace Aerial {
-CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximum) : directory(root, true)
+namespace {
+bool matches(const struct stat &st, const QJsonObject &entry)
+{
+    const auto identity = entry.value("identity").toObject();
+    return st.st_size == entry.value("bytes").toInteger(-1)
+        && qint64(st.st_dev) == identity.value("device").toInteger(-1)
+        && qint64(st.st_ino) == identity.value("inode").toInteger(-1)
+        && st.st_mtim.tv_sec == identity.value("seconds").toInteger(-1)
+        && st.st_mtim.tv_nsec == identity.value("nanoseconds").toInteger(-1);
+}
+}
+
+CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximum,
+                      std::function<void(const QString &)> observer)
+    : directory(root, true), transactionObserver(std::move(observer))
 {
     if (initialMaximum) cap = *initialMaximum;
     if (!directory.valid()) return;
@@ -29,23 +43,97 @@ CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximu
     const int playback = directory.open("playback.lock", O_RDWR | O_CREAT);
     if (playback < 0) return;
     close(playback);
-    const ContentSnapshot snapshot(root);
-    if (snapshot.valid()) {
-        for (const auto &value : snapshot.entries()) {
-            auto item = value.toObject();
-            item["path"] = "objects/" + item.value("key").toString() + ".media";
-            completed.append(item);
+    // The durable commit pointer precedes the public pointer. It is the recovery
+    // authority, never a directory scan or a filename claiming to be complete.
+    struct stat commitStat{};
+    const bool hasCommit = directory.identity("committed.json", commitStat);
+    const auto commit = metadata("committed.json");
+    if (hasCommit && (commit.value("version").toInt() != 1 || !contentKey(commit.value("generation").toString()))) return;
+    if (hasCommit) {
+        const auto index = commit.value("index").toObject();
+        const auto bytes = QJsonDocument(index).toJson(QJsonDocument::Compact);
+        if (index.value("version").toInt() != 1 || !index.value("entries").isArray()
+            || contentDigest(bytes) != commit.value("generation")) return;
+        const auto relative = "generations/" + commit.value("generation").toString() + ".json";
+        if (directory.read(relative, 8 * 1024 * 1024) != bytes && !directory.replace(relative, bytes)) return;
+    }
+    {
+        const ContentSnapshot snapshot(root, hasCommit ? std::optional<QString>(commit.value("generation").toString()) : std::nullopt);
+        if (snapshot.valid()) {
+            for (const auto &value : snapshot.entries()) {
+                auto item = value.toObject();
+                item["path"] = "objects/" + item.value("key").toString() + ".media";
+                completed.append(item);
+            }
+        } else {
+            // Without a validated receipt an existing corrupt index is not an
+            // empty cache and must never be inferred from media filenames.
+            struct stat st{};
+            if (hasCommit || directory.identity("current.json", st)) return;
         }
-    } else {
-        // A corrupt existing index is not an empty cache and must not be
-        // overwritten or inferred from filenames. Missing index is first run.
-        struct stat st{};
-        if (directory.identity("current.json", st)) return;
     }
     owned = true;
+    pending = metadata("pending.json");
+    struct stat pendingStat{};
+    if ((pending.isEmpty() && directory.identity("pending.json", pendingStat)) || !recoverTransaction()) { owned = false; return; }
+    const QJsonObject pointer{{"version", 1}, {"generation", commit.value("generation")}};
+    if (hasCommit && metadata("current.json") != pointer) {
+        // Existing verified data may be above a newly lowered cap. Repair only
+        // its small pointer; real usage remains visible and acquisition stops.
+        if (!directory.replace("current.json", QJsonDocument(pointer).toJson(QJsonDocument::Compact))) owned = false;
+    }
 }
 
 CacheStore::~CacheStore() { if (writer >= 0) close(writer); }
+
+void CacheStore::observe(const QString &step) const
+{
+    if (transactionObserver) transactionObserver(step);
+}
+
+bool CacheStore::prepareTransaction(const QString &operation, const QJsonObject &entry, bool reclamation)
+{
+    if (!pending.isEmpty()) return false;
+    const QJsonObject receipt{{"version", 1}, {"operation", operation}, {"entry", entry}};
+    const auto bytes = QJsonDocument(receipt).toJson(QJsonDocument::Compact);
+    if (!(canWrite(bytes.size()) || (reclamation && usage().safe && directory.available() >= freeReserve
+        && quint64(bytes.size()) <= directory.available() - freeReserve)) || !directory.replace("pending.json", bytes)) return false;
+    observe("prepared");
+    return true;
+}
+
+bool CacheStore::recoverTransaction()
+{
+    if (pending.isEmpty()) return true;
+    const auto entry = pending.value("entry").toObject();
+    const auto key = entry.value("key").toString(), operation = pending.value("operation").toString();
+    const auto object = "objects/" + key + ".media", partial = "partials/" + key + ".part";
+    if (pending.value("version").toInt() != 1 || !contentKey(key) || entry.value("path") != object
+        || !entry.value("probe").toObject().value("initialFrameDecoded").toBool()
+        || (operation != "publish" && operation != "remove")) return false;
+    struct stat st{};
+    if (operation == "publish" && !contains(key) && directory.identity(object, st)) {
+        // The rename happened but the commit did not. Retain verified bytes as
+        // a resumable partial instead of promoting an uncommitted filename.
+        if (!matches(st, entry) || !directory.rename(object, partial)) return false;
+    }
+    if (operation == "publish" && contains(key)) removeFile("partials/" + key + ".json");
+    if (operation == "remove" && !contains(key) && directory.identity(object, st)) {
+        if (!matches(st, entry)) return false;
+        const int lock = directory.open("playback.lock", O_RDWR);
+        if (lock < 0) return false;
+        const bool exclusive = flock(lock, LOCK_EX | LOCK_NB) == 0;
+        const bool removed = exclusive && directory.remove(object, st);
+        close(lock);
+        // A surviving reader may still reopen this old generation. Leave its
+        // receipt/bytes counted and inhibit growth until maintenance can retry.
+        if (!exclusive) return true;
+        if (!removed) return false;
+    }
+    if (!removeFile("pending.json")) return false;
+    pending = {};
+    return true;
+}
 
 CacheUsage CacheStore::usage() const
 {
@@ -66,7 +154,7 @@ CacheUsage CacheStore::usage() const
 
 bool CacheStore::canWrite(quint64 bytes, bool useReservation) const
 {
-    if (!owned || !cap) return false;
+    if (!owned || !cap || !pending.isEmpty()) return false;
     const auto used = usage();
     const auto promised = useReservation ? std::max(remaining, bytes) : remaining;
     if (!used.safe || used.bytes > cap || promised > cap - used.bytes) return false;
@@ -94,7 +182,7 @@ bool CacheStore::canAcquire(const Representation &rep) const
     // headroom, not a second content quota. Received partial bytes count once.
     const auto index = QJsonDocument(QJsonObject{{"version", 1}, {"entries", completed}}).toJson(QJsonDocument::Compact);
     const auto metadata = QJsonDocument(rep.metadata).toJson(QJsonDocument::Compact);
-    const quint64 overhead = index.size() + metadata.size() + 4096
+    const quint64 overhead = 2 * index.size() + metadata.size() + 8192
         + 2 * (rep.url.toEncoded().size() + rep.sourceId.toUtf8().size() + rep.assetId.toUtf8().size() + 2048);
     const auto remainingBytes = quint64(rep.bytes) - std::min(quint64(rep.bytes), received);
     return remainingBytes <= std::numeric_limits<quint64>::max() - overhead && canWrite(remainingBytes + overhead);
@@ -120,7 +208,7 @@ bool CacheStore::contains(const QString &key) const
 
 int CacheStore::openPartial(const QString &key, bool truncate) const
 {
-    if (!owned || !contentKey(key)) return -1;
+    if (!owned || !pending.isEmpty() || !contentKey(key)) return -1;
     return directory.open("partials/" + key + ".part", O_RDWR | O_CREAT | (truncate ? O_TRUNC : O_APPEND), true);
 }
 
@@ -156,32 +244,77 @@ bool CacheStore::discardPartial(const QString &key)
     return ok;
 }
 
+bool CacheStore::reconcile(const QSet<QString> &manifestPaths, const QSet<QString> &representationKeys)
+{
+    if (!owned || !recoverTransaction()) return false;
+    if (!pending.isEmpty()) return true;
+    bool safe = false;
+    const auto files = directory.files(&safe);
+    if (!safe) return false;
+    const int lock = directory.open("playback.lock", O_RDWR);
+    const bool exclusive = lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) == 0;
+    const auto current = metadata("current.json").value("generation").toString();
+    bool ok = true;
+    for (const auto &relative : files) {
+        const auto leaf = relative.mid(relative.lastIndexOf('/') + 1);
+        bool temporary = leaf.startsWith(".write-") && leaf.size() == 39;
+        for (const auto c : leaf.mid(7)) if (!((c >= 'a' && c <= 'f') || (c >= '0' && c <= '9'))) temporary = false;
+        const auto manifest = relative.startsWith("manifests/") && contentKey(relative.mid(10, 64))
+            && relative == "manifests/" + relative.mid(10, 64) + ".json";
+        const auto key = relative.mid(9, 64);
+        const auto partial = relative.startsWith("partials/") && contentKey(key)
+            && (relative == "partials/" + key + ".part" || relative == "partials/" + key + ".json");
+        const auto generation = relative.startsWith("generations/") && contentKey(relative.mid(12, 64))
+            && relative == "generations/" + relative.mid(12, 64) + ".json";
+        if (temporary || (manifest && !manifestPaths.contains(relative)) || (partial && !representationKeys.contains(key))
+            || (generation && exclusive && relative != "generations/" + current + ".json")) {
+            // A managed namespace is not permission to follow a replaced link.
+            // removeFile reopens/rechecks ownership, single-link identity and
+            // containment immediately before unlink; unknown files survive.
+            if (!removeFile(relative)) { ok = false; break; }
+        }
+    }
+    if (lock >= 0) close(lock);
+    return ok;
+}
+
 bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, qint64 now)
 {
     if (!contentKey(rep.key) || !probe.value("initialFrameDecoded").toBool() || contains(rep.key)) return false;
     releaseReservation();
     const auto part = "partials/" + rep.key + ".part", object = "objects/" + rep.key + ".media";
     struct stat st{};
-    if (!directory.identity(part, st) || st.st_size <= 0 || !directory.rename(part, object)) return false;
+    if (!directory.identity(part, st) || st.st_size <= 0) return false;
     QJsonObject identity{{"device", qint64(st.st_dev)}, {"inode", qint64(st.st_ino)},
         {"seconds", qint64(st.st_mtim.tv_sec)}, {"nanoseconds", qint64(st.st_mtim.tv_nsec)}};
     const QJsonObject entry{{"key", rep.key}, {"sourceId", rep.sourceId}, {"assetId", rep.assetId},
         {"path", object}, {"bytes", qint64(st.st_size)}, {"height", rep.height}, {"variant", rep.variant},
         {"metadata", rep.metadata}, {"probe", probe}, {"completedAt", now}, {"identity", identity}};
+    if (!prepareTransaction("publish", entry)) return false;
+    if (!directory.rename(part, object)) { removeFile("pending.json"); return false; }
+    observe("renamed");
     completed.append(entry);
     if (!persistIndex()) {
+        // Once committed, never roll back bytes that a public snapshot might
+        // already contain. Startup will finish the pointer transaction.
+        if (indexCommitted) { owned = false; return false; }
         completed.removeLast();
         // No index entry exists. Keep the verified bytes as a resumable part.
-        directory.rename(object, part);
+        if (directory.rename(object, part)) removeFile("pending.json");
+        else owned = false;
         return false;
     }
     removeFile("partials/" + rep.key + ".json");
+    if (!removeFile("pending.json")) owned = false;
     return true;
 }
 
 bool CacheStore::persistIndex(bool reclamation)
 {
-    const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"entries", completed}}).toJson(QJsonDocument::Compact);
+    indexCommitted = false;
+    const QJsonObject index{{"version", 1}, {"entries", completed}};
+    const auto bytes = QJsonDocument(index).toJson(QJsonDocument::Compact);
+    if (bytes.size() > 8 * 1024 * 1024) return false;
     const auto hash = contentDigest(bytes), relative = "generations/" + hash + ".json";
     struct stat st{};
     const bool existing = directory.identity(relative, st);
@@ -193,19 +326,30 @@ bool CacheStore::persistIndex(bool reclamation)
     const auto prior = contentKey(current) ? directory.read("generations/" + current + ".json", 8 * 1024 * 1024) : QByteArray{};
     const bool shrinking = reclamation && bytes.size() < prior.size() && usage().safe;
     const auto pointer = QJsonDocument(QJsonObject{{"version", 1}, {"generation", hash}}).toJson(QJsonDocument::Compact);
+    const QJsonObject commit{{"version", 1}, {"generation", hash}, {"index", index}};
+    const auto commitBytes = QJsonDocument(commit).toJson(QJsonDocument::Compact);
     if (!existing && (!(canWrite(bytes.size()) || (shrinking && directory.available() >= freeReserve + bytes.size() + pointer.size()))
         || !directory.replace(relative, bytes))) return false;
     if (existing && directory.read(relative, 8 * 1024 * 1024) != bytes) return false;
-    if (!(shrinking ? directory.replace("current.json", pointer) : writeMetadata("current.json", {{"version", 1}, {"generation", hash}}))) {
+    observe("generation");
+    if (!(shrinking ? directory.replace("committed.json", commitBytes) : writeMetadata("committed.json", commit))) {
         if (!existing) removeFile(relative);
         return false;
     }
+    indexCommitted = true;
+    observe("committed");
+    if (!(shrinking ? directory.replace("current.json", pointer) : writeMetadata("current.json", {{"version", 1}, {"generation", hash}}))) return false;
+    observe("published");
     return true;
 }
 
 QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, quint64 needed)
 {
     QJsonObject result{{"removedBytes", qint64(0)}, {"protected", false}, {"dryRun", dryRun}};
+    if (!pending.isEmpty()) {
+        if (!dryRun && !recoverTransaction()) { owned = false; result["error"] = "StorageError"; return result; }
+        if (!pending.isEmpty()) { result["protected"] = true; return result; }
+    }
     const int lock = directory.open("playback.lock", O_RDWR);
     if (!owned || lock < 0 || flock(lock, LOCK_EX | LOCK_NB)) {
         if (lock >= 0) close(lock);
@@ -227,24 +371,26 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
         const auto entry = candidates.takeAt(selected).toObject();
         struct stat st{};
         const auto relative = entry.value("path").toString();
-        const auto identity = entry.value("identity").toObject();
-        if (!directory.identity(relative, st) || qint64(st.st_dev) != identity.value("device").toInteger()
-            || qint64(st.st_ino) != identity.value("inode").toInteger()
-            || st.st_size != entry.value("bytes").toInteger()
-            || st.st_mtim.tv_sec != identity.value("seconds").toInteger()
-            || st.st_mtim.tv_nsec != identity.value("nanoseconds").toInteger()) break;
+        if (!directory.identity(relative, st) || !matches(st, entry)) break;
         if (!dryRun) {
+            if (!prepareTransaction("remove", entry, true)) break;
             const auto old = completed;
             completed = candidates;
-            if (!persistIndex(true)) { completed = old; break; }
-            if (!directory.remove(relative, st)) break;
+            if (!persistIndex(true)) {
+                if (!indexCommitted) { completed = old; removeFile("pending.json"); }
+                else owned = false;
+                break;
+            }
+            if (!directory.remove(relative, st)) { pending = metadata("pending.json"); break; }
+            observe("removed");
+            if (!removeFile("pending.json")) { owned = false; break; }
         }
         removed += st.st_size;
         if (needed && removed >= needed) break;
     }
     // Old generations can be removed only under the same reader lock. Their
     // filenames are hashes and identities are rechecked at deletion time.
-    if (!dryRun) {
+    if (!dryRun && owned && pending.isEmpty()) {
         const auto current = metadata("current.json").value("generation").toString();
         for (const auto &relative : directory.files()) {
             if (relative.startsWith("generations/") && relative != "generations/" + current + ".json"
@@ -252,6 +398,7 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
         }
     }
     close(lock);
+    if (!owned) result["error"] = "StorageError";
     result["removedBytes"] = qint64(removed);
     return result;
 }

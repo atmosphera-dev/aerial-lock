@@ -13,6 +13,7 @@
 #include <archive_entry.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 using namespace Aerial;
@@ -191,6 +192,76 @@ private slots:
         QCOMPARE(fallback.entries()[0].toObject().value("assetId").toString(), "second");
     }
 
+    void corruptPointerRecovery()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto path = root.path() + "/cache";
+        auto cache = std::make_unique<CacheStore>(path); QVERIFY(cache->valid()); cache->configure(1000000, 0);
+        QVERIFY(publish(*cache, representation("first"), 1));
+        QVERIFY(publish(*cache, representation("second"), 2));
+        const auto entries = cache->entries();
+        QVERIFY(cache->files().replace("current.json", "corrupt pointer"));
+        cache.reset();
+        cache = std::make_unique<CacheStore>(path);
+        QVERIFY(cache->valid()); QCOMPARE(cache->entries(), entries);
+        {
+            ContentSnapshot recovered(path); QVERIFY(recovered.valid()); QCOMPARE(recovered.entries().size(), 2);
+            QVERIFY(cache->files().replace("generations/" + recovered.generation() + ".json", "corrupt generation"));
+        }
+        cache.reset(); cache = std::make_unique<CacheStore>(path);
+        QVERIFY(cache->valid()); QCOMPARE(cache->entries(), entries);
+        ContentSnapshot recovered(path); QVERIFY(recovered.valid()); QCOMPARE(recovered.entries().size(), 2);
+    }
+
+    void crashTransactions_data()
+    {
+        QTest::addColumn<QString>("operation");
+        QTest::addColumn<QString>("step");
+        for (const auto &operation : {"publish", "remove"}) {
+            for (const auto &step : {"prepared", "generation", "committed", "published"})
+                QTest::newRow(qPrintable(QString(operation) + '-' + step)) << QString(operation) << QString(step);
+        }
+        QTest::newRow("publish-renamed") << QString("publish") << QString("renamed");
+        QTest::newRow("remove-unlinked") << QString("remove") << QString("removed");
+    }
+
+    void crashTransactions()
+    {
+        QFETCH(QString, operation); QFETCH(QString, step);
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto path = root.path() + "/cache";
+        {
+            CacheStore cache(path); QVERIFY(cache.valid()); cache.configure(1000000, 0);
+            QVERIFY(publish(cache, representation("first"), 1));
+            if (operation == "remove") QVERIFY(publish(cache, representation("second"), 2));
+        }
+        const auto pid = fork(); QVERIFY(pid >= 0);
+        if (pid == 0) {
+            CacheStore cache(path, std::nullopt, [&step](const QString &point) { if (point == step) _exit(77); });
+            cache.configure(1000000, 0);
+            if (!cache.valid()) _exit(78);
+            if (operation == "publish") publish(cache, representation("second"), 2);
+            else cache.prune(false);
+            _exit(79);
+        }
+        int status = 0; QCOMPARE(waitpid(pid, &status, 0), pid);
+        QVERIFY(WIFEXITED(status)); QCOMPARE(WEXITSTATUS(status), 77);
+        const bool committed = step == "committed" || step == "published" || step == "removed";
+        CacheStore cache(path); QVERIFY(cache.valid()); cache.configure(1000000, 0);
+        const int count = operation == "publish" ? (committed ? 2 : 1) : (committed ? 1 : 2);
+        QCOMPARE(cache.entries().size(), count);
+        ContentSnapshot snapshot(path); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), count);
+        QVERIFY(cache.usage().safe); QCOMPARE(cache.usage().reserved, quint64(0));
+        QVERIFY(!QFileInfo::exists(path + "/pending.json"));
+        const auto key = representation(operation == "publish" ? "second" : "first").key;
+        if (operation == "publish" && !committed) {
+            QVERIFY(!QFileInfo::exists(path + "/objects/" + key + ".media"));
+            QFile part(path + "/partials/" + key + ".part"); QVERIFY(part.open(QIODevice::ReadOnly));
+            QCOMPARE(part.readAll(), QByteArray(4096, 'x'));
+        }
+        if (operation == "remove" && committed) QVERIFY(!QFileInfo::exists(path + "/objects/" + key + ".media"));
+    }
+
     void nativeEpisodeGeneration()
     {
         QTemporaryDir root; QVERIFY(root.isValid());
@@ -221,6 +292,81 @@ private slots:
         LocalContent nextEpisode;
         nextEpisode.freeze(cache.path(), root.path() + "/state", sources);
         QCOMPARE(nextEpisode.forSource("fixture").size(), 2);
+    }
+
+    void recoveryReaderProtection()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid()); const auto path = root.path() + "/cache";
+        {
+            CacheStore cache(path); cache.configure(1000000, 0);
+            QVERIFY(publish(cache, representation("first"), 1));
+            QVERIFY(publish(cache, representation("second"), 2));
+        }
+        const auto pid = fork(); QVERIFY(pid >= 0);
+        if (!pid) {
+            CacheStore cache(path, std::nullopt, [](const QString &step) { if (step == "committed") _exit(77); });
+            cache.configure(1000000, 0); cache.prune(false); _exit(78);
+        }
+        int status = 0; QCOMPARE(waitpid(pid, &status, 0), pid);
+        QVERIFY(WIFEXITED(status)); QCOMPARE(WEXITSTATUS(status), 77);
+        // Between commit and public-pointer replacement a new episode may have
+        // frozen the old public generation after the crashed owner lost its lock.
+        auto old = std::make_unique<ContentSnapshot>(path); QVERIFY(old->valid()); QCOMPARE(old->entries().size(), 2);
+        const auto victim = path + "/objects/" + representation("first").key + ".media";
+        CacheStore recovered(path); QVERIFY(recovered.valid()); recovered.configure(1000000, 0);
+        QCOMPARE(recovered.entries().size(), 1);
+        QVERIFY(recovered.prune(false).value("protected").toBool());
+        QVERIFY(!recovered.canWrite(1)); QVERIFY(QFileInfo::exists(victim));
+        auto next = std::make_unique<ContentSnapshot>(path); QVERIFY(next->valid()); QCOMPARE(next->entries().size(), 1);
+        old.reset();
+        // The new episode pins only the new inventory, but the shared lock
+        // deliberately conservatively protects every reader until all release.
+        QVERIFY(recovered.prune(false).value("protected").toBool());
+        next.reset();
+        QVERIFY(!recovered.prune(false).value("protected").toBool());
+        QVERIFY(!QFileInfo::exists(victim)); QVERIFY(!QFileInfo::exists(path + "/pending.json"));
+        QVERIFY(recovered.canWrite(1));
+    }
+
+    void reconciliationOwnership()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto path = root.path() + "/cache";
+        CacheStore cache(path); QVERIFY(cache.valid()); cache.configure(1000000, 0);
+        QVERIFY(publish(cache, representation("first"), 1));
+        auto reader = std::make_unique<ContentSnapshot>(path); QVERIFY(reader->valid()); const auto frozen = reader->generation();
+        QVERIFY(publish(cache, representation("second"), 2));
+        const auto live = representation("live").key, stale = representation("stale").key;
+        const auto manifest = "manifests/" + live + ".json";
+        QVERIFY(cache.files().replace(manifest, "live manifest"));
+        QVERIFY(cache.files().replace("manifests/" + stale + ".json", "stale manifest"));
+        QVERIFY(cache.files().replace("partials/" + live + ".part", "live partial"));
+        QVERIFY(cache.files().replace("partials/" + live + ".json", "live resume"));
+        QVERIFY(cache.files().replace("partials/" + stale + ".part", "stale partial"));
+        QVERIFY(cache.files().replace("partials/" + stale + ".json", "stale resume"));
+        QVERIFY(cache.files().replace("manifests/.write-0123456789abcdef0123456789abcdef", "interrupted atomic write"));
+        QVERIFY(cache.files().replace("manifests/personal.json", "not a managed name"));
+        const auto before = cache.usage().bytes;
+        QVERIFY(cache.reconcile({manifest}, {live})); QVERIFY(cache.usage().bytes < before);
+        QVERIFY(QFileInfo::exists(path + "/generations/" + frozen + ".json"));
+        QVERIFY(!QFileInfo::exists(path + "/partials/" + stale + ".part"));
+        QVERIFY(!QFileInfo::exists(path + "/partials/" + stale + ".json"));
+        QVERIFY(!QFileInfo::exists(path + "/manifests/" + stale + ".json"));
+        QCOMPARE(cache.files().read(manifest, 100), "live manifest");
+        QCOMPARE(cache.files().read("partials/" + live + ".part", 100), "live partial");
+        QCOMPARE(cache.files().read("partials/" + live + ".json", 100), "live resume");
+        QCOMPARE(cache.files().read("manifests/personal.json", 100), "not a managed name");
+        reader.reset(); QVERIFY(cache.reconcile({manifest}, {live}));
+        QVERIFY(!QFileInfo::exists(path + "/generations/" + frozen + ".json"));
+        // Replacing a managed path with a hard link never makes the external
+        // file disposable, and O_TRUNC must not damage its bytes either.
+        const auto outside = root.path() + "/personal";
+        QFile file(outside); QVERIFY(file.open(QIODevice::WriteOnly)); QCOMPARE(file.write("personal bytes"), 14); file.close();
+        const auto linked = path + "/partials/" + stale + ".part";
+        QCOMPARE(::link(QFile::encodeName(outside), QFile::encodeName(linked)), 0);
+        QVERIFY(!cache.reconcile({manifest}, {live}));
+        QCOMPARE(cache.openPartial(stale, true), -1);
+        QVERIFY(QFileInfo::exists(linked)); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), "personal bytes");
     }
 
     void plannerDurability()
