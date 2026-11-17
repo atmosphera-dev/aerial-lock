@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Qt.labs.folderlistmodel
+import AerialLock.Native
 import "ThemeSelection.js" as ThemeSelection
 
 // Playlist resolution for the lock background (d36/d40). Walks config
@@ -46,6 +47,15 @@ Scope {
     readonly property var sources: config.data.sources || []
     readonly property var vidFilters: ["*.mp4", "*.mkv", "*.webm", "*.mov"]
 
+    LocalContent { id: managed }
+
+    readonly property string stateBase: {
+        var xdg = Quickshell.env("XDG_STATE_HOME")
+        if (xdg && xdg.length > 0) return xdg + "/aerial-lock"
+        var home = Quickshell.env("HOME")
+        return home ? home + "/.local/state/aerial-lock" : ""
+    }
+
     // Parsed manifests per remote source (safeName → parsed entries.json),
     // filled by nonblocking reads. lookup() reads this at runtime.
     property var _manifests: ({})
@@ -72,6 +82,7 @@ Scope {
         if (_begun)
             return
         _begun = true
+        managed.freeze(cacheBase + "/managed-v1", stateBase, sources)
         deadline.start()
         checkAllDone()
     }
@@ -106,6 +117,13 @@ Scope {
         var inventory = []
         for (var i = 0; i < inv.count; i++) {
             var o = inv.objectAt(i)
+            var source = sources[i]
+            var complete = managed.forSource(source.id || "")
+            var managedIds = ({})
+            for (var n = 0; n < complete.length; n++) {
+                inventory.push(complete[n])
+                managedIds[complete[n].assetId] = true
+            }
             // qmllint disable missing-property
             // objectAt() is typed QObject; the delegates carry done/clips/
             // srcName — dynamic by design.
@@ -116,8 +134,10 @@ Scope {
                     Logger.w("SourceCache", "source \"" + o.srcName + "\" did not resolve in time; no clips from it this lock")
                 continue
             }
-            for (var j = 0; j < o.clips.length; j++)
-                inventory.push(o.clips[j])
+            for (var j = 0; j < o.clips.length; j++) {
+                if (!managedIds[o.clips[j]._stem])
+                    inventory.push(o.clips[j])
+            }
             // qmllint enable missing-property
         }
         var sel = ThemeSelection.selectPlaylist(inventory, root.topics)
@@ -317,6 +337,9 @@ Scope {
     function lookup(path) {
         if (!path || path.length === 0)
             return null
+        var managedInfo = managed.lookup(path)
+        if (managedInfo.assetKey)
+            return managedInfo
         var base = path.split("/").pop()
         var id = base.replace(/\.[^.]+$/, "")
         for (var i = 0; i < sources.length; i++) {
@@ -354,5 +377,9 @@ Scope {
             }
         }
         return null
+    }
+
+    function reportPlayback(path) {
+        managed.reportPlayback(path)
     }
 }

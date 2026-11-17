@@ -41,7 +41,9 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         "aerial-idle-main.o", "aerial-idle-proto.o", "connection-guard.o", "surface-input.o",
         "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o",
         "local-config.o", "config-document.o", "config-repository.o",
+        "local-content.o", "owned-directory.o", "content-snapshot.o",
         "companion-main.o", "companion-service.o", "companion_adaptor.o",
+        "media-probe.o",
         "emergency-main.o", "emergency-wayland.o", "emergency-render.o", "emergency-input.o", "emergency-proto.o"
     }, objects
     before = [p.stat().st_mtime_ns for p in objects]
