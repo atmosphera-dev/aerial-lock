@@ -159,6 +159,24 @@ the cap below existing usage, retaining the last verified fallback. Such
 reclamation atomically publishes a smaller index before removing media; its
 temporary bookkeeping and any remaining overage stay included in reported usage.
 
+The cache writer journals publication/reclamation before renaming or unlinking
+media. Its durable committed inventory repairs a damaged public pointer or
+generation without treating arbitrary media filenames as completed content.
+`companion-cache` exits child writers at ten actual transaction boundaries and
+checks restart recovery through `ContentSnapshot`. It also covers a reader that
+pins an old generation after a writer crash, safe stale-manifest/partial cleanup,
+and hard-link refusal without changing the linked personal file.
+
+`companion-disk-probe <fixture-mount>` is a separate VM-only acceptance target,
+not a portable CTest: pass an empty dedicated loop-mounted ext4 filesystem of at
+most 32 MiB, owned by the guest test user, never the normal workspace filesystem.
+It fills that filesystem between the production space check and kernel write.
+Three actual ENOSPC writes exercise append, precommit publication and public
+pointer publication. It requires unchanged prior bytes, a retained resumable
+partial, and the repaired completed inventory observed by `ContentSnapshot`.
+Unmount the fixture after the command and retain its JSON result. This fixture
+size bounds the test's disk filling; it is not a product cache limit.
+
 `companion-queue` launches the real headless binary on a private session bus and
 uses a loopback HTTP fixture. It observes decoded completed media in the local
 index, first-smallest order, restart without media re-fetch, explicit empty

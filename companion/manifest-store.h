@@ -15,10 +15,10 @@ public:
     QList<Representation> result() const { return items; }
     QString error() const { return failure; }
     HttpResult response() const { return lastResponse; }
+    QString path(const QJsonObject &source) const;
 signals:
     void finished();
 private:
-    QString path(const QJsonObject &source) const;
     void fetch(const QUrl &url);
     void settle(const QString &error);
     CacheStore &cache;

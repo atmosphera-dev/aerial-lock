@@ -124,6 +124,7 @@ void TransferQueue::evaluate()
     if (!transfer && usage.safe && usage.bytes > quint64(limits.value("maxBytes").toInteger())) {
         const auto maintenance = cache.prune(false, {}, usage.bytes - quint64(limits.value("maxBytes").toInteger()));
         if (maintenance.value("removedBytes").toInteger() > 0) emit contentChanged();
+        if (maintenance.contains("error")) { publishState("error", maintenance.value("error").toString()); return; }
     }
     armCheck();
     ensure(topics); schedule(); emit changed();
@@ -190,9 +191,10 @@ void TransferQueue::pump()
     sources.clear(); catalogue.clear(); attempted.clear(); available.clear(); sourceIndex = 0;
     if (current.value("kind") == "prune") {
         const auto result = cache.prune(current.value("dryRun").toBool());
-        current["prune"] = result; emit contentChanged(); finish(); return;
+        current["prune"] = result; emit contentChanged(); finish(result.value("error").toString()); return;
     }
     if (!doc.acquisitionAllowed()) { finish("InvalidConfig"); return; }
+    if (!reconcile()) { finish("StorageError"); return; }
     if (current.value("kind") == "automatic" && !automaticReason().isEmpty()) { finish(automaticReason()); return; }
     if (doc.effective.value("cache").toObject().value("maxBytes").toInteger() == 0) { finish("CacheFull"); return; }
     const auto requested = ids(current);
@@ -258,19 +260,26 @@ QList<Representation> TransferQueue::selected() const
     return result;
 }
 
-void TransferQueue::sizeCandidates()
+bool TransferQueue::reconcile()
 {
-    QSet<QString> known, completed;
+    QSet<QString> known, completed, manifests, representations;
     // Reconcile against the complete configured catalogue, not just this job's
     // selected sources; a manual request must not erase another source's retry.
     ManifestStore inventory(cache, transport, appleRoot);
     for (const auto &value : config.document().effective.value("sources").toArray()) {
         const auto source = value.toObject(); known.insert(manifestKey(source));
-        for (const auto &rep : inventory.cached(source)) known.insert(rep.key);
+        if (source.value("type") != "apple" && source.value("type") != "community") continue;
+        manifests.insert(inventory.path(source));
+        for (const auto &rep : inventory.cached(source)) { known.insert(rep.key); representations.insert(rep.key); }
     }
-    for (const auto &rep : catalogue) known.insert(rep.key);
+    for (const auto &rep : catalogue) { known.insert(rep.key); representations.insert(rep.key); }
     for (const auto &entry : cache.entries()) completed.insert(entry.toObject().value("key").toString());
-    if (!state.reconcile(known, completed)) { finish("StorageError"); return; }
+    return state.reconcile(known, completed) && cache.reconcile(manifests, representations);
+}
+
+void TransferQueue::sizeCandidates()
+{
+    if (!reconcile()) { finish("StorageError"); return; }
     sizer = new RepresentationSizer(transport, appleRoot, this);
     auto candidates = selected();
     // Completed representations need neither HEAD traffic nor transfer work.

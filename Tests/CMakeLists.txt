@@ -144,9 +144,16 @@ target_include_directories(companion-content-probe PRIVATE "${CMAKE_CURRENT_BINA
 target_compile_definitions(companion-content-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-content-probe PRIVATE Qt6::Core Qt6::Test PkgConfig::ARCHIVE)
 add_test(NAME companion-provider COMMAND companion-content-probe resolver selectedTarMember)
-add_test(NAME companion-cache COMMAND companion-content-probe cacheAccountingAndOwnership loweredCapReclamation)
+add_test(NAME companion-cache COMMAND companion-content-probe cacheAccountingAndOwnership loweredCapReclamation corruptPointerRecovery crashTransactions reconciliationOwnership recoveryReaderProtection)
 add_test(NAME companion-snapshot COMMAND companion-content-probe snapshotPinningAndRestart nonblockingAndCorruption nativeEpisodeGeneration)
 add_test(NAME companion-planner COMMAND companion-content-probe plannerDurability plannerSelectionAndCadence)
+# Explicit VM acceptance only: needs a dedicated small loop-mounted filesystem.
+# It must not fill the caller's normal workspace or the CI container filesystem.
+add_executable(companion-disk-probe companion-disk-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
+    "${AERIAL_LOCK_SOURCE}/companion/cache-store.cpp" "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp")
+target_link_libraries(companion-disk-probe PRIVATE Qt6::Core PkgConfig::ARCHIVE)
+target_link_options(companion-disk-probe PRIVATE "-Wl,--wrap=write")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/local-content.h" -o "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/native/local-content.h")
