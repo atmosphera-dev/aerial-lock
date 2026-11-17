@@ -6,6 +6,9 @@
 #include <QCoreApplication>
 #include <QDBusVirtualObject>
 #include <QDBusMetaType>
+#include <QDBusConnectionInterface>
+#include <QDBusReply>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QProcess>
@@ -179,6 +182,17 @@ public:
         return QJsonDocument(QJsonObject{{"assets", entries}}).toJson();
     }
     static bool ended(TransferQueue &queue, const QString &job) { return queue.job(job).contains("finishedAt"); }
+    struct CommandResult { int code; QByteArray out, error; };
+    CommandResult cli(const QProcessEnvironment &environment, const QStringList &arguments)
+    {
+        QProcess process; process.setProcessEnvironment(environment);
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", arguments);
+        if (!process.waitForStarted(5000)) qFatal("CLI failed to start");
+        QElapsedTimer timer; timer.start();
+        while (process.state() != QProcess::NotRunning && timer.elapsed() < 20000) QTest::qWait(10);
+        if (process.state() != QProcess::NotRunning) qFatal("CLI did not finish: %s", qPrintable(arguments.join(' ')));
+        return {process.exitCode(), process.readAllStandardOutput(), process.readAllStandardError()};
+    }
 private slots:
     void initTestCase()
     {
@@ -498,6 +512,164 @@ private slots:
         for (const auto *kind : {"ethernet", "wifi", "cellular", "bluetooth", "vpn", "other", "unknown",
                  "ac", "battery", "power-unknown", "metered", "offline", "enabled", "resolution"})
             QTest::newRow(kind) << QString::fromLatin1(kind);
+    }
+    void serviceCliPolicy_data() { policyQueue_data(); }
+    void serviceCliTransactions()
+    {
+        PolicyPeer peer; QTemporaryDir directory; HttpFixture server; server.media = media;
+        // Manifest order and preferred quality differ from the automatic ceiling.
+        server.bodies["/fixture.json"] = QJsonDocument(QJsonObject{{"assets", QJsonArray{
+            QJsonObject{{"id", "one"}, {"url-1080-H264", "one1080.mp4"}, {"url-4K-SDR", "one2160.mp4"}},
+            QJsonObject{{"id", "two"}, {"url-1080-H264", "two.mp4"}}}}}).toJson();
+        auto selectedSource = source(server); selectedSource["maxResolution"] = 1080;
+        // Token-bearing settings may be inspected explicitly, never in status.
+        selectedSource["source"] = server.url("/fixture.json?token=private-token").toString();
+        server.bodies["/fixture.json?token=private-token"] = server.bodies["/fixture.json"];
+        server.bodies["/two.mp4"] = media + QByteArray(5000, '\0');
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("AERIAL_LOCK_SHELL", QStringLiteral(AERIAL_TEST_SOURCE));
+        environment.insert("DBUS_SYSTEM_BUS_ADDRESS", qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS"));
+        for (const auto *key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"}) environment.insert(key, directory.path() + '/' + key);
+        OwnedDirectory config(environment.value("XDG_CONFIG_HOME") + "/aerial-lock", true);
+        QVERIFY(config.replace("config.json", QJsonDocument(QJsonObject{{"sources", QJsonArray{selectedSource}},
+            {"cache", QJsonObject{{"maxBytes", 1000000}}}, {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson()));
+        QProcess process; process.setProcessEnvironment(environment);
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
+        struct Retire { QProcess &p; ~Retire() { if (p.state() != QProcess::NotRunning) { p.terminate(); if (!p.waitForFinished(5000)) { p.kill(); p.waitForFinished(5000); } } } } retire{process};
+        auto bus = QDBusConnection::sessionBus();
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        auto result = cli(environment, {"config", "show", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("private-token"));
+        result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0); QVERIFY(!result.out.contains("private-token"));
+        QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "-1"}).code, 1);
+        QCOMPARE(cli(environment, {"config", "set", "language", "\"fr\""}).code, 0);
+        QCOMPARE(cli(environment, {"config", "reset", "language"}).code, 0);
+        result = cli(environment, {"config", "show", "--json"}); QVERIFY(!QJsonDocument::fromJson(result.out).object().contains("language"));
+        auto mismatch = environment; mismatch.insert("XDG_STATE_HOME", directory.path() + "/different-state");
+        QCOMPARE(cli(mismatch, {"config", "set", "language", "\"de\""}).code, 1);
+        QCOMPARE(cli(environment, {"fetch", "--limit", "-1"}).code, 2);
+        QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "not-json"}).code, 2);
+
+        // Kill a waiting client while the service owns a resumable partial.
+        server.modes["/one1080.mp4"] = "hold-partial";
+        QProcess caller; caller.setProcessEnvironment(environment);
+        caller.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", {"fetch", "--limit", "1", "--wait"});
+        QVERIFY(caller.waitForStarted(5000));
+        const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
+        QTRY_VERIFY_WITH_TIMEOUT(!QDir(cache + "/partials").entryList({"*.part"}, QDir::Files).isEmpty(), 10000);
+        QTest::qWait(50); caller.terminate(); QVERIFY(caller.waitForFinished(5000));
+        result = cli(environment, {"jobs", "--json"}); QCOMPARE(result.code, 0);
+        QString active;
+        for (const auto &row : QJsonDocument::fromJson(result.out).array())
+            if (row.toObject().value("State") == "downloading") active = row.toObject().value("path").toString();
+        QVERIFY(!active.isEmpty()); QCOMPARE(process.state(), QProcess::Running);
+        QCOMPARE(cli(environment, {"cancel", active}).code, 0);
+        result = cli(environment, {"jobs", "--json"}); QVERIFY(result.out.contains("cancelled"));
+        const auto partials = QDir(cache + "/partials").entryList({"*.part"}, QDir::Files); QVERIFY(!partials.isEmpty());
+        QFile partial(cache + "/partials/" + partials.first()); QVERIFY(partial.open(QIODevice::ReadOnly)); QCOMPARE(partial.readAll(), media.left(media.size() / 2)); partial.close();
+        server.modes.remove("/one1080.mp4");
+        result = cli(environment, {"content", "fetch", "--limit", "1", "--wait", "--json"}); QCOMPARE(result.code, 0);
+        QVERIFY(!result.out.contains("private-token")); QCOMPARE(ContentSnapshot(cache).entries().size(), 1);
+        for (const auto &request : server.requests) QVERIFY(!request.startsWith("GET /one2160.mp4"));
+        // Remove the explicit source band: manual fetch bypasses automatic1080.
+        selectedSource.remove("maxResolution");
+        QCOMPARE(cli(environment, {"config", "set", "sources", QString::fromUtf8(QJsonDocument(QJsonArray{selectedSource}).toJson(QJsonDocument::Compact))}).code, 0);
+        result = cli(environment, {"fetch", "--limit", "1", "--wait", "--json"}); QCOMPARE(result.code, 0);
+        bool higher = false; for (const auto &request : server.requests) higher |= request.startsWith("GET /one2160.mp4"); QVERIFY(higher);
+        result = cli(environment, {"content", "refresh", "fixture", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("accepted"));
+        result = cli(environment, {"cache", "prune", "--dry-run", "--json"}); QCOMPARE(result.code, 0);
+        result = cli(environment, {"jobs", "--watch", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("prune"));
+        QVERIFY(result.out.contains("removedBytes")); // Nested a{sv} details survive JSON output.
+        QCOMPARE(cli(environment, {"config", "set", "sources", "[]"}).code, 0);
+        QCOMPARE(cli(environment, {"fetch", "--wait"}).code, 1);
+        result = cli(environment, {"status", "--json"}); QCOMPARE(QJsonDocument::fromJson(result.out).object().value("ReadyClips").toInt(), 0);
+        QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "0"}).code, 0);
+        QCOMPARE(cli(environment, {"fetch", "--wait"}).code, 1);
+        process.terminate(); QVERIFY(process.waitForFinished(5000));
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0);
+        QVERIFY(QJsonDocument::fromJson(result.out).object().value("ManagedBytes").toInteger() > 0);
+        QVERIFY(!process.readAllStandardError().contains("private-token"));
+    }
+    void serviceCliPolicy()
+    {
+        QFETCH(QString, kind);
+        PolicyPeer peer;
+        const QMap<QString, QString> types{{"ethernet", "802-3-ethernet"}, {"wifi", "802-11-wireless"},
+            {"cellular", "gsm"}, {"bluetooth", "bluetooth"}, {"vpn", "vpn"}, {"other", "bridge"}, {"unknown", ""}};
+        if (types.contains(kind)) peer.data[peer.primary]["Type"] = types.value(kind);
+        if (kind == "battery") peer.data[peer.power]["OnBattery"] = true;
+        if (kind == "power-unknown") peer.data[peer.power].clear();
+        if (kind == "metered") {
+            peer.data[peer.vpn] = {{"Type", "vpn"}, {"Vpn", true}, {"Default", true}, {"State", uint(2)}};
+            peer.data[peer.manager]["ActiveConnections"] = QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(peer.primary), QDBusObjectPath(peer.vpn)});
+            peer.data[peer.device]["Metered"] = uint(1);
+        }
+        if (kind == "offline") peer.data[peer.manager]["State"] = uint(20);
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto sources = QJsonArray{source(server)};
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("AERIAL_LOCK_SHELL", QStringLiteral(AERIAL_TEST_SOURCE));
+        environment.insert("DBUS_SYSTEM_BUS_ADDRESS", qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS"));
+        for (const auto *key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            environment.insert(key, directory.path() + '/' + key);
+        OwnedDirectory config(environment.value("XDG_CONFIG_HOME") + "/aerial-lock", true);
+        QVERIFY(config.replace("config.json", QJsonDocument(QJsonObject{{"sources", sources},
+            {"cache", QJsonObject{{"maxBytes", 1000000}}}, {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson()));
+        QProcess process; process.setProcessEnvironment(environment);
+        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion";
+        process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
+        struct Retire { QProcess &process; ~Retire() { if (process.state() != QProcess::NotRunning) { process.terminate(); if (!process.waitForFinished(5000)) { process.kill(); process.waitForFinished(5000); } } } } retire{process};
+        auto bus = QDBusConnection::sessionBus();
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        auto result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0);
+        QVERIFY2(result.error.isEmpty(), result.error.constData());
+        const auto initial = QJsonDocument::fromJson(result.out).object();
+        QCOMPARE(initial.value("Profile").toString().size(), 64);
+        QString setting, value = "false", allowed = "true";
+        if (types.contains(kind)) setting = "connectionTypes." + kind;
+        else if (kind == "ac" || kind == "battery" || kind == "power-unknown") setting = "power." + (kind == "power-unknown" ? QString("unknown") : kind);
+        else if (kind == "metered") setting = "allowMetered";
+        else if (kind == "enabled") setting = "enabled";
+        else if (kind == "resolution") { setting = "allowedResolutions"; value = "[]"; allowed = "[1080]"; }
+        const auto set = [&](const QString &key, const QString &value) { return cli(environment, {"config", "set", "acquisition.automatic." + key, value}); };
+        if (!setting.isEmpty()) QCOMPARE(set(setting, value).code, 0);
+        if (kind != "enabled") QCOMPARE(set("enabled", "true").code, 0);
+        QTest::qWait(100);
+        QCOMPARE(cli(environment, {"content", "ensure"}).code, 3);
+        QVERIFY(server.requests.isEmpty());
+        // The manual CLI bypasses every automatic predicate, not hard bands or
+        // integrity. Its terminal result is the actual decoded local object.
+        result = cli(environment, {"fetch", "fixture", "--limit", "1", "--wait", "--json"});
+        QCOMPARE(result.code, 0); QVERIFY2(result.error.isEmpty(), result.error.constData());
+        const auto receipt = QJsonDocument::fromJson(result.out).object();
+        QCOMPARE(receipt.value("ReadyClips").toInt(), 1); QCOMPARE(receipt.value("State").toString(), "succeeded");
+        const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
+        { ContentSnapshot snapshot(cache); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 1);
+            const auto entry = snapshot.entries()[0].toObject();
+            QVERIFY(entry.value("probe").toObject().value("initialFrameDecoded").toBool());
+            QFile file(entry.value("path").toString()); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), media); }
+        if (kind == "offline") peer.update(peer.manager, {{"State", uint(70)}});
+        else QCOMPARE(set(setting, allowed).code, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(ContentSnapshot(cache).entries().size(), 2, 20000);
+        result = cli(environment, {"cache", "status", "--json"}); QCOMPARE(result.code, 0);
+        const auto status = QJsonDocument::fromJson(result.out).object();
+        QCOMPARE(status.value("ReadyClips").toInt(), 2); QVERIFY(status.value("ManagedBytes").toInteger() > media.size() * 2);
+        // A new service exports terminal objects from the durable job store.
+        process.terminate(); QVERIFY(process.waitForFinished(5000));
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        result = cli(environment, {"jobs", "--json"}); QCOMPARE(result.code, 0);
+        bool retained = false;
+        for (const auto &row : QJsonDocument::fromJson(result.out).array()) {
+            const auto job = row.toObject();
+            if (job.value("Kind") == "manual" && job.value("State") == "succeeded") retained = true;
+        }
+        QVERIFY(retained);
+        for (const auto &call : peer.calls) QCOMPARE(call, "org.freedesktop.DBus.Properties.GetAll");
     }
     void policyQueue()
     {
