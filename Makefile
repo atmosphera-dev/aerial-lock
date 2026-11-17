@@ -34,7 +34,8 @@ CONFIG_OBJS := $(OBJDIR)/config-document.o
 CONTENT_OBJS := $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(OBJDIR)/source-resolver.o $(OBJDIR)/cache-store.o
 PROBE_OBJS := $(OBJDIR)/media-probe.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o $(CONFIG_OBJS)
-COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/companion-service.o $(OBJDIR)/companion_adaptor.o $(CONFIG_OBJS)
+COMPANION_CONTENT_OBJS := $(CONTENT_OBJS) $(OBJDIR)/http-operation.o $(OBJDIR)/manifest-store.o $(OBJDIR)/local-probe.o $(OBJDIR)/transfer.o $(OBJDIR)/planner-state.o $(OBJDIR)/acquisition-planner.o $(OBJDIR)/transfer-queue.o
+COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/companion-service.o $(OBJDIR)/companion_adaptor.o $(CONFIG_OBJS) $(COMPANION_CONTENT_OBJS)
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
 INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(OBJDIR)/local-content.o $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(CONFIG_OBJS)
@@ -263,11 +264,25 @@ $(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
 $(OBJDIR)/companion_adaptor.o: $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp companion/service.h
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
 
-$(OBJDIR)/companion-main.o: companion/main.cpp companion/config-repository.h companion/service.h common/config-document.h native/shell-dir.h
-	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
+$(OBJDIR)/companion-main.o: companion/main.cpp companion/config-repository.h companion/service.h companion/transfer-queue.h common/config-document.h native/shell-dir.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -DAERIAL_COMPANION_PROBE='"$(LIBEXECDIR)/aerial-media-probe"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus Qt6Network) -o $@
 
 companion/aerial-companion: $(COMPANION_OBJS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(COMPANION_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(COMPANION_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus Qt6Network libarchive)
+
+$(OBJDIR)/%.moc: companion/%.h | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/http-operation.o: companion/http-operation.cpp companion/http-operation.h companion/source-resolver.h $(OBJDIR)/http-operation.moc
+$(OBJDIR)/manifest-store.o: companion/manifest-store.cpp companion/manifest-store.h companion/cache-store.h $(OBJDIR)/manifest-store.moc
+$(OBJDIR)/local-probe.o: companion/local-probe.cpp companion/local-probe.h $(OBJDIR)/local-probe.moc
+$(OBJDIR)/transfer.o: companion/transfer.cpp companion/transfer.h companion/cache-store.h companion/http-operation.h $(OBJDIR)/transfer.moc
+$(OBJDIR)/planner-state.o: companion/planner-state.cpp companion/planner-state.h common/owned-directory.h
+$(OBJDIR)/acquisition-planner.o: companion/acquisition-planner.cpp companion/acquisition-planner.h companion/planner-state.h companion/source-resolver.h
+$(OBJDIR)/transfer-queue.o: companion/transfer-queue.cpp companion/transfer-queue.h companion/config-repository.h companion/acquisition-planner.h companion/manifest-store.h companion/transfer.h $(OBJDIR)/transfer-queue.moc
+
+$(filter-out $(CONTENT_OBJS),$(COMPANION_CONTENT_OBJS)):
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c companion/$(notdir $(@:.o=.cpp)) $$(pkg-config --cflags Qt6Core Qt6Network) -o $@
 
 $(OBJDIR)/owned-directory.o: common/owned-directory.cpp common/owned-directory.h
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Core) -o $@
@@ -403,6 +418,7 @@ clean:
 	rm -f companion/aerial-companion $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
 	rm -f $(OBJDIR)/local-content.o $(OBJDIR)/local-content.moc
+	rm -f $(addprefix $(OBJDIR)/,http-operation.moc manifest-store.moc local-probe.moc transfer.moc transfer-queue.moc)
 	@rmdir $(OBJDIR) 2>/dev/null || true
 
 dev: DEBUG_DISMISS=1

@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QRegularExpression>
+#include <QTimer>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -37,6 +38,7 @@ Transfer::~Transfer()
     if (http) { disconnect(http, nullptr, this, nullptr); delete http; }
     if (worker) { disconnect(worker, nullptr, this, nullptr); delete worker; }
     if (file >= 0) close(file);
+    if (hashInput >= 0) close(hashInput);
     cache.releaseReservation();
 }
 
@@ -60,6 +62,30 @@ void Transfer::start()
         offset = 0; expected = rep.bytes; validator.clear();
     }
     resumeOffset = offset;
+    if (!rep.checksum.isEmpty() && offset > 0) {
+        hashInput = cache.openForProbe(rep.key);
+        if (hashInput < 0) { finish("StorageError"); return; }
+        hashPartial(); return;
+    }
+    request();
+}
+
+void Transfer::hashPartial()
+{
+    if (terminal) return;
+    // Resume hashing yields after every disk chunk. Fresh bytes are hashed as
+    // they arrive; publication never synchronously rescans a multi-GB clip on
+    // the service thread, so cancellation/config/API dispatch stay responsive.
+    QByteArray bytes(std::min<qint64>(65536, offset - hashed), Qt::Uninitialized);
+    const auto count = ::read(hashInput, bytes.data(), bytes.size());
+    if (count <= 0) { finish("StorageError"); return; }
+    bytes.resize(count); checksum.addData(bytes); hashed += count;
+    if (hashed == offset) { close(hashInput); hashInput = -1; request(); }
+    else QTimer::singleShot(0, this, &Transfer::hashPartial);
+}
+
+void Transfer::request()
+{
     HttpRequest query; query.url = rep.url;
     if (resumeOffset > 0) {
         query.headers["Range"] = "bytes=" + QByteArray::number(resumeOffset) + '-';
@@ -80,12 +106,7 @@ void Transfer::start()
         if (expected >= 0 && offset != expected) { persist(); finish("LengthMismatch"); return; }
         if (offset <= 0 || fsync(file)) { finish("StorageError"); return; }
         if (!rep.checksum.isEmpty()) {
-            const int input = cache.openForProbe(rep.key);
-            QFile local;
-            if (input < 0) { finish("StorageError"); return; }
-            if (!local.open(input, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { close(input); finish("StorageError"); return; }
-            QCryptographicHash hash(QCryptographicHash::Sha256);
-            if (!hash.addData(&local) || hash.result().toHex() != rep.checksum) { cache.discardPartial(rep.key); finish("ChecksumMismatch"); return; }
+            if (checksum.result().toHex() != rep.checksum) { cache.discardPartial(rep.key); finish("ChecksumMismatch"); return; }
         }
         probe();
     });
@@ -117,6 +138,7 @@ QString Transfer::headers(const HttpResult &response)
     } else {
         if (resumeOffset > 0 && (ftruncate(file, 0) || lseek(file, 0, SEEK_SET) < 0)) return "StorageError";
         offset = 0; resumeOffset = 0;
+        checksum.reset();
         if (rep.bytes >= 0 && declared >= 0 && rep.bytes != declared) return "LengthMismatch";
         expected = rep.bytes >= 0 ? rep.bytes : declared;
         validator = newValidator;
@@ -135,6 +157,7 @@ QString Transfer::chunk(const QByteArray &bytes)
         return "CacheFull";
     }
     offset += bytes.size();
+    if (!rep.checksum.isEmpty()) checksum.addData(bytes);
     if (!persist()) return "CacheFull";
     emit progress();
     return {};
@@ -178,6 +201,7 @@ void Transfer::finish(const QString &error)
     terminal = true;
     failure = error;
     if (file >= 0) { close(file); file = -1; }
+    if (hashInput >= 0) { close(hashInput); hashInput = -1; }
     cache.releaseReservation();
     emit finished();
 }

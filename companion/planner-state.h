@@ -28,6 +28,13 @@ public:
     bool recordPlayback(const QString &key, qint64 timestamp);
     qint64 playedAt(const QString &key) const;
     bool reconcile(const QSet<QString> &catalogue, const QSet<QString> &complete);
+    QJsonObject jobs() const { return document.value("jobs").toObject(); }
+    bool saveJob(const QString &key, const QJsonObject &job);
+    QJsonObject rotation() const { return document.value("rotation").toObject(); }
+    bool beginRotation(const QString &victim, const QString &replacement);
+    bool finishRotation();
+    bool clearRotation();
+    bool reintroduced(const QString &key);
 private:
     bool save(const QJsonObject &next);
     OwnedDirectory directory;

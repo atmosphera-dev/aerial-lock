@@ -103,6 +103,10 @@ private slots:
         QTemporaryDir root; QVERIFY(root.isValid());
         CacheStore cache(root.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(16384, 0);
         CacheStore duplicate(root.path() + "/cache"); QVERIFY(!duplicate.valid());
+        for (const auto cap : {quint64(0), quint64(1)}) {
+            CacheStore tiny(root.path() + "/tiny-" + QString::number(cap), cap);
+            QVERIFY(!tiny.valid()); QCOMPARE(tiny.usage().bytes, quint64(0));
+        }
         QVERIFY(publish(cache, representation("first"), 1));
         const auto usage = cache.usage(); QVERIFY(usage.safe); QVERIFY(usage.bytes >= 4096); QCOMPARE(usage.reserved, quint64(0));
         const auto capacity = quint64(16384) - usage.bytes;
@@ -167,6 +171,24 @@ private slots:
         ContentSnapshot corrupt(cache.path()); QVERIFY(!corrupt.valid()); QVERIFY(corrupt.entries().isEmpty());
         QVERIFY(!cache.files().replace("../escape", "bad"));
         QVERIFY(!cache.files().replace("/absolute", "bad"));
+    }
+
+    void loweredCapReclamation()
+    {
+        QTemporaryDir root; CacheStore cache(root.path() + "/cache"); cache.configure(1000000, 0);
+        QVERIFY(publish(cache, representation("first"), 1));
+        QVERIFY(publish(cache, representation("second"), 2));
+        auto reader = std::make_unique<ContentSnapshot>(cache.path()); QVERIFY(reader->valid());
+        const auto original = cache.usage().bytes;
+        cache.configure(0, 0);
+        QVERIFY(cache.prune(false).value("protected").toBool()); QCOMPARE(cache.usage().bytes, original);
+        QVERIFY(!cache.canWrite(1));
+        reader.reset();
+        QCOMPARE(cache.prune(false).value("removedBytes").toInteger(), 4096);
+        QCOMPARE(cache.entries().size(), 1); QVERIFY(cache.usage().bytes < original);
+        QVERIFY(!cache.canWrite(1));
+        ContentSnapshot fallback(cache.path()); QVERIFY(fallback.valid());
+        QCOMPARE(fallback.entries()[0].toObject().value("assetId").toString(), "second");
     }
 
     void nativeEpisodeGeneration()

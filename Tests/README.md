@@ -149,6 +149,22 @@ production shared reader, repository and QML-constructed `LocalConfig` facade.
 `companion-api` uses generated bindings against the actual service on a private
 bus. Neither suite contacts remote content providers.
 
+`companion-transfer` exercises the actual serialized queue, HTTP transport,
+isolated decoder, persisted jobs/retries and injected weekly clock. It checks
+known-size-first acquisition, per-source manual limits, cancellation during
+resume hashing, policy pause/manual bypass, owner restart and reader-protected
+weekly replacement. `companion-cache` includes safe reclamation after lowering
+the cap below existing usage, retaining the last verified fallback. Such
+reclamation atomically publishes a smaller index before removing media; its
+temporary bookkeeping and any remaining overage stay included in reported usage.
+
+`companion-queue` launches the real headless binary on a private session bus and
+uses a loopback HTTP fixture. It observes decoded completed media in the local
+index, first-smallest order, restart without media re-fetch, explicit empty
+sources, and a zero-cap profile beginning acquisition after an external settings
+replacement. These fixtures do not establish installed activation, real system
+NetworkManager/UPower observations, next-lock rendered video or Apple acceptance.
+
 Inside the owned VM's Wayland session, after building the tests:
 
 ```sh

@@ -10,8 +10,9 @@
 #include <unistd.h>
 
 namespace Aerial {
-CacheStore::CacheStore(const QString &root) : directory(root, true)
+CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximum) : directory(root, true)
 {
+    if (initialMaximum) cap = *initialMaximum;
     if (!directory.valid()) return;
     bool safe = false;
     const auto present = directory.files(&safe);
@@ -19,7 +20,9 @@ CacheStore::CacheStore(const QString &root) : directory(root, true)
     const auto ownership = metadata("ownership.json");
     if (ownership.value("format").toString() != "aerial-lock-managed-v1") {
         // Do not silently adopt an existing directory containing user files.
-        if (!present.isEmpty() || !directory.replace("ownership.json", "{\"format\":\"aerial-lock-managed-v1\"}")) return;
+        const QByteArray marker("{\"format\":\"aerial-lock-managed-v1\"}");
+        if (!present.isEmpty() || (initialMaximum && quint64(marker.size()) > cap)
+            || !directory.replace("ownership.json", marker)) return;
     }
     writer = directory.open("owner.lock", O_RDWR | O_CREAT);
     if (writer < 0 || flock(writer, LOCK_EX | LOCK_NB)) return;
@@ -79,6 +82,22 @@ bool CacheStore::reserve(quint64 bytes)
     if (!canWrite(bytes)) { remaining = previous; return false; }
     remaining = bytes;
     return true;
+}
+
+bool CacheStore::canAcquire(const Representation &rep) const
+{
+    if (rep.bytes < 0) return canWrite(1);
+    struct stat partial{};
+    const auto received = directory.identity("partials/" + rep.key + ".part", partial) ? quint64(partial.st_size) : 0;
+    // Include the next immutable generation plus the bounded probe response,
+    // pointer and both copies of atomic resume metadata. These are publication
+    // headroom, not a second content quota. Received partial bytes count once.
+    const auto index = QJsonDocument(QJsonObject{{"version", 1}, {"entries", completed}}).toJson(QJsonDocument::Compact);
+    const auto metadata = QJsonDocument(rep.metadata).toJson(QJsonDocument::Compact);
+    const quint64 overhead = index.size() + metadata.size() + 4096
+        + 2 * (rep.url.toEncoded().size() + rep.sourceId.toUtf8().size() + rep.assetId.toUtf8().size() + 2048);
+    const auto remainingBytes = quint64(rep.bytes) - std::min(quint64(rep.bytes), received);
+    return remainingBytes <= std::numeric_limits<quint64>::max() - overhead && canWrite(remainingBytes + overhead);
 }
 
 bool CacheStore::writeMetadata(const QString &relative, const QJsonObject &object)
@@ -160,15 +179,24 @@ bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, q
     return true;
 }
 
-bool CacheStore::persistIndex()
+bool CacheStore::persistIndex(bool reclamation)
 {
     const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"entries", completed}}).toJson(QJsonDocument::Compact);
     const auto hash = contentDigest(bytes), relative = "generations/" + hash + ".json";
     struct stat st{};
     const bool existing = directory.identity(relative, st);
-    if (!existing && (!canWrite(bytes.size()) || !directory.replace(relative, bytes))) return false;
+    // A lowered cap can already be below pinned usage. Reclamation still needs
+    // an atomic, smaller index before unlinking data. Permit only that shrinking
+    // bookkeeping transaction under the caller's exclusive playback lock; no
+    // acquisition/growth path uses this allowance. Usage always reports all bytes.
+    const auto current = metadata("current.json").value("generation").toString();
+    const auto prior = contentKey(current) ? directory.read("generations/" + current + ".json", 8 * 1024 * 1024) : QByteArray{};
+    const bool shrinking = reclamation && bytes.size() < prior.size() && usage().safe;
+    const auto pointer = QJsonDocument(QJsonObject{{"version", 1}, {"generation", hash}}).toJson(QJsonDocument::Compact);
+    if (!existing && (!(canWrite(bytes.size()) || (shrinking && directory.available() >= freeReserve + bytes.size() + pointer.size()))
+        || !directory.replace(relative, bytes))) return false;
     if (existing && directory.read(relative, 8 * 1024 * 1024) != bytes) return false;
-    if (!writeMetadata("current.json", {{"version", 1}, {"generation", hash}})) {
+    if (!(shrinking ? directory.replace("current.json", pointer) : writeMetadata("current.json", {{"version", 1}, {"generation", hash}}))) {
         if (!existing) removeFile(relative);
         return false;
     }
@@ -208,7 +236,7 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
         if (!dryRun) {
             const auto old = completed;
             completed = candidates;
-            if (!persistIndex()) { completed = old; break; }
+            if (!persistIndex(true)) { completed = old; break; }
             if (!directory.remove(relative, st)) break;
         }
         removed += st.st_size;
@@ -226,5 +254,17 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
     close(lock);
     result["removedBytes"] = qint64(removed);
     return result;
+}
+
+bool CacheStore::evict(const QString &key)
+{
+    if (!contains(key)) return true;
+    QSet<QString> protectedKeys;
+    for (const auto &value : completed) {
+        const auto candidate = value.toObject().value("key").toString();
+        if (candidate != key) protectedKeys.insert(candidate);
+    }
+    const auto result = prune(false, protectedKeys, 1);
+    return !result.value("protected").toBool() && result.value("removedBytes").toInteger() > 0 && !contains(key);
 }
 }
