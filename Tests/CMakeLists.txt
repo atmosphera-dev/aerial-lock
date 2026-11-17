@@ -13,6 +13,10 @@ target_link_libraries(native-input-probe PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 
 enable_testing()
+add_executable(auth-client-probe auth-client-probe.c "${AERIAL_LOCK_SOURCE}/native/auth-client.c")
+set_property(TARGET auth-client-probe PROPERTY C_STANDARD 11)
+target_link_options(auth-client-probe PRIVATE "-Wl,--wrap=send")
+add_test(NAME auth-client COMMAND auth-client-probe "${CMAKE_CURRENT_SOURCE_DIR}/auth-fake-helper.py")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/power-actions.h" -o "${CMAKE_CURRENT_BINARY_DIR}/power-actions.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/native/power-actions.h")
@@ -44,6 +48,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/auth-context.h" -o "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/native/auth-context.h")
 add_executable(auth-context-probe auth-context-probe.cpp "${AERIAL_LOCK_SOURCE}/native/auth-context.cpp"
+    "${AERIAL_LOCK_SOURCE}/native/auth-client.c"
     "${CMAKE_CURRENT_BINARY_DIR}/auth-context.moc")
 target_include_directories(auth-context-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(auth-context-probe PRIVATE Qt6::Core Qt6::Test)

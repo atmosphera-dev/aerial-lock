@@ -5,6 +5,8 @@
 #include <QTimer>
 #include <QString>
 
+struct auth_client;
+
 // Owns only authentication transport/lifecycle. The Lock controller owns user
 // interaction, status projection and the inactivity watchdog.
 class AuthContext : public QObject {
@@ -24,7 +26,7 @@ public:
     // Native test seam, never configurable from QML or the environment.
     AuthContext(const QString &helper, QObject *parent);
     ~AuthContext() override;
-    bool active() const { return pid > 0; }
+    bool active() const { return client != nullptr; }
     QString message() const { return text; }
     bool messageIsError() const { return isError; }
     bool responseRequired() const { return required; }
@@ -48,14 +50,14 @@ private:
     void receive();
     void reap();
     void fail();
-    bool frame(const QByteArray &line);
     void reset();
+    void updateWriteNotifier();
     QString executable;
     QString text;
     bool isError = false, required = false, visible = false;
-    int pid = 0, fd = -1, terminal = -1;
+    auth_client *client = nullptr;
     quint64 generation = 0;
-    QByteArray input;
     QSocketNotifier *notifier = nullptr;
+    QSocketNotifier *writer = nullptr;
     QTimer timer;
 };

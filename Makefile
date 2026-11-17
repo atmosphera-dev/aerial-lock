@@ -31,7 +31,7 @@ SUPERVISOR_OBJS := $(OBJDIR)/aerial-supervisor-proto.o $(OBJDIR)/aerial-supervis
 GUARD_OBJS := $(OBJDIR)/connection-guard.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
-INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/power-actions.o
+INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o
 GUARD_PLUGIN := native/qt-plugins/generic/libAerialLockConnectionGuard.so
 INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
@@ -158,9 +158,12 @@ $(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h nativ
 native/auth-context.moc: native/auth-context.h
 	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Core) $< -o $@
 
-$(OBJDIR)/auth-context.o: native/auth-context.cpp native/auth-context.h native/auth-context.moc native/auth-protocol.h $(OBJDIR)/native-config
+$(OBJDIR)/auth-context.o: native/auth-context.cpp native/auth-context.h native/auth-context.moc native/auth-client.h native/auth-protocol.h $(OBJDIR)/native-config
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< \
 		-DAERIAL_LOCK_AUTH_HELPER='"$(AUTH_HELPER)"' $$(pkg-config --cflags Qt6Core) -o $@
+
+$(OBJDIR)/auth-client.o: native/auth-client.c native/auth-client.h native/auth-protocol.h $(OBJDIR)/native-config
+	$(CC) -std=c11 $(CPPFLAGS) $(CFLAGS) $(QT_PIC_FLAGS) -c $< -o $@
 
 $(OBJDIR)/aerial-lock-auth.o: native/aerial-lock-auth.c native/auth-protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

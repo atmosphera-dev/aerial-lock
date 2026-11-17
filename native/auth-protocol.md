@@ -1,6 +1,9 @@
 # Authentication boundary
 
 The existing native generic plugin registers `AerialLock.Native.AuthContext`.
+Its Qt adapter uses `native/auth-client.c`, the shared C transport/worker
+owner. The C layer returns events rather than calling consumer callbacks,
+so a Qt signal can synchronously abort, replace or destroy its owner safely.
 It owns one `posix_spawn`ed `/usr/libexec/aerial-lock/aerial-lock-auth` per
 conversation. PAM runs only after exec, in a single-threaded program linked to
 libpam, not Qt. The supervisor does not participate. No PAM module or libc work
@@ -38,12 +41,16 @@ decoding. PAM takes ownership of accepted response allocations and wipes them
 after delivery; failed conversations wipe their partial responses themselves.
 The existing QML draft/accepted-response lifetime limitation still applies.
 
-A success frame is insufficient: the owner also requires clean helper exit and
-no extra/truncated output before emitting completion. Malformed frames, crashes,
+A success frame is insufficient: the owner also requires clean helper exit,
+drained EOF and no extra/truncated output before emitting completion. Malformed frames, crashes,
 exec errors and oversized responses cannot authenticate. Abort closes transport,
 kills the helper and asynchronously reaps it, independently of PAM cooperation.
 The worker disables core dumps and requests parent-death SIGKILL. A stale worker
-has no callbacks into a replacement conversation.
+has no callbacks into a replacement conversation. C transport mappings and
+outbound frames are explicitly wiped, excluded from core dumps, and mlocked
+where permitted. Partial nonblocking sends retain only their unsent tail;
+bytes already transmitted are wiped immediately. Qt only schedules readiness
+and the asynchronous reaper; it does not implement a second frame parser.
 
 The Lock controller continues to own prompting, user-visible state, `lock-state:`
 logs and the inactivity watchdog. A helper stalled outside its conversation is

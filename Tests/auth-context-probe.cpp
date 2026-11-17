@@ -21,7 +21,8 @@ int main(int argc, char **argv) {
     require(argc == 2, "fixture path required");
     const QString fixture = QString::fromLocal8Bit(argv[1]);
     for (const QString &mode : {"success", "failed", "max-tries", "error", "crash", "truncated",
-                                "success-crash", "extra", "malformed", "oversize"}) {
+                                "success-crash", "extra", "malformed", "oversize", "nul-prefix",
+                                "terminal-prompt", "eof-no-terminal"}) {
         AuthContext context(fixture, nullptr);
         context.service = mode;
         context.username = "unused-fixture-user";
@@ -87,6 +88,37 @@ int main(int argc, char **argv) {
     }
     AuthContext missing("/nonexistent/aerial-auth-helper", nullptr);
     require(!missing.start() && !missing.active(), "exec failure");
+    for (const bool duringMessage : {false, true}) {
+        auto *context = new AuthContext(fixture, nullptr);
+        context->service = "success";
+        context->username = "unused-fixture-user";
+        bool destroyed = false;
+        const auto signal = duringMessage ? &AuthContext::pamMessage : &AuthContext::messageChanged;
+        QObject::connect(context, signal, context, [&] {
+            auto *old = context;
+            context = nullptr;
+            destroyed = true;
+            delete old;
+        });
+        context->start();
+        require(until([&] { return destroyed; }), "synchronous owner destruction");
+    }
+    {
+        AuthContext context(fixture, nullptr);
+        context.service = "success";
+        context.username = "unused-fixture-user";
+        QSignalSpy errors(&context, &AuthContext::error), completed(&context, &AuthContext::completed);
+        bool restarted = false;
+        QObject::connect(&context, &AuthContext::pamMessage, &context, [&] {
+            if (restarted) return;
+            restarted = true;
+            context.abort();
+            context.service = "crash";
+            require(context.start(), "synchronous restart");
+        });
+        require(context.start() && until([&] { return errors.size() == 1; }), "replacement owns completion");
+        require(restarted && completed.isEmpty(), "old parser cannot complete new generation");
+    }
     QTest::qWait(100);
     int status;
     require(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD, "no orphan/zombie worker");

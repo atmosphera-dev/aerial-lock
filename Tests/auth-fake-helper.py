@@ -6,6 +6,16 @@ import sys
 import time
 
 mode = sys.argv[1]
+bad_frames = {
+    "nul-prefix": b"D success\0not-a-terminal\n",
+    "pending-success": b"P0 50617373776f72643a\nD success\n",
+    "terminal-prompt": b"D success\nP0 50617373776f72643a\n",
+    "duplicate-prompt": b"P0 50617373776f72643a\nP0 50617373776f72643a\n",
+    "eof-no-terminal": b"",
+}
+if mode in bad_frames:
+    os.write(1, bad_frames[mode])
+    sys.exit(0)
 if mode == "crash":
     os.kill(os.getpid(), signal.SIGKILL)
 if mode == "hang":
