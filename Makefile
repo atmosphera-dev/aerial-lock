@@ -413,6 +413,10 @@ install: all
 	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user $(DESTDIR)$(DATADIR)/examples
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-idle.service.in > $(OBJDIR)/aerial-idle.service
 	install -m 644 $(OBJDIR)/aerial-idle.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
+	sed 's|@LIBEXECDIR@|$(LIBEXECDIR)|g' systemd/aerial-companion.service.in > $(OBJDIR)/aerial-companion.service
+	install -m 644 $(OBJDIR)/aerial-companion.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
+	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants
+	ln -sfn ../aerial-companion.service $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial-companion.service
 	install -m 644 examples/idle.json $(DESTDIR)$(DATADIR)/examples/
 	install -d $(DESTDIR)$(LIBEXECDIR) $(DESTDIR)$(PLUGINROOT)/generic
 	install -m 755 Scripts/aerial-lock-run $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run
@@ -420,6 +424,9 @@ install: all
 	install -m 755 companion/aerial-companion $(DESTDIR)$(LIBEXECDIR)/aerial-companion
 	install -m 755 companion/aerial-media-probe $(DESTDIR)$(LIBEXECDIR)/aerial-media-probe
 	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces
+	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/services
+	sed 's|@LIBEXECDIR@|$(LIBEXECDIR)|g' dbus/org.aeriallock.Companion1.service.in > $(OBJDIR)/org.aeriallock.Companion1.service
+	install -m 644 $(OBJDIR)/org.aeriallock.Companion1.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/
 	install -m 644 dbus/org.aeriallock.Companion1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 644 dbus/org.aeriallock.Companion1.Job1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
@@ -438,6 +445,8 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/aerial-unlock
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
 	rm -f $(DESTDIR)$(BINDIR)/aerial-idle $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-idle.service
+	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial-companion.service $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-companion.service
+	rm -f $(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.Companion1.service
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockConnectionGuard.so
 	rm -f $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockSurfaceInput.so
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
@@ -459,6 +468,7 @@ clean:
 	rm -f $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS)
 	rm -f emergency/aerial-lock-emergency emergency/ext-session-lock-v1-client.h emergency/ext-session-lock-v1-protocol.c $(EMERGENCY_OBJS)
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service
+	rm -f $(OBJDIR)/aerial-companion.service $(OBJDIR)/org.aeriallock.Companion1.service
 	rm -f companion/aerial-companion $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
 	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp

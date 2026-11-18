@@ -122,6 +122,49 @@ and a suspend/resume cycle separately. Confirm the aerial-lock screen appears
 and accepts your password on every output; do not infer suspend protection from
 a working keybind alone.
 
+## Content companion startup
+
+The headless `aerial-companion` owns settings transactions and remote content
+downloads. It is separate from optional `aerial-idle`: installing the content
+service neither enables inactivity locking nor changes suspend policy.
+
+Installation provides a vendor `default.target.wants` link for future user-manager
+startups. It does not start or restart a companion in an existing session. Log out
+and back in, or start now:
+
+```sh
+systemctl --user start aerial-companion.service
+```
+
+With lingering or another still-running session, a login can reuse the existing
+user manager; it need not trigger a new manager startup. The package never enables
+linger. `aerialctl` and the normal locker also have session D-Bus activation as
+a backup. No Wayland display, tray or aerial-idle process is needed for downloads.
+
+To prevent future automatic service startup and D-Bus activation:
+
+```sh
+systemctl --user mask aerial-companion.service
+```
+
+Masking does not stop an already running owner. Stop it explicitly if desired;
+`systemctl --user unmask aerial-companion.service` restores startup eligibility.
+To pause downloads instead while retaining settings/CLI access:
+
+```sh
+aerialctl config set acquisition.automatic.enabled false
+```
+
+On a systemd-less session, start the installed `aerial-companion` from your
+compositor's autostart using its libexec path (Arch: `/usr/lib/aerial-lock/`;
+generic Makefile default: `/usr/libexec/aerial-lock/`). Conventional dbus-daemon
+activation also uses that installed executable. Do not run a second downloader.
+
+Custom XDG roots or `AERIAL_LOCK_SHELL` development bundles do not activate a
+missing production owner. Start a matching companion explicitly on a private
+bus, with the same bundle and XDG roots for every client. The API rejects a
+different profile rather than importing the caller's environment or paths.
+
 ## Atmosphera (Noctalia v4-derived)
 
 In **Settings > Lock Screen > Appearance**, choose the external lock style and

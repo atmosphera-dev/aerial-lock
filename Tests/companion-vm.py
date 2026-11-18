@@ -345,6 +345,9 @@ def main():
         return cold_load(args)
     if args.case == "playback":
         return playback(args)
+    if args.case == "activation":
+        from companion_activation import activation
+        return activation(args)
     parser.error("case is not implemented yet; no acceptance coverage may be inferred")
 
 

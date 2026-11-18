@@ -207,6 +207,8 @@ add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-owner.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
+add_test(NAME companion-install COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-install.py"
+    "${AERIAL_LOCK_SOURCE}")
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")
