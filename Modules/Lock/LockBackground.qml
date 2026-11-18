@@ -24,6 +24,12 @@ Item {
 
     signal loadFailed(string message)
     signal frameObserved(string path)
+    signal playbackFailed(string path)
+    property string activePath: ""
+    onCurrentFilenameChanged: {
+        if (currentFilename)
+            activePath = currentFilename
+    }
 
     readonly property var filters: ["*.mp4", "*.mkv", "*.webm", "*.mov"]
 
@@ -89,6 +95,7 @@ Item {
         if (stopped || mediaFailed || items.length === 0)
             return
         var first = true
+        activePath = items[0].path || ""
         for (var i = 0; i < items.length; i++) {
             var it = items[i]
             if (!it || !it.path || it.path.length === 0)
@@ -134,6 +141,18 @@ Item {
 
         onErrorOccurred: function (code, message) {
             root.loadFailed(message)
+        }
+        // endFile distinguishes unusable content from core/render failures and
+        // ordinary EOF/stop. The selection owner, not this scenery component,
+        // decides the next local candidate. Defer replacement out of mpv's event.
+        onEndFile: function (reason) {
+            if (reason === "error" && !root.stopped && !root.mediaFailed) {
+                var path = root.activePath
+                Qt.callLater(function () {
+                    if (!root.stopped && !root.mediaFailed)
+                        root.playbackFailed(path)
+                })
+            }
         }
         onInitializationFailed: root.mediaFailure()
         onRenderingFailed: root.mediaFailure()

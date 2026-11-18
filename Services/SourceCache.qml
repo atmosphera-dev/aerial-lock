@@ -76,6 +76,10 @@ Scope {
     // ---- begin / deadline / publish -------------------------------------
 
     property bool _begun: false
+    property var _inventory: []
+    property var _preferredPaths: []
+    property var _failedPaths: []
+    property string _lastPlayedPath: ""
 
     // Called by Lock.qml once theme topics are known. Idempotent.
     function begin() {
@@ -121,6 +125,7 @@ Scope {
             var complete = managed.forSource(source.id || "")
             var managedIds = ({})
             for (var n = 0; n < complete.length; n++) {
+                complete[n].cached = true
                 inventory.push(complete[n])
                 managedIds[complete[n].assetId] = true
             }
@@ -140,10 +145,12 @@ Scope {
             }
             // qmllint enable missing-property
         }
-        var sel = ThemeSelection.selectPlaylist(inventory, root.topics)
-        var out = []
-        for (var k = 0; k < sel.length; k++)
-            out.push({ kind: "file", path: sel[k] })
+        _inventory = inventory
+        _lastPlayedPath = managed.lastPlayedPath
+        _preferredPaths = ThemeSelection.selectPlaylist(inventory, root.topics)
+        var out = availableItems(_preferredPaths)
+        if (out.length === 0)
+            out = fallbackPlaylist()
         internal.playlist = out
         internal.resolved = true
         if (timedOut)
@@ -153,6 +160,40 @@ Scope {
         for (var m = 0; m < out.length; m++)
             names.push(out[m].path.split("/").pop())
         Logger.d("SourceCache", "playlist: " + names.join(", "))
+    }
+
+    function availableItems(paths) {
+        var out = []
+        for (var i = 0; i < paths.length; i++) {
+            var path = paths[i]
+            if (_failedPaths.indexOf(path) === -1 && managed.available(path))
+                out.push({ kind: "file", path: path })
+        }
+        return out
+    }
+
+    // Recovery uses only this episode's frozen configured-source pool. Never
+    // rescan current.json, resurrect a removed source or ask for a download.
+    function fallbackPlaylist() {
+        var cached = []
+        var last = ""
+        for (var i = 0; i < _inventory.length; i++) {
+            var clip = _inventory[i]
+            if (clip.path === _lastPlayedPath)
+                last = clip.path
+            if (clip.cached)
+                cached.push(clip.path)
+        }
+        var candidates = availableItems(last ? [last].concat(cached) : cached)
+        return candidates.length ? [candidates[0]] : []
+    }
+
+    function playbackFailed(path) {
+        if (!internal.resolved || !path || _failedPaths.indexOf(path) !== -1)
+            return
+        _failedPaths = _failedPaths.concat([path])
+        var remaining = availableItems(_preferredPaths)
+        internal.playlist = remaining.length ? remaining : fallbackPlaylist()
     }
 
     // ---- per-source inventory -------------------------------------------
@@ -238,7 +279,7 @@ Scope {
                             }
                         }
                     }
-                    out.push({ path: mp4[fname], matchText: matchText, _stem: stem })
+                    out.push({ path: mp4[fname], matchText: matchText, _stem: stem, cached: true })
                 }
                 // FolderListModel sorts by name case-insensitively, but the
                 // object built above lost that order — restore it by stem.
@@ -380,6 +421,7 @@ Scope {
     }
 
     function reportPlayback(path) {
+        _lastPlayedPath = path
         managed.reportPlayback(path)
     }
 }

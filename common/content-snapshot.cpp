@@ -21,7 +21,7 @@ QString contentDigest(const QByteArray &bytes)
     return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
 }
 
-ContentSnapshot::ContentSnapshot(const QString &cacheRoot, std::optional<QString> generation)
+ContentSnapshot::ContentSnapshot(const QString &cacheRoot, std::optional<QString> generation) : root(cacheRoot)
 {
     if (generation && generation->isEmpty()) return;
     OwnedDirectory cache(cacheRoot);
@@ -45,15 +45,9 @@ ContentSnapshot::ContentSnapshot(const QString &cacheRoot, std::optional<QString
         auto entry = value.toObject();
         const auto assetKey = entry.value("key").toString();
         const auto relative = "objects/" + assetKey + ".media";
-        const auto identity = entry.value("identity").toObject();
-        struct stat st{};
         if (!contentKey(assetKey) || keys.contains(assetKey) || entry.value("sourceId").toString().isEmpty()
             || entry.value("assetId").toString().isEmpty() || entry.value("path").toString() != relative
-            || !cache.identity(relative, st) || st.st_size <= 0 || entry.value("bytes").toInteger() != st.st_size
-            || qint64(st.st_dev) != identity.value("device").toInteger()
-            || qint64(st.st_ino) != identity.value("inode").toInteger()
-            || st.st_mtim.tv_sec != identity.value("seconds").toInteger()
-            || st.st_mtim.tv_nsec != identity.value("nanoseconds").toInteger()) return;
+            || !available(entry)) continue;
         keys.insert(assetKey);
         entry["path"] = cache.path() + '/' + relative;
         validated.append(entry);
@@ -64,6 +58,21 @@ ContentSnapshot::ContentSnapshot(const QString &cacheRoot, std::optional<QString
 }
 
 ContentSnapshot::~ContentSnapshot() { if (lock >= 0) close(lock); }
+
+bool ContentSnapshot::available(const QJsonObject &entry) const
+{
+    const auto key = entry.value("key").toString();
+    if (!contentKey(key)) return false;
+    OwnedDirectory cache(root);
+    struct stat st{};
+    const auto identity = entry.value("identity").toObject();
+    return cache.identity("objects/" + key + ".media", st) && st.st_size > 0
+        && entry.value("bytes").toInteger() == st.st_size
+        && qint64(st.st_dev) == identity.value("device").toInteger()
+        && qint64(st.st_ino) == identity.value("inode").toInteger()
+        && st.st_mtim.tv_sec == identity.value("seconds").toInteger()
+        && st.st_mtim.tv_nsec == identity.value("nanoseconds").toInteger();
+}
 
 QJsonArray ContentSnapshot::forSources(const QJsonArray &sources) const
 {

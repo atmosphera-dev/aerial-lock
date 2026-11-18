@@ -1,6 +1,7 @@
 #include "local-content.h"
 #include "local-content.moc"
 #include <QDateTime>
+#include <QFileInfo>
 
 void LocalContent::freeze(const QString &cacheRoot, const QString &stateRoot, const QVariantList &sources)
 {
@@ -46,8 +47,30 @@ QVariantMap LocalContent::lookup(const QString &path) const
     return {};
 }
 
+QString LocalContent::lastPlayedPath() const
+{
+    const auto key = Aerial::ContentSnapshot::lastPlayback(stateRoot).value("key").toString();
+    for (const auto &value : entries) {
+        const auto entry = value.toObject();
+        if (entry.value("key").toString() == key && snapshot->available(entry))
+            return entry.value("path").toString();
+    }
+    return {};
+}
+
+bool LocalContent::available(const QString &path) const
+{
+    for (const auto &value : entries) {
+        const auto entry = value.toObject();
+        if (entry.value("path").toString() == path) return snapshot->available(entry);
+    }
+    const QFileInfo file(path);
+    return file.isAbsolute() && file.isFile() && file.isReadable() && file.size() > 0;
+}
+
 void LocalContent::reportPlayback(const QString &path)
 {
     const auto key = lookup(path).value("assetKey").toString();
-    if (!key.isEmpty()) Aerial::ContentSnapshot::reportPlayback(stateRoot, key, QDateTime::currentSecsSinceEpoch());
+    if (!key.isEmpty() && Aerial::ContentSnapshot::reportPlayback(stateRoot, key, QDateTime::currentSecsSinceEpoch()))
+        emit changed();
 }

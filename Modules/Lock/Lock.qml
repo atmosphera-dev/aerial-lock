@@ -694,7 +694,10 @@ Scope {
                 onLoaded: {
                     // LockBackground.applySource() runs on the items change;
                     // the list is final by the time the Loader activates.
-                    background.items = root.bgItems
+                    background.items = Qt.binding(function () { return root.bgItems })
+                    background.playbackFailed.connect(function (path) {
+                        sourceCache.playbackFailed(path)
+                    })
                     background.loadFailed.connect(function (message) {
                         root.logger.w("aerial-lock", "video background failed: " + message)
                     })
