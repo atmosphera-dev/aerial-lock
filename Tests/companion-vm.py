@@ -348,6 +348,15 @@ def main():
     if args.case == "activation":
         from companion_activation import activation
         return activation(args)
+    if args.case in ("locker", "cache"):
+        from companion_locker import fixture_locker
+        return fixture_locker(args, installed_session)
+    if args.case == "apple-one":
+        from companion_apple import apple_one
+        return apple_one(args, installed_session)
+    if args.case == "policy":
+        from companion_policy_vm import policy
+        return policy(args)
     parser.error("case is not implemented yet; no acceptance coverage may be inferred")
 
 

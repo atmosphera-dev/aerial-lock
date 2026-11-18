@@ -9,6 +9,7 @@ import threading
 import time
 
 from companion_install import check_layout
+from companion_policy_peer import PolicyBus
 from fixture_files import publish
 from owned_instance import OwnedInstance, digest
 
@@ -71,8 +72,9 @@ def activation(args):
     thread.start()
     helper = ["sudo", "python3", str(Path(__file__).with_name("companion-login-fixture.py")),
               "--root", str(args.root), "--vm-record", str(args.vm_record)]
-    account = login = bus = None
+    account = login = bus = policy_bus = None
     result = {"case": "activation", "exit": 1}
+    result["sourceIdentity"] = owned.record["current_source_identity"]
     try:
         document = {"sources": [{"id": "fixture", "type": "community", "name": "Fixture",
                                 "source": f"http://127.0.0.1:{server.server_port}/manifest.json"}]}
@@ -140,6 +142,39 @@ def activation(args):
         run([*helper, "remove"])
         account = None
 
+        # A second genuinely fresh account has no application config at all.
+        # Standard per-unit observation-bus selection makes it offline before
+        # manager startup, without changing the product descriptor or allowing
+        # unbounded live Apple fill. Real Apple bytes have their own one-clip case.
+        policy_bus = PolicyBus(output, owned.check_binary(owned.paths["build"] / "companion-transfer-probe"), owned.record["uuid"])
+        policy_bus.observe({"State": 20, "Connectivity": 1})
+        account = json.loads(run([*helper, "create"], input="null").stdout)
+        uid, name = account["uid"], account["name"]
+        userenv = ["sudo", "runuser", "-u", name, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                   f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus"]
+        run([*helper, "observe-bus"], input=policy_bus.address)
+        login = manager_login("no-config-login")
+        wait(lambda: user("test", "-S", f"/run/user/{uid}/bus", checked=False).returncode == 0, "no-config login bus")
+        wait(lambda: user("systemctl", "--user", "is-active", "aerial-companion.service", checked=False).stdout.strip() == "active",
+             "no-config vendor startup before CLI")
+        fresh_default = wait(lambda: value if (value := status()) and value["DeferReason"] == "Offline" else None,
+                             "fresh no-config offline defer")
+        effective = json.loads(user("aerialctl", "config", "show", "--effective", "--json").stdout)
+        defaults = json.loads(Path("/usr/share/aerial-lock/Config/defaults.json").read_text())
+        assert len(effective["sources"]) == len(defaults["sources"]) == 1
+        assert all(effective["sources"][0][key] == value for key, value in defaults["sources"][0].items())
+        assert effective["sources"][0]["id"] == "apple-tv"
+        assert user("test", "-e", account["home"] + "/.config/aerial-lock/config.json", checked=False).returncode == 1
+        assert fresh_default["ReadyClips"] == 0 and fresh_default["Observations"]["network"] == "offline"
+        result["freshNoConfigLogin"] = {"status": fresh_default, "sources": effective["sources"], "configRemainedAbsent": True}
+        run([*helper, "stop"])
+        login.wait(timeout=15)
+        login = None
+        run([*helper, "remove"])
+        account = None
+        policy_bus.close()
+        policy_bus = None
+
         # Unmodified installed descriptor on a conventional daemon. Isolated
         # roots and an explicit empty source list prevent accidental live work.
         profile = output / "private"
@@ -183,6 +218,8 @@ def activation(args):
             run([*helper, "remove"])
         if login:
             login.wait(timeout=15)
+        if policy_bus:
+            policy_bus.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
