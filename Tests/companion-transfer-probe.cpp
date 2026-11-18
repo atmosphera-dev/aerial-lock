@@ -675,7 +675,7 @@ private slots:
     void queuePersistenceRecovery_data()
     {
         QTest::addColumn<QString>("stage");
-        for (const auto *stage : {"planning", "completion", "finalization"}) QTest::newRow(stage) << QString(stage);
+        for (const auto *stage : {"planning", "completion", "finalization", "finalization-invalidated"}) QTest::newRow(stage) << QString(stage);
     }
     void queuePersistenceRecovery()
     {
@@ -696,7 +696,7 @@ private slots:
             if (stage == "completion" && !triggered) { failing = true; triggered = true; }
         });
         connect(&queue, &TransferQueue::jobChanged, &queue, [&](const QString &changed) {
-            if (stage == "finalization" && !triggered && changed == id && queue.job(id).value("state") == "downloading"
+            if (stage.startsWith("finalization") && !triggered && changed == id && queue.job(id).value("state") == "downloading"
                 && cache.entries().size() == 1) { failing = true; triggered = true; }
         });
         id = queue.acquire({}, 1); QVERIFY(!id.isEmpty());
@@ -705,6 +705,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(queue.deferReason(), "StorageError", 10000);
         QVERIFY(!ended(queue, id));
         QTest::qWait(100); QVERIFY(!ended(queue, queued));
+        if (stage == "finalization-invalidated")
+            QVERIFY(config.update(config.document().revision, {{"language", "fr"}}).ok());
         failing = false;
         QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id), 10000);
         QTRY_VERIFY_WITH_TIMEOUT(ended(queue, queued), 10000);
