@@ -14,9 +14,11 @@
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QSignalSpy>
+#include <QSocketNotifier>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest>
 #include <fcntl.h>
 #include <signal.h>
@@ -1024,6 +1026,79 @@ private slots:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    if (argc == 2 && QByteArray(argv[1]) == "--policy-peer") {
+        // Separate private-bus peer for installed-executable VM acceptance.
+        // The product sees only standard read-only NM/UPower properties.
+        PolicyPeer peer;
+        QByteArray pending;
+        QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
+        QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
+            char buffer[4096]; const auto length = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+            if (length <= 0) { app.quit(); return; }
+            pending.append(buffer, length);
+            while (pending.contains('\n')) {
+                const auto line = pending.left(pending.indexOf('\n')); pending.remove(0, line.size() + 1);
+                const auto patch = QJsonDocument::fromJson(line).object();
+                QVariantMap manager;
+                for (const auto &name : {"State", "Connectivity", "Metered"})
+                    if (patch.contains(name)) manager[name] = uint(patch.value(name).toInt());
+                if (!manager.isEmpty()) peer.update(peer.manager, manager);
+                if (patch.contains("Type")) peer.update(peer.primary, {{"Type", patch.value("Type").toString()}});
+                if (patch.contains("DeviceMetered")) peer.update(peer.device, {{"Metered", uint(patch.value("DeviceMetered").toInt())}});
+                if (patch.contains("OnBattery")) {
+                    if (patch.value("OnBattery").isNull()) peer.update(peer.power, {}, {"OnBattery"});
+                    else peer.update(peer.power, {{"OnBattery", patch.value("OnBattery").toBool()}});
+                }
+                fprintf(stdout, "POLICY_PEER_UPDATED\n"); fflush(stdout);
+            }
+        });
+        fprintf(stdout, "POLICY_PEER_READY\n"); fflush(stdout);
+        return app.exec();
+    }
+    if (argc == 3 && QByteArray(argv[1]) == "--size-apple-catalogue") {
+        // VM-only bounded live-provider evidence. The service must be stopped:
+        // this takes the real cache owner lock, but never requests clip bodies.
+        const auto paths = ConfigPaths::environment("/usr/share/aerial-lock");
+        const auto document = readConfig(paths);
+        const auto sources = document.effective.value("sources").toArray();
+        if (!document.acquisitionAllowed() || sources.size() != 1) return 2;
+        const auto source = sources[0].toObject();
+        if (source.value("type") != "apple" || source.value("maxResolution").toInt() != 1080
+            || QUrl(source.value("source").toString()).host() != "sylvan.apple.com") return 2;
+        class TraceTransport : public QNetworkAccessManager {
+        public:
+            QJsonArray requests;
+            QNetworkReply *createRequest(Operation operation, const QNetworkRequest &request, QIODevice *body) override
+            {
+                requests.append(QJsonObject{{"method", operation == HeadOperation ? "HEAD" : "GET"},
+                    {"url", request.url().toString(QUrl::FullyEncoded)},
+                    {"range", QString::fromLatin1(request.rawHeader("Range"))}});
+                return QNetworkAccessManager::createRequest(operation, request, body);
+            }
+        } network;
+        CacheStore cache(paths.cache); if (!cache.valid()) return 1;
+        QFile certificate(paths.bundle + "/Config/apple-root.pem");
+        if (!certificate.open(QIODevice::ReadOnly)) return 1;
+        const auto appleRoot = certificate.readAll();
+        ManifestStore store(cache, network, appleRoot);
+        const auto catalogue = store.cached(source);
+        const auto candidates = SourceResolver::select(catalogue, source,
+            document.effective.value("preferredResolution").toInt(), {1080}, true);
+        if (candidates.isEmpty()) return 1;
+        RepresentationSizer sizer(network, appleRoot);
+        QObject::connect(&sizer, &RepresentationSizer::finished, &app, [&] {
+            QJsonArray sizes;
+            for (const auto &rep : sizer.result()) sizes.append(QJsonObject{{"key", rep.key}, {"assetId", rep.assetId},
+                {"url", rep.url.toString(QUrl::FullyEncoded)}, {"height", rep.height}, {"bytes", rep.bytes}});
+            QFile output(QString::fromLocal8Bit(argv[2]));
+            if (!output.open(QIODevice::WriteOnly)) { app.exit(1); return; }
+            const auto bytes = QJsonDocument(QJsonObject{{"candidates", sizes}, {"requests", network.requests}}).toJson();
+            app.exit(output.write(bytes) == bytes.size() ? 0 : 1);
+        });
+        QTimer::singleShot(900000, &app, [&] { sizer.cancel(); app.exit(1); });
+        sizer.start(candidates);
+        return app.exec();
+    }
     if (argc == 4 && QByteArray(argv[1]) == "--export") {
         const auto root = QString::fromLocal8Bit(argv[2]);
         if (!root.startsWith('/') || !QDir().mkpath(root)) return 2;

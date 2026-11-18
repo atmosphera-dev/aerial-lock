@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import stat
 import subprocess
 import sys
@@ -18,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--vm-record", type=Path, required=True)
-    parser.add_argument("operation", choices=("create", "mask", "unmask", "stop", "remove"))
+    parser.add_argument("operation", choices=("create", "observe-bus", "mask", "unmask", "stop", "remove"))
     args = parser.parse_args()
     assert os.geteuid() == 0 and int(os.environ["SUDO_UID"]) != 0
     uid = int(os.environ["SUDO_UID"])
@@ -49,13 +50,14 @@ def main():
         journal = {"uuid": record["uuid"], "name": name, "uid": account.pw_uid, "gid": account.pw_gid,
                    "home": str(home), "inode": home.stat().st_ino}
         (private / "journal.json").write_text(json.dumps(journal))
-        directory = home / ".config/aerial-lock"
-        directory.mkdir(mode=0o700, parents=True)
-        settings = directory / "config.json"
-        settings.write_text(json.dumps(document))
-        settings.chmod(0o600)
-        for path in (home / ".config", directory, settings):
-            os.chown(path, account.pw_uid, account.pw_gid)
+        if document is not None:
+            directory = home / ".config/aerial-lock"
+            directory.mkdir(mode=0o700, parents=True)
+            settings = directory / "config.json"
+            settings.write_text(json.dumps(document))
+            settings.chmod(0o600)
+            for path in (home / ".config", directory, settings):
+                os.chown(path, account.pw_uid, account.pw_gid)
         print(json.dumps(journal))
         return
     assert private.stat().st_uid == 0 and stat.S_IMODE(private.stat().st_mode) == 0o700
@@ -64,6 +66,19 @@ def main():
     assert journal == {"uuid": record["uuid"], "name": name, "uid": account.pw_uid, "gid": account.pw_gid,
                        "home": str(home), "inode": home.stat().st_ino}
     assert account.pw_dir == str(home) and not home.is_symlink()
+    if args.operation == "observe-bus":
+        address = sys.stdin.read().strip()
+        assert re.fullmatch("unix:abstract=aerial-policy-" + re.escape(record["uuid"]) + r"-[0-9]+", address)
+        directory = home / ".config/systemd/user/aerial-companion.service.d"
+        assert not directory.exists()
+        directory.mkdir(mode=0o700, parents=True)
+        override = directory / "observations.conf"
+        override.write_text("[Service]\nEnvironment=DBUS_SYSTEM_BUS_ADDRESS=" + address + "\n")
+        override.chmod(0o600)
+        for path in (home / ".config", home / ".config/systemd", directory.parent, directory, override):
+            os.chown(path, account.pw_uid, account.pw_gid)
+        print("COMPANION_LOGIN_OBSERVATIONS_READY")
+        return
     if args.operation in ("stop", "remove"):
         # Only this task-created fixture account, never tester's desktop.
         subprocess.run(["loginctl", "terminate-user", name], check=False, capture_output=True, timeout=30)

@@ -206,6 +206,68 @@ honest storage-error/unknown-usage reporting without adopting foreign files.
 `UsageKnown=false` means byte totals are unavailable, not an empty managed cache.
 These checks do not replace installed activation or rendered-lock acceptance.
 
+### Installed companion acceptance
+
+`companion-package.py` consumes a current `companion-vm.py --case prepare`
+manifest in the owned VM. It retains the unchanged release recipe, makes a
+labelled exact-tree source archive and test-only recipe, builds with normal
+makepkg options, checks package dependencies/payload/notices, and installs only
+inside that guest. Pacman installation must leave the current companion stopped;
+reinstallation must preserve its running PID and invocation. The recipe's
+release version, URL and checksum are never updated by this test.
+
+After refreshing prepare against the package-built installed/staged bytes:
+
+```sh
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case activation
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case policy
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case cache --backend niri
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case locker --backend hyprland
+```
+
+Activation uses a task-created account with a configured loopback source before
+its first login, then observes vendor startup before any CLI call. It also checks
+masking and the installed broker/systemd and conventional Exec backup routes.
+Another fresh account has no application config; a task-only user-unit
+environment selects private offline policy observations before login. The
+installed service must inherit the unchanged Apple descriptor, defer offline,
+and leave the application config absent. This does not replace the separate
+bounded real-Apple acquisition test.
+The policy case starts the installed companion/CLI with NM/UPower peers on a
+separate private bus via the standard `DBUS_SYSTEM_BUS_ADDRESS` environment.
+It checks each connection/power toggle, metered VPN, offline state, pause and quality allowance
+at the actual planner, manual completed acquisition while disallowed, then
+automatic fill after allowing it. It never impersonates peers on the system bus.
+
+Cache and locker are the same composite real-lock acceptance, on the selected
+nested compositor. They use the installed supervisor, package bundle and native
+plugins, hold the smallest fixture payload during the first lock, complete it
+while a password draft remains, and require first-episode solid/next-episode
+rendered-frame recency plus real PAM unlock and desktop input. They also exercise
+reader-pinned pruning/cap reduction across service restart, reclamation after
+unlock with the last fallback retained, cached rendering with a stalled/absent/
+crashed companion, and explicit empty-source suppression. No locker is killed
+for cleanup. A failed ordinary unlock retains the existing BLOCKED latch.
+
+The explicitly authorized real-provider case is separate, never registered in
+portable CTest or invoked implicitly:
+
+```sh
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case apple-one --backend niri
+```
+
+It uses a fresh isolated paused profile with the shipped Apple descriptor and
+an explicit 1080 source ceiling, manually fetches exactly one clip, then verifies
+its key and length against all eligible candidates sized by the production
+selector/HEAD-range implementation. This second sizing pass downloads no clip
+bodies. It requires next-lock rendered-frame recency, ordinary PAM unlock and
+cached playback with no companion/activation available. The fixture automatic
+test and controlled inherited-default tests prove autonomous/default behavior;
+the real-provider test deliberately does not permit unattended catalogue fill.
+Full lock-window captures use the VM's unlocked outer niri session, since a
+locked compositor may prohibit screencopy. All working captures stay under
+`$ROOT/results`; final reviewed full screenshots are delivered separately.
+
 Inside the owned VM's Wayland session, after building the tests:
 
 ```sh
