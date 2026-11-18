@@ -670,3 +670,20 @@ also exercised on a standalone private daemon. The account, sessions and manager
 are retired by the fixture helper; tester's desktop and linger setting are not
 changed. This is not no-config Apple inheritance or installed-package no-start
 proof: those remain separate acceptance cases.
+
+`companion-http` uses a real loopback HTTPS server and throwaway test CA/leaf
+certificates. The actual HttpOperation runs with an injected DNS/TCP transport;
+Qt still validates the original hostname and request-local chain. It proves
+normal trust first, scoped Apple fallback, hostname rejection, custom-host
+rejection, no fallback leakage over redirects, same-host revalidation, downgrade
+rejection and the redirect bound. Production requests do not reuse pooled TLS
+state, so failed normal trust cannot poison the explicit fallback attempt.
+Neither this fixture nor default-source acquisition changes system trust/DNS.
+
+`inheritedDefaultAcquisition` uses the unmodified shipped descriptor and no user
+config, injects only loopback routing, then observes small-before-large payloads,
+probe-validated indexed objects and no config seeding. `compatibilityFrontend`
+runs the actual shell frontend, CLI and service, with paused automation: it
+checks per-source limits, ready-file reuse, no config writes and exits 0/1/2.
+These portable gates do not replace fresh installed login or rendered next-lock
+acceptance.

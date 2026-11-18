@@ -37,6 +37,7 @@ private slots:
         QTest::newRow("legacy-local") << QByteArray(R"({"video":"/personal/clip.mp4","videoDir":"/personal/folder"})") << true;
         QTest::newRow("legacy-disabled") << QByteArray(R"({"apple":{"enabled":false}})") << true;
         QTest::newRow("legacy-apple") << QByteArray(R"({"apple":{"enabled":true}})") << true;
+        QTest::newRow("explicit-older-apple") << QByteArray("{\"sources\":[{\"id\":\"old-apple\",\"type\":\"apple\",\"name\":\"Saved Apple\",\"source\":\"https://sylvan.apple.com/Aerials/resources-16.tar\"}]}") << true;
         QTest::newRow("legacy-explicit-empty") << QByteArray(R"({"video":"/ignore","sources":[]})") << true;
         QTest::newRow("custom") << QByteArray(R"({"sources":[{"type":"folder","name":"Personal","source":"~/Videos","extra":7}]})") << true;
         QTest::newRow("mixed-sources") << QByteArray(R"({"sources":[{},null,{"type":"folder","name":"Good","source":"/data"}]})") << true;
@@ -81,6 +82,18 @@ private slots:
         if (user.contains("/personal/clip")) {
             QCOMPARE(document.effective.value("sources").toArray().size(), 2);
             QVERIFY(document.migrated);
+        }
+        const auto sources = document.effective.value("sources").toArray();
+        if (!present || (!document.user.contains("sources") && !document.migrated && document.userValid)) {
+            QCOMPARE(sources.size(), 1);
+            const auto inherited = sources.first().toObject();
+            QCOMPARE(inherited.value("id").toString(), "apple-tv");
+            QCOMPARE(inherited.value("type").toString(), "apple");
+            QCOMPARE(inherited.value("safeName").toString(), "Apple-TV");
+        }
+        if (user.contains("old-apple")) {
+            QCOMPARE(sources.size(), 1);
+            QCOMPARE(sources.first().toObject().value("source").toString(), document.user.value("sources").toArray().first().toObject().value("source").toString());
         }
     }
 

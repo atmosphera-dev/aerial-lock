@@ -33,4 +33,11 @@ def check_layout(stage, prefix, libexec):
         assert "@LIBEXECDIR@" not in path.read_text()
         if stage != Path("/"):
             assert str(stage) not in path.read_text()
+    licenses = stage / prefix.relative_to("/") / "share/licenses/aerial-lock"
+    assert (licenses / "LICENSE").is_file()
+    notice = licenses / "third-party-notices.md"
+    assert notice.stat().st_mode & 0o777 == 0o644
+    text = notice.read_text()
+    assert "MIT License" in text and "2015-present Guillaume Louel, and contributors" in text
+    assert "THE SOFTWARE IS PROVIDED" in text and "SOFTWARE." in text
     return descriptor

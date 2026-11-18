@@ -2,7 +2,14 @@
   "language": "en",
   "backgroundColor": "#000000",
   "theme": "Macintosh.qml",
-  "sources": [],
+  "sources": [
+    {
+      "id": "apple-tv",
+      "type": "apple",
+      "name": "Apple TV",
+      "source": "https://sylvan.apple.com/itunes-assets/Aerials126/v4/c0/45/d9/c045d9d0-9606-1535-62fe-189edb4f79eb/resources-atv-23J-2.tar"
+    }
+  ],
   "acquisition": {
     "automatic": {
       "enabled": true,

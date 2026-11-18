@@ -211,6 +211,14 @@ add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_S
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 add_test(NAME companion-install COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-install.py"
     "${AERIAL_LOCK_SOURCE}")
+add_executable(companion-http-probe companion-http-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/companion/http-operation.cpp" "${CMAKE_CURRENT_BINARY_DIR}/http-operation.moc"
+    "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
+    "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp")
+target_include_directories(companion-http-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(companion-http-probe PRIVATE Qt6::Core Qt6::Network PkgConfig::ARCHIVE)
+add_test(NAME companion-http COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-http.py"
+    "$<TARGET_FILE:companion-http-probe>")
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(emergency-unit emergency-unit.c "${AERIAL_LOCK_SOURCE}/emergency/input.c" "${AERIAL_LOCK_SOURCE}/emergency/render.c")

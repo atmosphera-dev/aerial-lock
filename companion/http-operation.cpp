@@ -40,6 +40,10 @@ void HttpOperation::request(bool appleTrust)
     query.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
     query.setAttribute(QNetworkRequest::AuthenticationReuseAttribute, QNetworkRequest::Manual);
     query.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+    // Qt's connection pool retains the first request's SSL configuration,
+    // including after a failed handshake. Each hop/retry must use its own
+    // normal or Apple-only trust, never pooled trust from a previous request.
+    query.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, -1);
     query.setRawHeader("Accept-Encoding", "identity");
     query.setRawHeader("User-Agent", "aerial-lock-companion/1");
     query.setTransferTimeout(30000);
@@ -63,6 +67,7 @@ void HttpOperation::request(bool appleTrust)
             if (++redirects > 10 || next.isEmpty()) { complete("UnsafeRedirect"); return; }
             reply->deleteLater(); reply = nullptr;
             current = next;
+            trustRetried = false;
             // Rebuild normal trust on every redirect. Apple-only CA never
             // enters the manager's shared SSL configuration or another host.
             request(); return;
