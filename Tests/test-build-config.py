@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from private_runtime import PrivateRuntime
+from companion_install import check_layout
 
 source = Path(sys.argv[1]).resolve(strict=True)
 with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRuntime("wayland") as runtime:
@@ -133,6 +134,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         assert commands == [f"ExecStart={bindir}/aerial-idle"], (label, commands)
         assert unit.stat().st_mode & 0o777 == 0o644, (label, oct(unit.stat().st_mode))
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
+        check_layout(stage, prefix, prefix / "libexec/aerial-lock")
         helper_path(stage / prefix.relative_to("/") / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so",
                     prefix / "libexec/aerial-lock/aerial-lock-auth", dev_helper)
         emergency = stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency"
@@ -149,6 +151,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
 
     arch_stage = root / "arch-stage"
     make("/usr", "install", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")
+    check_layout(arch_stage, "/usr", "/usr/lib/aerial-lock")
     emergency = arch_stage / "usr/lib/aerial-lock/aerial-lock-emergency"
     assert emergency.stat().st_mode & 0o777 == 0o755
     assert b"/usr/lib/aerial-lock/aerial-lock-auth" in emergency.read_bytes()

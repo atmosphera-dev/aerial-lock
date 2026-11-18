@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.aeriallock.Companion1
+Exec=@LIBEXECDIR@/aerial-companion
+SystemdService=aerial-companion.service

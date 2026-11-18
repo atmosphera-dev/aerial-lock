@@ -642,3 +642,31 @@ This is not the held-transfer/next-episode locker acceptance. Recency reuses the
 existing selected background's decoded-frame observation; it is not inferred
 from a playlist filename or `hasVideo`. Failure/retired screenshot transactions
 cannot emit that observation, and reports never activate an absent companion.
+
+## Companion installation and activation
+
+`companion-install` stages the current build without changing its configuration,
+checks the dbus unit/description and relative vendor wants link, then activates
+the actual companion through a conventional private dbus-daemon. The private
+descriptor remaps only Exec to the built executable. It uses explicit empty
+sources and verifies that the owner retires on bus loss. `build-config` repeats
+the layout assertions for the default prefix, `/usr/local`, BINDIR override and
+Arch LIBEXECDIR, including staged uninstall.
+
+The installed identity-bound gate is separate:
+
+```sh
+# Inside aerial-companion on ark, with disk-backed ROOT/TMPDIR and current record.
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case activation
+```
+
+It creates one task-only account with a loopback source before its first login,
+opens an actual machinectl login and observes the vendor-started unit before any
+activatable CLI call. The installed service must acquire the smaller of two
+reordered fixture clips first and then fill both. A new masked manager must not
+start it; after unmasking, the CLI must activate the installed dbus-broker/systemd
+route, and explicit start-now must work. The unmodified installed descriptor is
+also exercised on a standalone private daemon. The account, sessions and manager
+are retired by the fixture helper; tester's desktop and linger setting are not
+changed. This is not no-config Apple inheritance or installed-package no-start
+proof: those remain separate acceptance cases.

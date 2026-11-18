@@ -5,6 +5,8 @@
 #include <QDBusMessage>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -22,6 +24,13 @@ int main(int argc, char **argv)
     env.insert("AERIAL_LOCK_SHELL", QString::fromLocal8Bit(argv[2]));
     for (const auto &key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
         env.insert(key, root.path() + "/" + key);
+    // This API fixture requests no remote source, independent of future bundled
+    // defaults. Missing-config inheritance has its own controlled fixtures.
+    const auto configPath = env.value("XDG_CONFIG_HOME") + "/aerial-lock/config.json";
+    if (!QDir().mkpath(QFileInfo(configPath).absolutePath())) return 1;
+    QFile initial(configPath);
+    if (!initial.open(QIODevice::WriteOnly) || initial.write("{\"sources\":[]}") != 14) return 1;
+    initial.close();
     QProcess service;
     service.setProcessEnvironment(env);
     service.start(QString::fromLocal8Bit(argv[1]), {});
