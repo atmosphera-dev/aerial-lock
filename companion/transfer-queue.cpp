@@ -172,8 +172,11 @@ void TransferQueue::save(std::function<void()> continuation)
 {
     const auto id = active;
     const auto epoch = decision;
-    afterPersistence = [this, id, epoch, continuation = std::move(continuation)] {
-        if (id != active || epoch != decision) { schedule(); return; }
+    // Settings retire planning decisions, not an already-terminal receipt.
+    // Once durable, that receipt must finish its owner rather than be requeued.
+    const bool finishing = terminal(current);
+    afterPersistence = [this, id, epoch, finishing, continuation = std::move(continuation)] {
+        if (id != active || (!finishing && epoch != decision)) { schedule(); return; }
         continuation();
     };
     retryPersistence();
@@ -447,6 +450,7 @@ void TransferQueue::finish(const QString &error)
         armCheck();
         publishState(error.isEmpty() ? "idle" : deferred ? "deferred" : "error", error);
         schedule();
+        if (invalidated) evaluate(); // Apply edits received while the receipt was waiting for storage.
     });
 }
 
