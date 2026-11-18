@@ -3,6 +3,7 @@
 #include "../companion/source-resolver.h"
 #include "../companion/acquisition-planner.h"
 #include "../native/local-content.h"
+#include "fsync-fixture.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonDocument>
@@ -39,6 +40,103 @@ static bool publish(CacheStore &cache, const Representation &rep, qint64 now)
 class ContentTests : public QObject {
     Q_OBJECT
 private slots:
+    void directoryDurability()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto failDirectory = [](int fd) { struct stat st{}; return !fstat(fd, &st) && S_ISDIR(st.st_mode); };
+        {
+            SyncFault fault(failDirectory);
+            OwnedDirectory fresh(root.path() + "/fresh", true);
+            QVERIFY(!fresh.valid());
+        }
+        OwnedDirectory directory(root.path()); QVERIFY(directory.valid());
+        {
+            SyncFault fault(failDirectory);
+            QVERIFY(!directory.replace("new-parent/value", "new"));
+        }
+        QVERIFY(directory.replace("value", "old"));
+        {
+            SyncFault fault(failDirectory);
+            QVERIFY(!directory.replace("value", "new"));
+            QCOMPARE(directory.lastMutation(), OwnedDirectory::Mutation::Unsynchronized);
+            QCOMPARE(directory.read("value", 100), "new");
+        }
+        struct stat st{}; QVERIFY(directory.identity("value", st));
+        {
+            SyncFault fault(failDirectory);
+            QVERIFY(!directory.rename("value", "renamed"));
+            QCOMPARE(directory.lastMutation(), OwnedDirectory::Mutation::Unsynchronized);
+        }
+        QVERIFY(directory.identity("renamed", st));
+        {
+            SyncFault fault(failDirectory);
+            QVERIFY(!directory.remove("renamed", st));
+            QCOMPARE(directory.lastMutation(), OwnedDirectory::Mutation::Unsynchronized);
+        }
+        QVERIFY(!directory.identity("renamed", st));
+    }
+
+    void uncertainCacheCommit_data()
+    {
+        QTest::addColumn<QString>("stage");
+        for (const auto *stage : {"media-rename", "generation", "commit", "remove"}) QTest::newRow(stage) << QString(stage);
+    }
+    void uncertainCacheCommit()
+    {
+        QFETCH(QString, stage);
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto path = root.path() + "/cache";
+        bool armed = false;
+        {
+            CacheStore initial(path); initial.configure(1000000, 0);
+            QVERIFY(publish(initial, representation("first"), 1));
+            if (stage == "remove") QVERIFY(publish(initial, representation("second"), 2));
+        }
+        const auto trigger = stage == "media-rename" ? QString("prepared") : stage == "generation" ? QString("renamed")
+            : stage == "remove" ? QString("published") : QString("generation");
+        const auto target = path + (stage == "media-rename" ? "/partials" : stage == "generation" ? "/generations"
+            : stage == "remove" ? "/objects" : "");
+        auto cache = std::make_unique<CacheStore>(path, std::nullopt, [&](const QString &step) { if (step == trigger) armed = true; });
+        cache->configure(1000000, 0);
+        {
+            SyncFault fault([&](int fd) {
+                struct stat st{};
+                if (armed && !fstat(fd, &st) && S_ISDIR(st.st_mode)
+                    && QFile::symLinkTarget("/proc/self/fd/" + QString::number(fd)) == target) { armed = false; return true; }
+                return false;
+            });
+            if (stage == "remove") QVERIFY(cache->prune(false).contains("error"));
+            else QVERIFY(!publish(*cache, representation("second"), 2));
+        }
+        QVERIFY(!cache->valid());
+        QVERIFY(QFileInfo::exists(path + "/pending.json"));
+        if (stage != "remove") QVERIFY(QFileInfo::exists(path + "/objects/" + representation("second").key + ".media"));
+        cache.reset();
+        CacheStore recovered(path); QVERIFY(recovered.valid());
+        const int count = stage == "commit" ? 2 : 1;
+        ContentSnapshot consumer(path); QVERIFY(consumer.valid()); QCOMPARE(consumer.entries().size(), count);
+        QVERIFY(!QFileInfo::exists(path + "/pending.json"));
+    }
+
+    void plannerStorageRecovery()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid()); qint64 now = 100000;
+        const auto key = representation("first").key;
+        {
+            PlannerState state(root.path(), [&now] { return now; }, [] { return 0; });
+            QVERIFY(state.valid());
+            QVERIFY(state.failed(key, "StorageError"));
+            QCOMPARE(state.nextAttempt(key), now + 30);
+        }
+        PlannerState state(root.path(), [&now] { return now; }, [] { return 0; });
+        QCOMPARE(state.nextAttempt(key), now + 30); now += 30; QVERIFY(state.eligible(key));
+        {
+            SyncFault fault([](int fd) { struct stat st{}; return !fstat(fd, &st) && S_ISDIR(st.st_mode); });
+            QVERIFY(!state.recordPlayback(key, now));
+        }
+        QVERIFY(state.recordPlayback(key, now));
+    }
+
     void resolver()
     {
         const QJsonObject source{{"id", "fixture"}, {"type", "community"}, {"source", "http://localhost/pack"}};
@@ -68,6 +166,14 @@ private slots:
         QCOMPARE(meta.value("pointsOfInterest").toObject().value("0").toString(), "Summit");
         QVERIFY(!SourceResolver::parse(source, QUrl("https://localhost/m.json"), "{\"manifestUrl\":\"http://localhost/down\"}").valid());
         QVERIFY(!SourceResolver::remoteUrl(QUrl("file:///etc/passwd")));
+        for (const auto &url : {"http://user:password@localhost/manifest.json", "https://user@localhost/clip",
+                 "http://user%3Apassword@localhost/clip"}) {
+            QVERIFY(!SourceResolver::remoteUrl(QUrl(url)));
+            QVERIFY(SourceResolver::resolveRemote(base, QUrl(url)).isEmpty());
+        }
+        const auto apple = SourceResolver::parse(source, QUrl("https://sylvan.apple.com/catalogue.json"),
+            "{\"assets\":[{\"id\":\"old\",\"url-1080-H264\":\"http://sylvan.apple.com/old.mp4\"}]}");
+        QVERIFY(apple.valid()); QCOMPARE(apple.representations.first().url, QUrl("https://sylvan.apple.com/old.mp4"));
         for (const auto &reference : {"", "  "}) {
             const auto invalid = QJsonDocument(QJsonObject{{"assets", QJsonArray{QJsonObject{{"id", "empty"}, {"url-1080-H264", reference}}}}}).toJson();
             QVERIFY(!SourceResolver::parse(source, base, invalid).valid());

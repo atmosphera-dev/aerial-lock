@@ -25,8 +25,8 @@ public:
     bool cancel(const QString &id);
     void setPolicyReason(const QString &reason);
     void evaluate(); // Also the injected-clock test seam, same timer path.
-    QJsonObject job(const QString &id) const { return id == active ? current : state.jobs().value(id).toObject(); }
-    QJsonObject jobs() const { auto result = state.jobs(); if (!active.isEmpty()) result[active] = current; return result; }
+    QJsonObject job(const QString &id) const;
+    QJsonObject jobs() const { auto result = state.jobs(); if (!active.isEmpty()) result[active] = job(active); return result; }
     QString status() const { return phase; }
     QString deferReason() const { return reason; }
     QString automaticDeferReason() const { return automaticReason(); }
@@ -46,8 +46,11 @@ private:
     bool reconcile();
     void sizeCandidates();
     void nextTransfer();
+    void startTransfer(const Representation &rep);
+    void plan();
     void finish(const QString &error = {});
-    bool save();
+    void save(std::function<void()> continuation);
+    void retryPersistence();
     void invalidate();
     void publishState(const QString &phase, const QString &reason = {});
     QList<Representation> selected() const;
@@ -60,7 +63,8 @@ private:
     QString probe;
     QByteArray appleRoot;
     std::function<qint64()> clock;
-    QTimer timer;
+    QTimer timer, persistenceTimer;
+    std::function<void()> afterPersistence;
     QPointer<ManifestStore> manifest;
     QPointer<RepresentationSizer> sizer;
     QPointer<Transfer> transfer;
@@ -73,6 +77,7 @@ private:
     QMap<QString, int> available;
     qsizetype sourceIndex = 0;
     qint64 next = 0;
+    quint64 decision = 0;
     bool running = false, scheduled = false, invalidated = false;
 };
 }

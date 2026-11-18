@@ -72,6 +72,8 @@ def activation(args):
     thread.start()
     helper = ["sudo", "python3", str(Path(__file__).with_name("companion-login-fixture.py")),
               "--root", str(args.root), "--vm-record", str(args.vm_record)]
+    from private_runtime import PrivateRuntime
+    runtime = PrivateRuntime("bus")
     account = login = bus = policy_bus = None
     result = {"case": "activation", "exit": 1}
     result["sourceIdentity"] = owned.record["current_source_identity"]
@@ -189,7 +191,7 @@ def activation(args):
         config.parent.mkdir()
         config.write_text('{"sources":[],"acquisition":{"automatic":{"enabled":false}}}')
         busconfig = output / "bus.conf"
-        busconfig.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth><listen>unix:path=' + str(output / "bus")
+        busconfig.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth><listen>unix:path=' + str(runtime.path / "bus")
                              + '</listen><servicedir>/usr/share/dbus-1/services</servicedir><policy context="default">'
                                '<allow user="*"/><allow send_destination="*"/><allow receive_sender="*"/>'
                                '<allow own="*"/></policy></busconfig>')
@@ -214,6 +216,7 @@ def activation(args):
         if bus:
             bus.terminate()
             bus.wait(timeout=10)
+        runtime.cleanup()
         if account:
             run([*helper, "remove"])
         if login:

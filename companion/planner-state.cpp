@@ -55,7 +55,7 @@ bool PlannerState::failed(const QString &key, const QString &error, int httpStat
     if (!contentKey(key)) return false;
     auto retry = document.value("retry").toObject();
     const auto attempts = std::min(31, retry.value(key).toObject().value("attempts").toInt() + 1);
-    const bool transient = error == "TransportError" || error == "Timeout" || error == "TransferFailed"
+    const bool transient = error == "TransportError" || error == "Timeout" || error == "TransferFailed" || error == "StorageError"
         || (error == "HttpError" && (httpStatus == 408 || httpStatus == 429 || httpStatus >= 500));
     // Retry policy bounds scheduler churn, not content volume or eligibility.
     const qint64 base = std::min<qint64>(86400, qint64(30) << std::min(12, attempts - 1));

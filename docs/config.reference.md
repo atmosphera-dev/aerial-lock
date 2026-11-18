@@ -62,6 +62,14 @@ configs lacking both `sources` and legacy video keys inherit it. Explicit empty,
 custom and older Apple sources remain unchanged. Invalid `sources` is diagnosed,
 not treated as permission to contact Apple.
 
+Remote URLs cannot contain user information (`user:password@host`). Prefer
+HTTPS, especially for private query-token links. Explicit HTTP sources remain
+supported for compatibility and local servers; their URLs and content are not
+encrypted. Older Apple media links on `sylvan.apple.com` are upgraded to HTTPS,
+without an HTTP fallback. Normal system TLS verification applies; the bundled
+Apple root is a fallback only for that host, never arbitrary providers or hosts
+reached through redirects.
+
 Each entry needs `type`, `name`, and `source` (all strings). `type` is one
 of `file`, `folder`, `apple`, `community`. A malformed or unknown entry is
 dropped with a startup warning naming its index (`sources[2].type`); the

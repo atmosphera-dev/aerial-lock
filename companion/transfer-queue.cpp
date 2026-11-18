@@ -30,6 +30,8 @@ TransferQueue::TransferQueue(ConfigRepository &config, CacheStore &cache, Planne
 {
     timer.setSingleShot(true);
     connect(&timer, &QTimer::timeout, this, &TransferQueue::evaluate);
+    persistenceTimer.setSingleShot(true);
+    connect(&persistenceTimer, &QTimer::timeout, this, &TransferQueue::pump);
     connect(&config, &ConfigRepository::changed, this, [this] { invalidate(); });
 }
 
@@ -106,7 +108,7 @@ void TransferQueue::invalidate()
     if (!running) return;
     // All config changes retire the current decision snapshot; manual jobs stay
     // accepted but must re-evaluate hard bands/source selection and new limits.
-    invalidated = true;
+    invalidated = true; ++decision;
     if (transfer) transfer->cancel("Reevaluate");
     else if (manifest) manifest->cancel();
     else if (sizer) sizer->cancel();
@@ -155,10 +157,41 @@ void TransferQueue::schedule()
     QTimer::singleShot(0, this, [this] { scheduled = false; pump(); });
 }
 
-bool TransferQueue::save()
+QJsonObject TransferQueue::job(const QString &id) const
 {
-    if (!state.saveJob(active, current)) { publishState("error", "StorageError"); return false; }
-    emit jobChanged(active); return true;
+    if (id != active) return state.jobs().value(id).toObject();
+    auto visible = current;
+    if (afterPersistence) {
+        // An in-memory terminal transition is not a durable job result.
+        visible.remove("finishedAt"); visible["state"] = "recovering"; visible["errorCode"] = "StorageError";
+    }
+    return visible;
+}
+
+void TransferQueue::save(std::function<void()> continuation)
+{
+    const auto id = active;
+    const auto epoch = decision;
+    afterPersistence = [this, id, epoch, continuation = std::move(continuation)] {
+        if (id != active || epoch != decision) { schedule(); return; }
+        continuation();
+    };
+    retryPersistence();
+}
+
+void TransferQueue::retryPersistence()
+{
+    if (!afterPersistence) return;
+    if (!state.saveJob(active, current)) {
+        publishState("error", "StorageError");
+        persistenceTimer.start(1000);
+        return;
+    }
+    persistenceTimer.stop();
+    auto continuation = std::move(afterPersistence);
+    afterPersistence = {};
+    emit jobChanged(active);
+    continuation();
 }
 
 void TransferQueue::publishState(const QString &value, const QString &defer)
@@ -169,11 +202,12 @@ void TransferQueue::publishState(const QString &value, const QString &defer)
 void TransferQueue::pump()
 {
     if (transfer || manifest || sizer) return;
+    if (afterPersistence) { retryPersistence(); return; }
     if (!active.isEmpty()) {
         if (!invalidated) return;
         current["state"] = "queued";
-        if (!save()) return;
-        pending.prepend(active); active.clear();
+        save([this] { pending.prepend(active); active.clear(); schedule(); });
+        return;
     }
     invalidated = false;
     if (pending.isEmpty()) {
@@ -182,10 +216,14 @@ void TransferQueue::pump()
         else if (phase == "planning" || phase == "downloading") publishState("idle");
         return;
     }
-    active = pending.takeFirst(); current = state.jobs().value(active).toObject();
+    active = pending.takeFirst(); ++decision; current = state.jobs().value(active).toObject();
     if (terminal(current)) { active.clear(); schedule(); return; }
     current["state"] = "planning"; current["received"] = 0; current["totalKnown"] = false;
-    if (!save()) return;
+    save([this] { plan(); });
+}
+
+void TransferQueue::plan()
+{
     publishState("planning");
     const auto &doc = config.document();
     sources.clear(); catalogue.clear(); attempted.clear(); available.clear(); sourceIndex = 0;
@@ -241,8 +279,7 @@ void TransferQueue::nextManifest()
             auto errors = current.value("errors").toObject(); errors[source.value("id").toString()] = failure;
             current["errors"] = errors;
         }
-        if (!save()) return;
-        nextManifest();
+        save([this] { nextManifest(); });
     });
     manifest->refresh(source);
 }
@@ -315,6 +352,7 @@ int TransferQueue::readyCount() const
 
 void TransferQueue::nextTransfer()
 {
+    if (active.isEmpty()) return;
     if (invalidated) { schedule(); return; }
     if (current.value("kind") == "automatic" && !automaticReason().isEmpty()) { finish(automaticReason()); return; }
     const auto settings = config.document().effective;
@@ -360,7 +398,11 @@ void TransferQueue::nextTransfer()
     attempted.insert(rep.key);
     current["sourceId"] = rep.sourceId; current["assetId"] = rep.assetId; current["assetKey"] = rep.key;
     current["state"] = "downloading"; current["totalKnown"] = rep.bytes >= 0; current["total"] = std::max<qint64>(0, rep.bytes);
-    if (!save()) return;
+    save([this, rep] { startTransfer(rep); });
+}
+
+void TransferQueue::startTransfer(const Representation &rep)
+{
     publishState("downloading");
     transfer = new Transfer(cache, transport, rep, probe, appleRoot, clock, this);
     connect(transfer, &Transfer::progress, this, [this] {
@@ -382,10 +424,14 @@ void TransferQueue::nextTransfer()
             state.failed(rep.key, failure, http.status, http.headers.value("retry-after"));
             auto errors = current.value("errors").toObject(); errors[rep.sourceId] = failure; current["errors"] = errors;
         }
-        if (!save()) return;
-        if (failure == "CacheFull") { finish(failure); return; }
-        if (failure == "Cancelled") { finish(failure); return; }
-        QTimer::singleShot(0, this, &TransferQueue::nextTransfer);
+        save([this, failure] {
+            if (failure == "CacheFull" || failure == "Cancelled") { finish(failure); return; }
+            const auto id = active;
+            const auto epoch = decision;
+            QTimer::singleShot(0, this, [this, id, epoch] {
+                if (!active.isEmpty() && active == id && decision == epoch) nextTransfer();
+            });
+        });
     });
     transfer->start();
 }
@@ -396,17 +442,18 @@ void TransferQueue::finish(const QString &error)
     current["ready"] = readyCount(); current["errorCode"] = error;
     current["state"] = error.isEmpty() ? "succeeded" : error == "Cancelled" ? "cancelled" : deferred ? "deferred" : "failed";
     current["finishedAt"] = clock();
-    if (!save()) return;
-    active.clear();
-    armCheck();
-    publishState(error.isEmpty() ? "idle" : deferred ? "deferred" : "error", error);
-    schedule();
+    save([this, error, deferred] {
+        active.clear(); ++decision;
+        armCheck();
+        publishState(error.isEmpty() ? "idle" : deferred ? "deferred" : "error", error);
+        schedule();
+    });
 }
 
 bool TransferQueue::cancel(const QString &id)
 {
-    if (id == active) {
-        invalidated = false;
+    if (!active.isEmpty() && id == active) {
+        invalidated = false; ++decision;
         current["cancelRequested"] = true;
         if (transfer) transfer->cancel();
         else if (manifest) { disconnect(manifest, nullptr, this, nullptr); delete manifest; manifest = nullptr; finish("Cancelled"); }

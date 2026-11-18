@@ -24,7 +24,7 @@ void HttpOperation::start()
 {
     if (started) return;
     started = true;
-    deadline.start(5 * 60 * 1000);
+    if (original.totalTimeoutMs > 0) deadline.start(original.totalTimeoutMs);
     if (!SourceResolver::remoteUrl(current)) { complete("UnsafeUrl"); return; }
     request();
 }
@@ -46,7 +46,7 @@ void HttpOperation::request(bool appleTrust)
     query.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, -1);
     query.setRawHeader("Accept-Encoding", "identity");
     query.setRawHeader("User-Agent", "aerial-lock-companion/1");
-    query.setTransferTimeout(30000);
+    query.setTransferTimeout(original.inactivityTimeoutMs);
     for (auto it = original.headers.cbegin(); it != original.headers.cend(); ++it) query.setRawHeader(it.key(), it.value());
     if (appleTrust) {
         auto ssl = QSslConfiguration::defaultConfiguration();
