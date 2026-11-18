@@ -436,6 +436,8 @@ install: all
 	install -m 755 $(INPUT_PLUGIN) $(DESTDIR)$(PLUGINROOT)/generic/
 	install -d $(DESTDIR)$(PAMDIR)
 	install -m 644 pam.d/aerial-lock $(DESTDIR)$(PAMDIR)/aerial-lock
+	install -d $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock
+	install -m 644 LICENSE docs/third-party-notices.md $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/
 
 uninstall:
 	rm -rf $(DESTDIR)$(DATADIR)
@@ -455,6 +457,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Companion1.Job1.xml
 	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
 	rm -f $(DESTDIR)$(PAMDIR)/aerial-lock
+	rm -f $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/LICENSE $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/third-party-notices.md
 
 clean:
 	rm -f gen-pam-limits.tmp Config/pam-limits.json Config/build-flags.json

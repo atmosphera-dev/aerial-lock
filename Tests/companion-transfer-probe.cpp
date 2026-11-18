@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
+#include <QNetworkProxy>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QTcpServer>
@@ -79,6 +80,7 @@ public:
     QList<QByteArray> requests;
     QMap<QByteArray, QByteArray> bodies;
     QMap<QByteArray, QString> modes;
+    QMap<QByteArray, QByteArray> redirects;
     QString mode = "full";
     HttpFixture()
     {
@@ -99,10 +101,12 @@ public:
                     QByteArray status = "200 OK", body = bodies.value(target, media), extra = "ETag: \"fixture-one\"\r\n";
                     if (mode == "retry") { status = "429 Too Many Requests"; body.clear(); extra += "Retry-After: 120\r\n"; }
                     if (mode == "conditional" && buffer->contains("If-None-Match:")) { status = "304 Not Modified"; body.clear(); }
-                     if (target == "/redirect") {
-                         status = "302 Found"; body.clear(); extra = "Location: /clip\r\n";
-                     } else if (target == "/emptyredirect") {
-                         status = "302 Found"; body.clear(); extra = "Location: \r\n";
+                    if (target == "/redirect") {
+                        status = "302 Found"; body.clear(); extra = "Location: /clip\r\n";
+                    } else if (redirects.contains(target)) {
+                        status = "302 Found"; body.clear(); extra = "Location: " + redirects.value(target) + "\r\n";
+                    } else if (target == "/emptyredirect") {
+                        status = "302 Found"; body.clear(); extra = "Location: \r\n";
                     } else if (target == "/unsafe") {
                         status = "302 Found"; body.clear(); extra = "Location: file:///etc/passwd\r\n";
                     } else if (mode == "206" || mode == "validator-change" || mode == "missing-validator" || mode == "416") {
@@ -122,6 +126,7 @@ public:
                             }
                         }
                     }
+                    if (mode == "missing") { status = "404 Not Found"; body.clear(); }
                     const auto declared = body.size() + (mode == "lying-length" ? 1 : 0);
                     const bool head = buffer->startsWith("HEAD ");
                     if (head) body.clear();
@@ -184,10 +189,10 @@ public:
     }
     static bool ended(TransferQueue &queue, const QString &job) { return queue.job(job).contains("finishedAt"); }
     struct CommandResult { int code; QByteArray out, error; };
-    CommandResult cli(const QProcessEnvironment &environment, const QStringList &arguments)
+    CommandResult cli(const QProcessEnvironment &environment, const QStringList &arguments, bool legacy = false)
     {
         QProcess process; process.setProcessEnvironment(environment);
-        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", arguments);
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + (legacy ? "/Scripts/aerial-lock-fetch" : "/cli/aerialctl"), arguments);
         if (!process.waitForStarted(5000)) qFatal("CLI failed to start");
         QElapsedTimer timer; timer.start();
         while (process.state() != QProcess::NotRunning && timer.elapsed() < 20000) QTest::qWait(10);
@@ -366,6 +371,56 @@ private slots:
         QSignalSpy done(&playlist, &Transfer::finished); playlist.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
         QCOMPARE(playlist.error(), "ProbeFailed"); QVERIFY(cache.entries().isEmpty());
     }
+    void resumeThroughChangedRedirect()
+    {
+        QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
+        HttpFixture server; server.media = media; QNetworkAccessManager network;
+        server.redirects["/origin"] = "/expired-location"; server.modes["/expired-location"] = "interrupted";
+        const auto representation = rep(server.url("/origin"));
+        {
+            Transfer transfer(cache, network, representation, probe, {}, [] { return 123; });
+            QSignalSpy done(&transfer, &Transfer::finished); transfer.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
+            QVERIFY(!transfer.error().isEmpty()); QCOMPARE(transfer.received(), media.size() / 2);
+        }
+        QCOMPARE(cache.metadata("partials/" + representation.key + ".json").value("url").toString(), representation.url.toString(QUrl::FullyEncoded));
+        server.requests.clear(); server.redirects["/origin"] = "/current-location";
+        server.modes["/expired-location"] = "missing"; server.modes["/current-location"] = "206";
+        Transfer resumed(cache, network, representation, probe, {}, [] { return 124; });
+        QSignalSpy done(&resumed, &Transfer::finished); resumed.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
+        QVERIFY2(resumed.error().isEmpty(), qPrintable(resumed.error()));
+        QCOMPARE(server.requests.size(), 2);
+        QVERIFY(server.requests.first().startsWith("GET /origin "));
+        QVERIFY(server.requests.last().startsWith("GET /current-location "));
+        QVERIFY(server.requests.last().contains("If-Range: \"fixture-one\""));
+        QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
+    }
+    void queueRefreshAfterPermanentUrlFailure()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"old"}); server.modes["/old.mp4"] = "missing";
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        qint64 now = 100000;
+        PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [&now] { return now; }); queue.start();
+        const auto failed = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, failed), 20000);
+        QVERIFY(cache.entries().isEmpty()); QVERIFY(!queue.job(failed).value("errors").toObject().isEmpty());
+        const auto old = SourceResolver::parse(source(server), server.url("/fixture.json"), server.bodies["/fixture.json"]).representations.first();
+        QVERIFY(!state.eligible(old.key));
+        const auto countOldGets = [&] {
+            int count = 0;
+            for (const auto &request : server.requests) if (request.startsWith("GET /old.mp4 ")) ++count;
+            return count;
+        };
+        const auto initialOldGets = countOldGets(); QVERIFY(initialOldGets > 0);
+        // A later ordinary evaluation refreshes metadata, making a changed
+        // representation eligible without clearing the permanent old URL retry.
+        server.bodies["/fixture.json"] = manifest({"new"}); now += 3600;
+        const auto refreshed = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, refreshed), 20000);
+        QCOMPARE(queue.job(refreshed).value("state").toString(), "succeeded");
+        QCOMPARE(cache.entries().size(), 1); QCOMPARE(cache.entries()[0].toObject().value("assetId").toString(), "new");
+        QCOMPARE(countOldGets(), initialOldGets); // Includes the bounded range size probe, not a second payload retry.
+    }
     void manifestsAndSmallestDiscovery()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
@@ -421,6 +476,89 @@ private slots:
         int mediaGets = 0;
         for (const auto &request : server.requests) if (request.startsWith("GET ") && !request.contains(".json ")) ++mediaGets;
         QCOMPARE(mediaGets, 1); // --limit counts already verified eligible media.
+    }
+    void inheritedDefaultAcquisition()
+    {
+        // Use the ordinary shipped descriptor without rewriting it or adding a
+        // user config. Only transport routing is injected; no live CDN traffic.
+        class RoutedTransport : public QNetworkAccessManager {
+        public:
+            QString host;
+            QUrl endpoint;
+            QList<QUrl> requested;
+        protected:
+            QNetworkReply *createRequest(Operation operation, const QNetworkRequest &query, QIODevice *data) override
+            {
+                if (query.url().host() != host) qFatal("default fixture refused an unmapped remote host");
+                requested.append(query.url());
+                auto routed = query;
+                auto url = query.url(); url.setScheme(endpoint.scheme()); url.setHost(endpoint.host()); url.setPort(endpoint.port());
+                routed.setUrl(url);
+                return QNetworkAccessManager::createRequest(operation, routed, data);
+            }
+        } network;
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        const ConfigPaths paths{QStringLiteral(AERIAL_TEST_SOURCE), directory.path() + "/config/config.json",
+            directory.path() + "/cache", directory.path() + "/state", directory.path() + "/run"};
+        ConfigRepository config(paths); QVERIFY(!config.document().present); QVERIFY(config.document().acquisitionAllowed());
+        const auto sources = config.document().effective.value("sources").toArray(); QCOMPARE(sources.size(), 1);
+        const auto source = sources.first().toObject(); QCOMPARE(source.value("id").toString(), "apple-tv");
+        const auto url = SourceResolver::manifestUrl(source);
+        network.host = url.host(); network.endpoint = server.url(); network.setProxy(QNetworkProxy::NoProxy);
+        server.bodies[url.path().toLatin1()] = manifest({"large", "small"});
+        const auto large = url.resolved(QUrl("large.mp4")).path().toLatin1();
+        const auto small = url.resolved(QUrl("small.mp4")).path().toLatin1();
+        server.bodies[large] = media + QByteArray(4096, 0); server.bodies[small] = media;
+        CacheStore cache(paths.cache); PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
+        queue.start();
+        QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), 2, 20000);
+        QTRY_VERIFY(queue.status() != "downloading" && queue.status() != "planning");
+        QList<QByteArray> payloads;
+        for (const auto &request : server.requests) if (request.startsWith("GET ") && request.split(' ').value(1) != url.path().toLatin1())
+            payloads.append(request.split(' ').value(1));
+        QCOMPARE(payloads, (QList<QByteArray>{small, large}));
+        QVERIFY(!QFileInfo::exists(paths.config));
+        ContentSnapshot snapshot(cache.path()); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 2);
+        for (const auto &entry : snapshot.entries()) {
+            QCOMPARE(entry.toObject().value("sourceId").toString(), "apple-tv");
+            QVERIFY(entry.toObject().value("probe").toObject().value("initialFrameDecoded").toBool());
+        }
+    }
+    void compatibilityFrontend()
+    {
+        PolicyPeer peer; QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/first.json"] = manifest({"a1", "a2"}); server.bodies["/second.json"] = manifest({"b1", "b2"});
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("PATH", QStringLiteral(AERIAL_TEST_SOURCE) + "/cli:" + environment.value("PATH"));
+        environment.insert("AERIAL_LOCK_SHELL", QStringLiteral(AERIAL_TEST_SOURCE));
+        environment.insert("DBUS_SYSTEM_BUS_ADDRESS", qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS"));
+        for (const auto *key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            environment.insert(key, directory.path() + '/' + key);
+        OwnedDirectory config(environment.value("XDG_CONFIG_HOME") + "/aerial-lock", true);
+        const auto raw = QJsonDocument(QJsonObject{{"sources", QJsonArray{source(server, "first"), source(server, "second")}},
+            {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson();
+        QVERIFY(config.replace("config.json", raw));
+        for (const auto &args : {QStringList{"--limit"}, QStringList{"--limit", "-1"}, QStringList{"--limit", "1;touch /must-not-exist"},
+                 QStringList{"--other"}, QStringList{"source-id"}}) QCOMPARE(cli(environment, args, true).code, 2);
+        QCOMPARE(cli(environment, {"--help"}, true).code, 0); QVERIFY(server.requests.isEmpty());
+        QProcess process; process.setProcessEnvironment(environment);
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
+        struct Retire { QProcess &p; ~Retire() { if (p.state() != QProcess::NotRunning) { p.terminate(); if (!p.waitForFinished(5000)) { p.kill(); p.waitForFinished(5000); } } } } retire{process};
+        QTRY_VERIFY(QDBusConnection::sessionBus().interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QCOMPARE(cli(environment, {"--limit", "1"}, true).code, 0);
+        const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
+        const auto entries = ContentSnapshot(cache).entries(); QCOMPARE(entries.size(), 2);
+        QMap<QString, int> counts;
+        for (const auto &entry : entries) ++counts[entry.toObject().value("sourceId").toString()];
+        QCOMPARE(counts.value("first"), 1); QCOMPARE(counts.value("second"), 1);
+        QCOMPARE(config.read("config.json", 100000), raw); // The frontend never writes preferences.
+        const auto before = server.requests.size();
+        QCOMPARE(cli(environment, {"--limit", "1"}, true).code, 0);
+        for (int i = before; i < server.requests.size(); ++i) QVERIFY(!server.requests[i].startsWith("GET /a") && !server.requests[i].startsWith("GET /b"));
+        QCOMPARE(cli(environment, {"config", "set", "sources", "[]"}).code, 0);
+        QCOMPARE(cli(environment, {}, true).code, 1);
+        QCOMPARE(ContentSnapshot(cache).entries().size(), 2); // Existing managed files are not discarded.
     }
     void resumeChecksumYieldsToCancellation()
     {

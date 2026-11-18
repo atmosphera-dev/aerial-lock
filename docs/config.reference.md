@@ -1,7 +1,8 @@
 # aerial-lock Configuration Reference
 
-`~/.config/aerial-lock/config.json` is created automatically on first launch
-with defaults.
+Sparse user overrides live at `$XDG_CONFIG_HOME/aerial-lock/config.json`
+(normally `~/.config/aerial-lock/config.json`). A missing file inherits shipped
+defaults without copying them into the user profile.
 
 Bundled defaults are at `/usr/share/aerial-lock/Config/defaults.json`.
 User override at `~/.config/aerial-lock/config.json`.
@@ -10,12 +11,20 @@ Each field follows strict JSON types (numbers are numbers, strings are strings,
 objects are objects), validated **per field**: a field with the wrong type
 falls back to its own bundle default with a startup warning naming the full
 path (e.g. `panel.widthMax`) — the rest of your config is unaffected.
-Unknown fields are ignored. If the file itself is unparseable, the bundle
-defaults are used in full.
+Unknown existing fields survive companion transactions. Invalid newly requested
+settings are rejected without applying valid siblings from the same transaction.
+Malformed/unreadable files are preserved and block acquisition and automatic
+writes; the locker can still use local/default presentation with no remote sources.
 
 Your config is deep-merged onto the bundle defaults: a partial `panel` or
 `colors` object overrides only the fields it names, and omitted sibling
-fields keep their defaults.
+fields keep their defaults. Arrays replace completely: an explicit `sources: []`
+never inherits Apple. The companion is the sole application writer. The locker
+reads once per lock; aerial-idle reads once at startup. Changes made with
+`aerialctl config set <dot.path> <json>` or `reset <dot.path>` use a revisioned
+D-Bus transaction. Stale clients get Conflict (CLI exit 4), not last-writer-wins.
+Direct external editors remain possible, but a noncooperating write can race the
+final compare/rename; atomic replacement is not filesystem compare-and-swap.
 
 ## Fields
 
@@ -26,7 +35,7 @@ fields keep their defaults.
 | `language`         | string  | `"en"`           | I18n language (`en.json`, future `ru.json`)    |
 | `backgroundColor`  | string  | `"#000000"`      | Solid color when no video. CSS hex.            |
 | `theme`            | string  | `"Macintosh.qml"`| Whole-surface theme filename (see below).      |
-| `sources`          | array   | `[]`             | Video sources, played in list order (see below). Requires qt6-mpvqml ≥ 0.2.0. |
+| `sources`          | array   | One Apple TV descriptor | Video sources, played in list order (see below). An explicit array replaces the default. |
 | `preferredResolution` | number | *(absent)*    | `1080` or `2160`. Optional and **not** in the bundle defaults — absence is the signal. See "Resolution" below. |
 | `pamService`       | string  | `"aerial-lock"`  | PAM config under `/etc/pam.d/`                 |
 | `fallbackQuitMs`   | number  | `3000`           | Retry the explicit quit after unlock if the first deferred quit does not complete. |
@@ -46,6 +55,13 @@ behind the panel:
 ]
 ```
 
+The shipped ordinary descriptor is at `Config/defaults.json.sources[0]`, with
+stable ID `apple-tv`. It uses the selected tvOS catalogue URL from that file;
+there is no hidden Apple source or implicit community source. Valid partial
+configs lacking both `sources` and legacy video keys inherit it. Explicit empty,
+custom and older Apple sources remain unchanged. Invalid `sources` is diagnosed,
+not treated as permission to contact Apple.
+
 Each entry needs `type`, `name`, and `source` (all strings). `type` is one
 of `file`, `folder`, `apple`, `community`. A malformed or unknown entry is
 dropped with a startup warning naming its index (`sources[2].type`); the
@@ -57,28 +73,65 @@ Remote sources (`apple`/`community`) may also carry `minResolution` /
 - `file` / `folder` — local; played directly. Missing paths are skipped by
   mpv (error logged, playlist moves on), never a crash.
 - `apple` / `community` — remote packs. The locker never downloads; it plays
-  the pack's cache only when `aerial-lock-fetch` has fetched it (the
-  `entries.json` sentinel exists), else the entry is silently skipped.
+  verified completed managed objects or compatible legacy clips only. Unfetched
+  packs contribute no playable clip.
 
-The cache directory for a remote source is
+The legacy cache directory for a remote source is
 `$XDG_CACHE_HOME/aerial-lock/<name>/` (else `~/.cache/...`), with the name
 sanitized: spaces become `-`, anything outside `[A-Za-z0-9._-]` is stripped.
 Two sources sanitizing to the same name → the later one is dropped with a
 warning.
 
-**Migration from legacy configs:** on first launch with an old config that
-has `video`, `videoDir`, or `apple` but no `sources`, those keys are
-rewritten into `sources` entries (`video` → `file`, `videoDir` → `folder`,
-`apple.enabled: true` → the Apple pack) and removed from your
-`config.json`. The legacy Apple cache lived at `…/aerial-lock/apple/`; the
+Sources can have an explicit stable string `id`. ID-less read-only sources get a
+deterministic identity; service-managed edits persist an ID so a rename or URL
+change does not change source identity. Opaque media storage names include the
+representation identity, not user/provider text.
+
+**Migration from legacy configs:** the shared reader projects old `video`,
+`videoDir` and `apple` keys into sources before default inheritance; an explicit
+`sources` array always wins. Only the companion persists the migration. A
+disabled legacy Apple setting remains disabled. The legacy Apple cache lived
+at `.../aerial-lock/apple/`; the
 migrated Apple source caches at `…/aerial-lock/Apple-TV/` — rename the old
 directory if you want to keep the already-downloaded clips.
+
+### Acquisition and managed cache
+
+All keys below are under the JSON root. Every connection and power toggle is
+independent, including unknown detector states. NetworkManager and UPower are
+read-only observers; their absence is reported as unknown, not asserted to be
+unmetered or AC. Known metering on a VPN's underlying transport still counts.
+
+| # | Key | Default | Meaning |
+|---|---|---|---|
+| 1 | `acquisition.automatic.enabled` | `true` | Automatic work; pause/resume persists this setting. |
+| 2 | `acquisition.automatic.allowedResolutions` | `[1080]` | Allowed heights, 1080 and/or 2160; `[]` allows no automatic quality. |
+| 3 | `acquisition.automatic.allowMetered` | `false` | Permit known metered automatic transfers. |
+| 4 | `acquisition.automatic.connectionTypes` | All `true` | Individually set `ethernet`, `wifi`, `cellular`, `bluetooth`, `vpn`, `other`, `unknown`. |
+| 5 | `acquisition.automatic.power` | All `true` | Individually set `ac`, `battery`, `unknown`. |
+| 6 | `acquisition.checkIntervalSeconds` | `3600` | Positive integer; also reevaluate on config/policy changes. |
+| 7 | `cache.maxBytes` | `10000000000` | Decimal 10 GB, about 9.31 GiB. Zero prevents new managed bytes, never means unlimited. |
+| 8 | `cache.rotationDays` | `7` | Incremental older/least-recently-played replacement; zero disables scheduled rotation. |
+| 9 | `cache.minFreeBytes` | `0` | Optional disk reserve; current usable space is always checked. |
+
+Managed cache: `$XDG_CACHE_HOME/aerial-lock/managed-v1/` (default `~/.cache/...`).
+It counts clips, partials, manifests, indexes and staging once, plus remaining
+reservations for active work. Personal sources and unadopted legacy caches are
+neither counted nor pruned. Playback pins protect an entire episode's playlist,
+even across companion restarts. Lowering a cap below pinned usage stops growth
+and can leave reported over-budget bytes until readers release; it never deletes
+live playlist files to force numerical compliance. The last verified fallback
+is protected. The cap limits storage, not lifetime/monthly download traffic.
+
+Durable jobs, retries, rotation and playback recency use
+`$XDG_STATE_HOME/aerial-lock/` (default `~/.local/state/...`); runtime coordination
+uses `$XDG_RUNTIME_DIR/aerial-lock/`. Bulk staging stays in the disk cache.
 
 ### `idle` (object)
 
 Read once when `aerial-idle` starts. Restart `aerial-idle.service` after editing
-these settings. The locker accepts this object but leaves idle policy to the
-companion. Enabling the service without a user config enables suspend and
+these settings. The locker accepts this object but leaves idle policy to
+aerial-idle. Enabling that optional service without a user config enables suspend and
 logind lock/unlock handling; the inactivity timeout remains off.
 
 | Field | Type | Default | Description |
@@ -92,7 +145,7 @@ The installed `/usr/share/aerial-lock/examples/idle.json` sets a five-minute
 timeout. It is an example only and is never loaded automatically. Copy its
 `idle` object into your config to opt in. Partial objects merge recursively;
 wrong-typed fields (including negative or fractional timeouts) fall back to
-their individual defaults with a warning. The companion never rewrites the file.
+their individual defaults with a warning. The idle daemon never rewrites the file.
 
 ### `powerActions` (object)
 
@@ -162,19 +215,45 @@ apply. Files are read once at startup, so edits apply on the next lock.
 
 ## Fetching remote sources
 
-`aerial-lock-fetch` (opt-in, run manually) downloads every `apple` /
-`community` entry of your `sources` list:
+The headless companion acquires configured remote sources automatically after
+user-manager startup. It chooses the smallest eligible known-size clip first,
+then fills under the cap. Unknown sizes come after known sizes and remain bounded
+during transfer. The locker sends one nonblocking scheduling hint after secure
+engagement, but never downloads, waits for a service reply or changes its frozen
+playlist mid-lock. New completions appear from the next lock, including respawns.
 
 ```
+aerialctl fetch [source-id] [--limit N] [--wait]
 aerial-lock-fetch [--limit N]
 ```
 
-`--limit N` fetches only the first N assets **per source** (good for a
-first run). Existing clips are skipped; partial downloads resume. Requires
-`curl`, `python3`, and `tar`.
+`--limit N` is a ready-clip limit **per source**, with existing verified eligible
+clips counting; zero means no item limit, still under the managed byte cap.
+Partials resume only with compatible representation/validator/range metadata.
+`aerial-lock-fetch` is a thin `aerialctl fetch --wait` frontend, with exits 0
+(at least one eligible verified clip ready), 1 (operation/no ready clip), 2
+(bad arguments). No independent downloader or config writer remains.
 
-The locker itself never touches the network. An empty `sources` list (the
-default) is the solid `backgroundColor`.
+Manual fetch bypasses automatic pause, connection, metering, power and quality
+allowance, not source bands, source selection, disk/cap, TLS or validation. It
+does not add Apple to `sources: []` or promise success offline. CLI status/jobs
+report counts, policy reasons and partial-source errors without routine token
+URLs. Settings inspection can reveal configured URLs; treat that output as private.
+
+| # | Command | Purpose |
+|---|---|---|
+| 1 | `aerialctl status --json` | Actual profile, paths, readiness, bytes, policy and jobs. |
+| 2 | `aerialctl config show [--effective] [--json]` | Raw sparse overrides or normalized effective view. |
+| 3 | `aerialctl config set <dot.path> <json>` / `reset <dot.path>` | Revisioned sparse changes; reset removes an override. |
+| 4 | `aerialctl content ensure` / `refresh [source-id]` | Normal-policy planning or metadata refresh. |
+| 5 | `aerialctl content pause` / `resume` | Persist automatic enabled false/true; playback and manual fetch remain available. |
+| 6 | `aerialctl jobs [--watch]` / `cancel <job-path>` | Observe durable work or cancel, retaining resumable partials. |
+| 7 | `aerialctl cache status` / `prune [--dry-run]` | Managed accounting and safe reclamation only. |
+
+CLI exits: 0 accepted/success (`--wait` requires the requested ready outcome),
+1 failure, 2 usage, 3 automatic-policy deferred, 4 settings conflict. An accepted
+service job survives its CLI exiting. Manual fetch never exits 3 for automation
+settings. A masked service cannot be activated; unmask before manual use.
 
 ### Theme
 
@@ -191,14 +270,16 @@ Bundled: `Macintosh.qml`, `Windows7.qml`, `MaterialYou.qml`, `Enfield.qml`,
 context object, and the topic-preference semantics that let a theme bias
 which of your configured clips play (Enfield prefers mountains).
 
-Only clips that fully downloaded play: a remote clip needs its `.mp4`
-present and non-empty plus its sibling `.mp4.done` marker — a partial or
-interrupted download is skipped, never played.
+New managed clips play only after successful transfer, size/checksum checks when
+available, isolated initial-frame decoding, immutable publication and indexing.
+A partial filename never means completion. Legacy nonempty `.mp4` plus `.done`
+continues to be readable without automatic adoption or pruning.
 
 ### Resolution
 
-Fetch picks one URL per asset from a **hard band** and a **soft
-preference**:
+Fetch picks one URL per asset from a **hard band** and a **soft preference**.
+Automatic work first intersects the band with `allowedResolutions` (default
+`[1080]`); manual fetch ignores only that automatic allowance.
 
 - The band is the source's optional `minResolution`/`maxResolution`
   (`1080` or `2160`). Nothing outside it is downloaded — a 4K-only pack
@@ -210,8 +291,8 @@ preference**:
   clips.
 
 `preferredResolution` is **existence-written, never overwritten**: when the
-key is absent from your `config.json` and outputs are visible (the locker
-on start, or fetch under niri/Hyprland), it is stamped from the largest
+key is absent from your `config.json` and a secure lock supplies an observed
+display hint, the companion stamps it from the largest
 connected output's logical height (`>= 2160` → 2160, else 1080). A key
 already in the file is never touched — even an invalid one (an out-of-band
 value is ignored with a warning, and left in the file). If the key is

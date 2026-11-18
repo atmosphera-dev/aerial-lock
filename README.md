@@ -12,7 +12,7 @@ Not compatible with GNOME or KDE Plasma (their compositors do not expose
 
 ## Installation
 
-Not yet packaged for any distribution — install from this repo:
+Build and install this tree:
 
 ```
 sudo make install
@@ -29,23 +29,95 @@ the optional signal-unlock examples below use `pkill` (`procps-ng` on Arch).
 With an empty
 `sources` list the player is never started and the screen stays
 `backgroundColor`; with sources it shows `backgroundColor` until the first
-frame decodes. The `aerial-lock-fetch` pack downloader (optional) needs
-`curl`, `python3`, and `tar`.
+frame decodes. The headless `aerial-companion` content service also requires
+Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
+`aerialctl` and the compatible `aerial-lock-fetch` command use that service;
+they do not require curl, Python or tar. Python remains test tooling.
 
 Building requires a C/C++ compiler, Make, pkg-config, Qt6 Core/Gui/DBus/Quick
 development files, PAM headers, wayland-client and wayland-protocols (including
 `wayland-scanner`). On Arch these are provided by `base-devel`, `qt6-base`,
-`qt6-declarative`, `pam`, `wayland`, `wayland-protocols` and `libxkbcommon`; Git is needed to build from a clone.
+`qt6-declarative`, `pam`, `wayland`,
+`wayland-protocols`, `libxkbcommon`, `libarchive` and `ffmpeg`; Git is needed
+to build from a clone. Arch's `qdbusxml2cpp` is supplied by `qt6-base`.
 
 With the default `PREFIX=/usr`, installation includes `aerial-lock`,
-`aerial-lock-supervisor`, `aerial-unlock`, `aerial-lock-fetch` and `aerial-idle`
-in `/usr/bin`, the shared guarded runner, `aerial-lock-auth` and
-`aerial-lock-emergency` under `/usr/libexec/aerial-lock`, its
+`aerial-lock-supervisor`, `aerial-unlock`, `aerialctl`, `aerial-lock-fetch` and
+`aerial-idle` in `/usr/bin`, the shared guarded runner, `aerial-lock-auth`,
+`aerial-lock-emergency`, `aerial-companion` and its isolated media probe under
+`/usr/libexec/aerial-lock`, its
 private plugin under `/usr/lib/aerial-lock/qt-plugins`, the QML/config/theme
 bundle under `/usr/share/aerial-lock`, and `/etc/pam.d/aerial-lock`. It also
 installs `/usr/lib/systemd/user/aerial-idle.service` and
 `/usr/share/aerial-lock/examples/idle.json`. The service is **not enabled
-automatically**. `PREFIX` and `DESTDIR` select the install layout.
+automatically**. The separate content service is enabled for future
+user-manager startup through a vendor wants link. Installation/upgrade does
+not start or restart it in running sessions. `PREFIX` and `DESTDIR` select
+the layout; Arch packaging uses `LIBEXECDIR=/usr/lib/aerial-lock`.
+
+### First use and automatic content
+
+With no user config, Apple TV is the inherited video source. The content service
+starts at your next login/user-manager startup, downloads the smallest eligible
+clip first, then fills a 10 GB managed cache. Defaults: up to 1080p, no known
+metered connections, other connection types allowed, both AC and battery allowed,
+hourly checks and weekly incremental replacement. Every choice is configurable.
+The cache cap is not a monthly traffic allowance: filling and later rotation
+consume network traffic.
+
+To start now, choose either:
+
+```sh
+systemctl --user start aerial-companion
+aerialctl fetch --limit 1 --wait
+```
+
+A retained/lingering user manager might not restart at the next graphical login.
+D-Bus activation is a backup when the locker or CLI needs the service. The
+service does not require aerial-idle, a tray, Wayland or a graphical session.
+See [setup](docs/setup.md) for masks and systemd-less use.
+
+Until a clip completes, locks show solid colour. The locker never downloads or
+waits for the service: it freezes local content for each lock episode, including
+respawns. New clips play from the next lock. Password authentication and emergency
+recovery remain independent of content acquisition.
+
+Existing explicit `sources` arrays, including `[]`, replace the inherited source
+unchanged. A valid partial config with no `sources` or legacy video keys inherits
+Apple; malformed/unreadable config or an invalid source list does not authorize
+Apple downloads. Existing older Apple URLs are not rewritten.
+
+```sh
+aerialctl status --json
+aerialctl config show --effective
+aerialctl config set acquisition.automatic.enabled false  # pause automatic work
+aerialctl config set sources '[]'                         # no video sources
+aerialctl config set acquisition.automatic.allowMetered true
+aerialctl config set acquisition.automatic.power.battery false
+aerialctl config set acquisition.automatic.allowedResolutions '[1080,2160]'
+aerialctl config set cache.maxBytes 10000000000
+```
+
+Manual `aerialctl fetch` always attempts work despite automatic pause, metering,
+connection, power or automatic-quality settings. It still honors configured
+sources, hard source resolution bands, cache/disk limits, TLS and media validation;
+offline transport can fail. `systemctl --user mask aerial-companion.service`
+prevents service startup/activation; unlike pause, it also prevents manual fetch.
+
+### Apple footage and credits
+
+Apple's aerial videos are produced by Apple. aerial-lock downloads them directly
+from Apple's content delivery network onto your computer. We do not host, mirror
+or redistribute them. Apple, macOS, tvOS, Apple TV and Mac are trademarks of Apple
+Inc. aerial-lock is not affiliated with Apple.
+
+This direct-download approach and disclosure are adapted from
+[Aerial](https://aerialscreensaver.github.io/legal), originally started by John
+Coates and maintained by Guillaume Louel and contributors. As upstream states:
+"It does not host, mirror or redistribute them." No videos are included in this
+repository or package. The software license does not grant rights to Apple's
+footage or to separately configured community media. See
+[third-party notices](docs/third-party-notices.md) for the upstream software notice.
 
 ### Build-time PAM_MAX_RESP_SIZE override
 
@@ -260,7 +332,10 @@ at the deadline exits abnormally so the supervisor can retry, never as success.
 
 ## Configuration
 
-On first launch, `~/.config/aerial-lock/config.json` is created with defaults.
+Bundled defaults are read without creating a full user config. Sparse overrides
+live at `$XDG_CONFIG_HOME/aerial-lock/config.json` (normally `~/.config/...`).
+The companion alone writes application settings, through revisioned CLI/D-Bus
+transactions; the locker and idle daemon only read them.
 See [`docs/config.reference.md`](docs/config.reference.md) for available options.
 
 Override individual translated strings in
@@ -307,28 +382,30 @@ playlist:
 ]
 ```
 
-Remote packs are downloaded by hand — the locker never fetches:
+The content service automatically acquires configured remote packs. To fetch
+manually and wait for a verified clip:
 
 ```
-aerial-lock-fetch --limit 5     # a first, small run
-aerial-lock-fetch               # everything in sources[]
+aerialctl fetch --limit 1 --wait
+aerial-lock-fetch --limit 1     # compatible frontend, same per-source limit
 ```
 
-Clips cache under `~/.cache/aerial-lock/<name>/`; a pack plays only once
-fetched, and an unfetched pack is skipped silently. Clip resolution follows
-a per-source `minResolution`/`maxResolution` band plus a global
-`preferredResolution`, which is stamped into your config from your largest
-display the first time outputs are visible (and never overwritten after
-that). See [`docs/config.reference.md`](docs/config.reference.md) for the
-full `sources` reference, the resolution rules, and migration from the old
-`video`/`videoDir`/`apple` keys.
+New clips live under `~/.cache/aerial-lock/managed-v1/`, with validated immutable
+objects and local indexes. Compatible old name-based caches remain readable,
+but are not adopted, counted against the managed cap or pruned. Personal files
+and folders remain unmanaged. Source min/max are hard limits; the optional
+`preferredResolution` selects within that band and, for automatic work, within
+the allowed heights. A secure lock's display hint can save an absent preference;
+an existing value is never overwritten. See the
+[configuration reference](docs/config.reference.md) for source IDs, policy,
+resolution, cache accounting and legacy migration.
 
 ### Environment overrides
 
 | Variable                    | Overrides      | Purpose                        |
 |-----------------------------|----------------|--------------------------------|
 | `AERIAL_LOCK_PAM_SERVICE`   | `pamService`   | Dev testing without installing PAM file |
-| `AERIAL_LOCK_SHELL` | Shell/bundle directory | Shared by the supervisor and aerial-idle; unset or empty uses compiled `DATADIR` |
+| `AERIAL_LOCK_SHELL` | Shell/bundle directory | Shared by the locker, idle, companion and CLI; unset or empty uses compiled `DATADIR`. Custom profiles require a matching companion on a private bus. |
 
 ## Compositor support
 
@@ -501,11 +578,11 @@ supervisor never performs takeover-and-unlock automatically.
 
 ## Roadmap
 
-Idle/suspend/session events and the opt-in aerial-idle user unit are
-implemented. Distribution packaging is being prepared; no AUR package has
-been published yet. Future work includes POI overlays / location metadata
-for video backgrounds. Local sources and Apple/community packs, including
-fetch and cache, are already implemented.
+The optional idle daemon and headless content service have separate roles.
+Later work includes settings/tray clients, catalogue browsing and advanced
+rotation controls over the companion API, plus POI/location presentation.
+Local sources and configured Apple/community packs remain first-class sources;
+community content is never added automatically.
 
 ## License
 
