@@ -573,3 +573,30 @@ launch or control and refuses every mismatch; there is no fallback.
 
 Any source transfer invalidates the binary hashes: rebuild and re-record them
 before a product run.
+# Companion locker notifications
+
+`companion-hint` exercises the actual native one-way client, with a nonreplying
+private-bus peer and direct libdbus inspection of NO_REPLY_EXPECTED/NO_AUTO_START.
+The common profile predicate excludes each changed XDG root or dev bundle from
+activation. `companion-owner` also supplies an activatable marker executable and
+requires a custom-profile CLI invocation not to launch it.
+
+`serviceCliRestart` replaces the actual service while a waiting CLI is stopped.
+The same-profile row requires its resumed durable job result; a different-bundle
+owner sharing that job store must instead produce ProfileMismatch. CLI job and
+status observations use the verified unique owner, not an unchecked well-known
+name after replacement.
+
+After the identity-bound prepare step, this incremental installed gate proves
+cached managed playback, a post-engagement output-height hint, local decoded-frame
+recency and the service's matching recency update, plus ordinary PAM unlock:
+
+```sh
+# Inside aerial-companion on ark, ROOT/TMPDIR/VM_RECORD as above.
+python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case playback --backend niri
+```
+
+This is not the held-transfer/next-episode locker acceptance. Recency reuses the
+existing selected background's decoded-frame observation; it is not inferred
+from a playlist filename or `hasVideo`. Failure/retired screenshot transactions
+cannot emit that observation, and reports never activate an absent companion.

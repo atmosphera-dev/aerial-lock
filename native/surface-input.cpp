@@ -6,6 +6,7 @@
 #include "power-actions.h"
 #include "local-config.h"
 #include "local-content.h"
+#include "companion-client.h"
 #include <QGenericPlugin>
 #include <qqml.h>
 #include <cstdlib>
@@ -43,6 +44,7 @@ public:
             qmlRegisterType<PowerActions>("AerialLock.Native", 1, 0, "PowerActions");
             qmlRegisterType<LocalConfig>("AerialLock.Native", 1, 0, "LocalConfig");
             qmlRegisterType<LocalContent>("AerialLock.Native", 1, 0, "LocalContent");
+            qmlRegisterType<CompanionContentClient>("AerialLock.Native", 1, 0, "CompanionClient");
             new SurfaceInputFilter(qGuiApp);
             if (!qputenv("AERIAL_LOCK_SURFACE_INPUT_PID", QByteArray::number(getpid()))) ::_exit(72);
         }

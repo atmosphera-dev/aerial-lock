@@ -18,6 +18,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 
 using namespace Aerial;
@@ -514,6 +515,72 @@ private slots:
             QTest::newRow(kind) << QString::fromLatin1(kind);
     }
     void serviceCliPolicy_data() { policyQueue_data(); }
+    void serviceCliRestart_data()
+    {
+        QTest::addColumn<bool>("differentProfile");
+        QTest::newRow("same-profile") << false;
+        QTest::newRow("different-profile") << true;
+    }
+    void serviceCliRestart()
+    {
+        QFETCH(bool, differentProfile);
+        PolicyPeer peer; QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"clip"});
+        server.modes["/clip.mp4"] = "hold-partial";
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("AERIAL_LOCK_SHELL", QStringLiteral(AERIAL_TEST_SOURCE));
+        environment.insert("DBUS_SYSTEM_BUS_ADDRESS", qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS"));
+        for (const auto *key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            environment.insert(key, directory.path() + '/' + key);
+        OwnedDirectory config(environment.value("XDG_CONFIG_HOME") + "/aerial-lock", true);
+        QVERIFY(config.replace("config.json", QJsonDocument(QJsonObject{{"sources", QJsonArray{source(server)}},
+            {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson()));
+        QProcess process, caller;
+        process.setProcessEnvironment(environment); caller.setProcessEnvironment(environment);
+        struct Retire {
+            QProcess &process;
+            ~Retire() {
+                if (process.state() == QProcess::NotRunning) return;
+                ::kill(pid_t(process.processId()), SIGCONT);
+                process.terminate(); if (!process.waitForFinished(5000)) { process.kill(); process.waitForFinished(5000); }
+            }
+        } retireOwner{process}, retireCaller{caller};
+        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion";
+        process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
+        auto bus = QDBusConnection::sessionBus();
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        const auto oldOwner = bus.interface()->serviceOwner("org.aeriallock.Companion1").value();
+        caller.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", {"fetch", "--limit", "1", "--wait", "--json"});
+        QVERIFY(caller.waitForStarted(5000));
+        const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
+        QTRY_VERIFY_WITH_TIMEOUT(!QDir(cache + "/partials").entryList({"*.part"}, QDir::Files).isEmpty(), 10000);
+        // Freeze only the CLI observer, not accepted service work. Replace the
+        // real owner while it sleeps, then require a durable-result resnapshot.
+        QCOMPARE(::kill(pid_t(caller.processId()), SIGSTOP), 0);
+        process.terminate(); QVERIFY(process.waitForFinished(5000));
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        server.modes.remove("/clip.mp4");
+        if (differentProfile) {
+            const auto bundle = directory.path() + "/different-bundle";
+            QVERIFY(QDir().mkpath(bundle + "/Config"));
+            for (const auto *file : {"defaults.json", "settings-schema.json"})
+                QVERIFY(QFile::copy(QStringLiteral(AERIAL_TEST_SOURCE) + "/Config/" + file, bundle + "/Config/" + file));
+            auto changed = environment; changed.insert("AERIAL_LOCK_SHELL", bundle);
+            process.setProcessEnvironment(changed);
+        }
+        process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QVERIFY(bus.interface()->serviceOwner("org.aeriallock.Companion1").value() != oldOwner);
+        QTRY_COMPARE_WITH_TIMEOUT(ContentSnapshot(cache).entries().size(), 1, 20000);
+        QCOMPARE(::kill(pid_t(caller.processId()), SIGCONT), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(caller.state(), QProcess::NotRunning, 10000);
+        const auto error = caller.readAllStandardError();
+        QVERIFY2(caller.exitCode() == (differentProfile ? 1 : 0), error.constData());
+        if (differentProfile) { QVERIFY(error.contains("ProfileMismatch")); return; }
+        const auto result = QJsonDocument::fromJson(caller.readAllStandardOutput()).object();
+        QCOMPARE(result.value("State").toString(), "succeeded");
+        QCOMPARE(result.value("ReadyClips").toInt(), 1);
+    }
     void serviceCliTransactions()
     {
         PolicyPeer peer; QTemporaryDir directory; HttpFixture server; server.media = media;

@@ -24,6 +24,9 @@ struct ConfigDocument {
 };
 
 ConfigDocument readConfig(const ConfigPaths &paths);
+// A missing bus owner may be activated only from the ordinary installed profile.
+// Custom profiles must address an existing owner and compare its profile first.
+bool isDefaultProfile(const ConfigPaths &paths, const QString &installedBundle, const QString &home, const QString &runtime);
 QJsonObject mergeObjects(QJsonObject base, const QJsonObject &overrides);
 QJsonObject mergePatch(QJsonObject base, const QJsonObject &patch);
 // Validate only requested leaves. Existing unknown/invalid fields are preserved.

@@ -23,6 +23,7 @@ Item {
     property bool samplingActive: false
 
     signal loadFailed(string message)
+    signal frameObserved(string path)
 
     readonly property var filters: ["*.mp4", "*.mkv", "*.webm", "*.mov"]
 
@@ -109,6 +110,10 @@ Item {
         shotDirectory: root.frameDirectory
         active: root.samplingActive
         onSamplingFailed: function (reason) { root.loadFailed(reason) }
+        onFrameObserved: function (path) {
+            if (!root.stopped && !root.mediaFailed && videoPlayer.rendererReady)
+                root.frameObserved(path)
+        }
     }
 
     MpvPlayer {

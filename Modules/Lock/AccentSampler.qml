@@ -25,6 +25,8 @@ Item {
     property bool active: false
     readonly property color accent: internal.accent
     signal samplingFailed(string reason)
+    // A decoded frame was read successfully, independently of its palette.
+    signal frameObserved(string path)
 
     QtObject {
         id: internal
@@ -301,8 +303,10 @@ Item {
                 const pixels = ctx.getImageData(0, 0, width, height).data
                 const seed = AccentTone.seedFromPixels(pixels, width, height)
                 if (internal.pending === ticket && root.current(ticket)
-                        && generation === internal.generation)
+                        && generation === internal.generation) {
                     internal.accent = seed ? Qt.hsla(seed.h, seed.s, seed.l, 1) : "transparent"
+                    root.frameObserved(ticket.track)
+                }
             } catch (error) {
                 retry = true
                 root.samplingFailed("screenshot paint failed")

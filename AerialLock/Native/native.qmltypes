@@ -2,6 +2,23 @@ import QtQuick.tooling 1.2
 
 Module {
     Component {
+        name: "CompanionContentClient"
+        prototype: "QObject"
+        exports: ["AerialLock.Native/CompanionClient 1.0"]
+        Method {
+            name: "ensureContent"
+            Parameter { name: "bundle"; type: "QString" }
+            Parameter { name: "profile"; type: "QString" }
+            Parameter { name: "height"; type: "int" }
+            Parameter { name: "topics"; type: "QStringList" }
+        }
+        Method {
+            name: "reportPlayback"
+            Parameter { name: "profile"; type: "QString" }
+            Parameter { name: "assetKey"; type: "QString" }
+        }
+    }
+    Component {
         name: "LocalContent"
         prototype: "QObject"
         exports: ["AerialLock.Native/LocalContent 1.0"]

@@ -170,6 +170,8 @@ Scope {
         config: root.config
     }
 
+    CompanionClient { id: companion }
+
     // d38: the one context object the panel (and future themes) consume.
     // Lock.qml owns every binding into it; LockContext itself knows no
     // PAM, no MpvQml, no pixels.
@@ -520,6 +522,13 @@ Scope {
         root.themeTopicsSet = true
         sourceCache.topics = themeHost.preferredTopics
         sourceCache.begin()
+        // The supervisor's episode snapshot and the local reader pin precede
+        // this optional hint. It never waits for inventory or acquisition.
+        var height = 0
+        var screens = Quickshell.screens || []
+        for (var i = 0; i < screens.length; i++)
+            height = Math.max(height, screens[i].height)
+        companion.ensureContent(Quickshell.shellDir, root.config.profile, height, sourceCache.topics)
     }
 
     Compositor {
@@ -688,6 +697,12 @@ Scope {
                     background.items = root.bgItems
                     background.loadFailed.connect(function (message) {
                         root.logger.w("aerial-lock", "video background failed: " + message)
+                    })
+                    background.frameObserved.connect(function (path) {
+                        sourceCache.reportPlayback(path)
+                        var info = sourceCache.lookup(path)
+                        if (info && info.assetKey)
+                            companion.reportPlayback(root.config.profile, info.assetKey)
                     })
                     // Only the consumed (selected) background samples accents.
                     background.frameDirectory = root.frameDirectory

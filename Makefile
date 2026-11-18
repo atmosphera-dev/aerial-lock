@@ -39,7 +39,7 @@ COMPANION_OBJS := $(OBJDIR)/companion-main.o $(OBJDIR)/config-repository.o $(OBJ
 CLI_OBJS := $(OBJDIR)/aerialctl.o $(OBJDIR)/companion_client.o $(CONFIG_OBJS)
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
-INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(OBJDIR)/local-content.o $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(CONFIG_OBJS)
+INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(OBJDIR)/local-content.o $(OBJDIR)/companion-hint.o $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(CONFIG_OBJS)
 GUARD_PLUGIN := native/qt-plugins/generic/libAerialLockConnectionGuard.so
 INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
@@ -159,10 +159,10 @@ supervisor/aerial-lock-supervisor: $(SUPERVISOR_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(SUPERVISOR_OBJS) \
 		$$(pkg-config --libs Qt6Core Qt6DBus wayland-client)
 
-native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h native/power-actions.h native/local-config.h native/local-content.h
+native/surface-input.moc: native/surface-input.cpp native/surface-input.h native/surface-input.json native/auth-context.h native/power-actions.h native/local-config.h native/local-content.h native/companion-client.h
 	/usr/lib/qt6/moc $$(pkg-config --cflags Qt6Quick) $< -o $@
 
-$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc native/power-actions.h native/local-config.h native/local-content.h $(OBJDIR)/native-config
+$(OBJDIR)/surface-input.o: native/surface-input.cpp native/surface-input.h native/surface-input.moc native/power-actions.h native/local-config.h native/local-content.h native/companion-client.h $(OBJDIR)/native-config
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -c $< $$(pkg-config --cflags Qt6Quick Qt6DBus) -o $@
 
 native/auth-context.moc: native/auth-context.h
@@ -243,6 +243,12 @@ $(OBJDIR)/local-content.moc: native/local-content.h | $(OBJDIR)
 
 $(OBJDIR)/local-content.o: native/local-content.cpp native/local-content.h common/content-snapshot.h $(OBJDIR)/local-content.moc $(OBJDIR)/native-config
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core) -o $@
+
+$(OBJDIR)/companion-client.moc: native/companion-client.h | $(OBJDIR)
+	/usr/lib/qt6/moc $< -o $@
+
+$(OBJDIR)/companion-hint.o: native/companion-client.cpp native/companion-client.h common/config-document.h $(OBJDIR)/companion-client.moc $(OBJDIR)/native-config
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
 
 $(OBJDIR)/config-repository.moc: companion/config-repository.h | $(OBJDIR)
 	/usr/lib/qt6/moc $< -o $@
@@ -457,6 +463,7 @@ clean:
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
 	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp
 	rm -f $(OBJDIR)/local-content.o $(OBJDIR)/local-content.moc
+	rm -f $(OBJDIR)/companion-hint.o $(OBJDIR)/companion-client.moc
 	rm -f $(addprefix $(OBJDIR)/,http-operation.moc manifest-store.moc local-probe.moc transfer.moc transfer-queue.moc policy-monitor.moc)
 	@rmdir $(OBJDIR) 2>/dev/null || true
 

@@ -25,13 +25,25 @@ cli = source / "cli/aerialctl"
 processes = []
 with tempfile.TemporaryDirectory(prefix="companion-owner-") as temporary:
     root = Path(temporary)
+    services = root / "services"
+    services.mkdir()
+    marker = root / "unexpected-activation"
+    (services / "org.aeriallock.Companion1.service").write_text(
+        "[D-BUS Service]\nName=org.aeriallock.Companion1\nExec=/usr/bin/touch " + str(marker) + "\n")
 
     def bus(label):
-        process = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--nopidfile", "--print-address=1",
-                                    "--address=unix:path=" + str(root / label)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        config = root / (label + ".conf")
+        config.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth><listen>unix:path=' + str(root / label)
+                          + '</listen><servicedir>' + str(services)
+                          + '</servicedir><policy context="default"><allow user="*"/><allow send_destination="*"/>'
+                            '<allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
+        process = subprocess.Popen(["dbus-daemon", "--config-file=" + str(config), "--nofork", "--nopidfile", "--print-address=1"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         processes.append(process)
         assert select.select([process.stdout], [], [], 5)[0], "bus address not published"
-        return process, process.stdout.readline().decode().strip()
+        address = process.stdout.readline().decode().strip()
+        assert address.startswith("unix:"), "bus did not publish a usable address: " + repr(address)
+        return process, address
 
     def environment(address, label):
         profile = root / label
@@ -63,9 +75,15 @@ with tempfile.TemporaryDirectory(prefix="companion-owner-") as temporary:
         assert command(no_bus, "--help").returncode == 0
         assert command(no_bus, "--version").returncode == 0
         assert command(no_bus, "fetch", "--limit", "oops").returncode == 2
+        assert command(no_bus, "status").returncode == 1
+        missing = command(env, "status")
+        assert missing.returncode == 1 and "NameHasNoOwner" in missing.stderr, missing.stderr
+        assert not marker.exists(), "custom-profile CLI activated the production name before comparing profiles"
         owner = start(env)
 
         def status():
+            if owner.poll() is not None:
+                raise AssertionError("service exited before status: " + owner.stderr.read().decode(errors="replace"))
             result = command(env, "status", "--json")
             return json.loads(result.stdout) if result.returncode == 0 else None
 
@@ -101,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix="companion-owner-") as temporary:
         assert snapshot["ManagedBytes"] == 0 and not snapshot["UsageKnown"]
         assert command(env, "fetch", "--wait").returncode == 1
         assert foreign.read_bytes() == b"not adopted"
-        print("COMPANION_OWNER_PASS zero_cap status independent_bus_conflict bus_loss storage_error no_unowned_deletion help_without_bus")
+        print("COMPANION_OWNER_PASS zero_cap status independent_bus_conflict bus_loss storage_error no_unowned_deletion help_without_bus custom_profile_no_activation")
     finally:
         for process in reversed(processes):
             if process.poll() is None:
