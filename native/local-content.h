@@ -9,13 +9,16 @@
 class LocalContent : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString generation READ generation NOTIFY changed)
+    Q_PROPERTY(QString lastPlayedPath READ lastPlayedPath NOTIFY changed)
 public:
     explicit LocalContent(QObject *parent = nullptr) : QObject(parent) {}
     QString generation() const { return snapshot ? snapshot->generation() : QString(); }
+    QString lastPlayedPath() const;
     Q_INVOKABLE void freeze(const QString &cacheRoot, const QString &stateRoot, const QVariantList &sources);
     Q_INVOKABLE QVariantList forSource(const QString &sourceId) const;
     Q_INVOKABLE QVariantMap lookup(const QString &path) const;
     Q_INVOKABLE void reportPlayback(const QString &path);
+    Q_INVOKABLE bool available(const QString &path) const;
 signals:
     void changed();
 private:

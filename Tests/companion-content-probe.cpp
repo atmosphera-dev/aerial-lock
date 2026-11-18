@@ -174,6 +174,46 @@ private slots:
         QVERIFY(!cache.files().replace("/absolute", "bad"));
     }
 
+    void localFallbackInventory()
+    {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        CacheStore cache(root.path() + "/cache"); cache.configure(1000000, 0); QVERIFY(cache.valid());
+        QVERIFY(publish(cache, representation("other"), 1));
+        QVERIFY(publish(cache, representation("last"), 2));
+        const auto state = root.path() + "/state";
+        QVERIFY(ContentSnapshot::reportPlayback(state, representation("last").key, 123));
+        const QVariantList sources{QVariantMap{{"id", "fixture"}, {"type", "community"}, {"name", "Fixture"}}};
+        LocalContent content;
+        content.freeze(cache.path(), state, sources);
+        const auto last = cache.path() + "/objects/" + representation("last").key + ".media";
+        const auto other = cache.path() + "/objects/" + representation("other").key + ".media";
+        QCOMPARE(content.lastPlayedPath(), last);
+        QVERIFY(content.available(last)); QVERIFY(content.available(other));
+        QSignalSpy recency(&content, &LocalContent::changed);
+        content.reportPlayback(other);
+        QCOMPARE(recency.size(), 1); QCOMPARE(content.lastPlayedPath(), other);
+        QVERIFY(ContentSnapshot::reportPlayback(state, representation("last").key, 124));
+        QVERIFY(QFile::remove(last));
+        QVERIFY(!content.available(last)); QCOMPARE(content.lastPlayedPath(), QString());
+        // One missing last-played object must not poison its valid sibling.
+        LocalContent missingLast;
+        missingLast.freeze(cache.path(), state, sources);
+        QCOMPARE(missingLast.forSource("fixture").size(), 1);
+        QCOMPARE(missingLast.forSource("fixture")[0].toMap().value("path").toString(), other);
+        QVERIFY(missingLast.available(other)); QCOMPARE(missingLast.lastPlayedPath(), QString());
+        LocalContent removedSources;
+        removedSources.freeze(cache.path(), state, {});
+        QVERIFY(removedSources.forSource("fixture").isEmpty()); QCOMPARE(removedSources.lastPlayedPath(), QString());
+        // An external replacement is not the verified immutable object either.
+        QVERIFY(QFile::remove(other));
+        QFile replacement(other); QVERIFY(replacement.open(QIODevice::WriteOnly));
+        QCOMPARE(replacement.write(QByteArray(4096, 'x')), qint64(4096)); replacement.close();
+        QVERIFY(!missingLast.available(other));
+        LocalContent empty;
+        empty.freeze(cache.path(), state, sources);
+        QVERIFY(empty.forSource("fixture").isEmpty()); QCOMPARE(empty.lastPlayedPath(), QString());
+    }
+
     void loweredCapReclamation()
     {
         QTemporaryDir root; CacheStore cache(root.path() + "/cache"); cache.configure(1000000, 0);

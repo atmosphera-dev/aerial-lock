@@ -80,6 +80,15 @@ bash Scripts/dev/qmllint.sh .
 node --test Tests/*.test.cjs
 ```
 
+The playback-fallback Node suite executes SourceCache's actual selection methods
+with only local availability/recency I/O faked. `companion-snapshot` verifies the
+native reader's last-played mapping and surviving siblings after file loss.
+The owned-VM driver `companion-vm.py --case fallback` exercises the installed
+locker: a corrupt theme-preferred file falls back to last played, then another
+cached object after that file is removed, then solid with no completed files.
+Each real lock must authenticate and restore desktop input; no network owner is
+running during these three episodes.
+
 `i18n.test.cjs` executes ConfigStore's actual presentation methods with a fake FileView
 boundary. It checks per-key user/bundle/English precedence, partial overrides,
 user-only languages, and one-warning fallback for missing or broken user files.

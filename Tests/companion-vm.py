@@ -357,6 +357,9 @@ def main():
     if args.case == "policy":
         from companion_policy_vm import policy
         return policy(args)
+    if args.case == "fallback":
+        from companion_fallback import fallback
+        return fallback(args, installed_session)
     parser.error("case is not implemented yet; no acceptance coverage may be inferred")
 
 

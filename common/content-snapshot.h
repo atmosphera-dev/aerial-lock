@@ -25,12 +25,14 @@ public:
     QString generation() const { return revision; }
     bool valid() const { return ready; }
     QJsonArray forSources(const QJsonArray &sources) const;
+    bool available(const QJsonObject &entry) const;
     static QJsonObject lastPlayback(const QString &stateRoot);
     static bool reportPlayback(const QString &stateRoot, const QString &key, qint64 timestamp);
 private:
     int lock = -1;
     bool ready = false;
     QString revision;
+    QString root;
     QJsonArray inventory;
 };
 }

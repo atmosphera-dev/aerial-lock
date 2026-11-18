@@ -23,6 +23,7 @@ Module {
         prototype: "QObject"
         exports: ["AerialLock.Native/LocalContent 1.0"]
         Property { name: "generation"; type: "QString"; isReadonly: true }
+        Property { name: "lastPlayedPath"; type: "QString"; isReadonly: true }
         Signal { name: "changed" }
         Method {
             name: "freeze"
@@ -33,6 +34,7 @@ Module {
         Method { name: "forSource"; type: "QVariantList"; Parameter { name: "sourceId"; type: "QString" } }
         Method { name: "lookup"; type: "QVariantMap"; Parameter { name: "path"; type: "QString" } }
         Method { name: "reportPlayback"; Parameter { name: "path"; type: "QString" } }
+        Method { name: "available"; type: "bool"; Parameter { name: "path"; type: "QString" } }
     }
     Component {
         name: "LocalConfig"
