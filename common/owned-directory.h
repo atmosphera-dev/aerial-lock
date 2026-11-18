@@ -10,6 +10,7 @@ namespace Aerial {
 // components, and never adopt multiply-linked or foreign-owned files.
 class OwnedDirectory {
 public:
+    enum class Mutation { NotApplied, Unsynchronized, Durable };
     explicit OwnedDirectory(const QString &path, bool create = false);
     ~OwnedDirectory();
     OwnedDirectory(const OwnedDirectory &) = delete;
@@ -21,6 +22,8 @@ public:
     bool replace(const QString &relative, const QByteArray &bytes) const;
     bool remove(const QString &relative, const struct stat &expected) const;
     bool rename(const QString &from, const QString &to) const;
+    Mutation lastMutation() const { return mutation; }
+    bool synchronizeParent(const QString &relative) const;
     bool identity(const QString &relative, struct stat &out) const;
     QStringList files(bool *ok = nullptr) const;
     quint64 available() const;
@@ -29,5 +32,6 @@ private:
     int parent(const QString &relative, bool create, QByteArray &name) const;
     QString root;
     int fd = -1;
+    mutable Mutation mutation = Mutation::NotApplied;
 };
 }

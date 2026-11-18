@@ -240,6 +240,8 @@ def playback(args):
     locker acceptance. Export uses the actual acquisition/probe/cache classes.
     """
     driver, session = installed_session(args, "playback")
+    from private_runtime import PrivateRuntime
+    runtime = PrivateRuntime("bus")
     bus = service = None
     result = 1
     observations = {}
@@ -258,7 +260,7 @@ def playback(args):
         session.env.update(XDG_CONFIG_HOME=str(fixture / "config"), XDG_CACHE_HOME=str(fixture / "cache"),
                            XDG_STATE_HOME=str(state), AERIAL_LOCK_SHELL=str(session.shell))
         bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--nopidfile", "--print-address=1",
-                                "--address=unix:path=" + str(session.output / "bus")],
+                                "--address=unix:path=" + str(runtime.path / "bus")],
                                env=session.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if not select.select([bus.stdout], [], [], 5)[0]:
             raise RuntimeError("private bus did not publish its address")
@@ -320,6 +322,7 @@ def playback(args):
                 process.wait(timeout=10)
         if service:
             service.thread.join(2)
+        runtime.cleanup()
         result = cleanup or result
         publish(session.output / "result.json", json.dumps({"case": "playback", "exit": result,
                 "observations": observations, "legs": session.results}, indent=2))

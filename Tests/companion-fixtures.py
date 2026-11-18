@@ -9,7 +9,59 @@ import secrets
 import stat
 import subprocess
 
-from shadow_fixture import restore_account
+from shadow_fixture import account_line, restore_account
+
+
+def restore_fixture(private, service, secret, uuid, user):
+    """Recover even when preparation or a previous cleanup stopped halfway."""
+    if not private.exists():
+        assert not service.exists() and not secret.exists()
+        return
+    assert not private.is_symlink() and stat.S_IMODE(private.stat().st_mode) == 0o700
+    journal_path = private / "journal.json"
+    if not journal_path.exists():
+        # The last cleanup operation was unlinking the journal. An empty
+        # directory is the only state that needs no recovery authority.
+        assert not service.exists() and not secret.exists() and not list(private.iterdir())
+        private.rmdir()
+        return
+    journal = json.loads(journal_path.read_text())
+    assert journal["uuid"] == uuid and journal["user"] == user
+    backup = private / "original-shadow"
+    if backup.exists():
+        metadata = backup.lstat()
+        assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == private.stat().st_uid
+        assert stat.S_IMODE(metadata.st_mode) == 0o600 and metadata.st_nlink == 1
+        original = backup.read_bytes()
+    else:
+        assert journal.get("restored") is True
+        original = journal["original"].encode()
+    assert account_line(original, user) == original and original.endswith(b"\n") and original.count(b":") == 8
+    if service.exists():
+        assert not service.is_symlink() and service.read_text() == "auth required pam_unix.so\n"
+    if not journal.get("restored"):
+        restore_account(user, original)
+        # Retain recovery authority until the very last unlink. This also
+        # permits a retry after the redundant standalone backup was removed.
+        journal.update(restored=True, original=original.decode())
+        staged = private / "journal.next"
+        with staged.open("w") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(journal, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged, journal_path)
+        directory = os.open(private, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    service.unlink(missing_ok=True)
+    secret.unlink(missing_ok=True)
+    backup.unlink(missing_ok=True)
+    (private / "journal.next").unlink(missing_ok=True)
+    journal_path.unlink()
+    private.rmdir()
 
 
 def main():
@@ -35,13 +87,19 @@ def main():
     private = root / "run/companion-fixture-private"
     service = Path("/etc/pam.d/aerial-companion-test")
     secret = root / "run/pam-fixture-secret"
+    if private.exists():
+        assert not private.is_symlink() and private.stat().st_uid == 0 and stat.S_IMODE(private.stat().st_mode) == 0o700
     if args.operation == "prepare":
         if private.exists():
-            journal = json.loads((private / "journal.json").read_text())
-            assert journal["uuid"] == record["uuid"] and service.read_text() == "auth required pam_unix.so\n"
-            assert secret.exists()
-            print("COMPANION_FIXTURE_REUSED")
-            return
+            journal_path = private / "journal.json"
+            if journal_path.exists():
+                journal = json.loads(journal_path.read_text())
+                assert journal["uuid"] == record["uuid"] and journal["user"] == account.pw_name
+                if not journal.get("restored") and service.exists() and secret.exists():
+                    assert service.read_text() == "auth required pam_unix.so\n"
+                    print("COMPANION_FIXTURE_REUSED")
+                    return
+            restore_fixture(private, service, secret, record["uuid"], account.pw_name)
         assert not service.exists() and not secret.exists()
         private.mkdir(mode=0o700)
         original = next(line for line in Path("/etc/shadow").read_bytes().splitlines(keepends=True)
@@ -59,16 +117,7 @@ def main():
         os.chmod(service, 0o644)
         print("COMPANION_FIXTURE_PREPARED")
     else:
-        assert private.stat().st_uid == 0 and stat.S_IMODE(private.stat().st_mode) == 0o700
-        journal = json.loads((private / "journal.json").read_text())
-        assert journal == {"uuid": record["uuid"], "user": account.pw_name}
-        assert service.read_text() == "auth required pam_unix.so\n"
-        restore_account(account.pw_name, (private / "original-shadow").read_bytes())
-        service.unlink()
-        secret.unlink()
-        (private / "original-shadow").unlink()
-        (private / "journal.json").unlink()
-        private.rmdir()
+        restore_fixture(private, service, secret, record["uuid"], account.pw_name)
         print("COMPANION_FIXTURE_RESTORED original_shadow_line_byte_identical=true")
 
 

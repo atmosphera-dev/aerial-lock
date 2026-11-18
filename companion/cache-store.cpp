@@ -97,7 +97,11 @@ bool CacheStore::prepareTransaction(const QString &operation, const QJsonObject 
     const QJsonObject receipt{{"version", 1}, {"operation", operation}, {"entry", entry}};
     const auto bytes = QJsonDocument(receipt).toJson(QJsonDocument::Compact);
     if (!(canWrite(bytes.size()) || (reclamation && usage().safe && directory.available() >= freeReserve
-        && quint64(bytes.size()) <= directory.available() - freeReserve)) || !directory.replace("pending.json", bytes)) return false;
+        && quint64(bytes.size()) <= directory.available() - freeReserve))) return false;
+    if (!directory.replace("pending.json", bytes)) {
+        if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+        return false;
+    }
     observe("prepared");
     return true;
 }
@@ -130,6 +134,9 @@ bool CacheStore::recoverTransaction()
         if (!exclusive) return true;
         if (!removed) return false;
     }
+    // A previous unlink may have happened without its directory sync. Before
+    // retiring that receipt, make even an already-absent name durable.
+    if (operation == "remove" && !contains(key) && !directory.synchronizeParent(object)) return false;
     if (!removeFile("pending.json")) return false;
     pending = {};
     return true;
@@ -192,7 +199,10 @@ bool CacheStore::writeMetadata(const QString &relative, const QJsonObject &objec
 {
     const auto bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
     // Count the old and replacement bytes while atomic replacement is staged.
-    return canWrite(bytes.size()) && directory.replace(relative, bytes);
+    if (!canWrite(bytes.size())) return false;
+    const bool saved = directory.replace(relative, bytes);
+    if (!saved && directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+    return saved;
 }
 
 QJsonObject CacheStore::metadata(const QString &relative) const
@@ -229,7 +239,10 @@ bool CacheStore::append(int fd, const QByteArray &chunk)
 bool CacheStore::removeFile(const QString &relative)
 {
     struct stat st{};
-    return directory.identity(relative, st) && directory.remove(relative, st);
+    if (!directory.identity(relative, st)) return false;
+    const bool removed = directory.remove(relative, st);
+    if (!removed && directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+    return removed;
 }
 
 bool CacheStore::discardPartial(const QString &key)
@@ -239,7 +252,7 @@ bool CacheStore::discardPartial(const QString &key)
     for (const auto &suffix : {".part", ".json"}) {
         const auto relative = "partials/" + key + suffix;
         struct stat st{};
-        if (directory.identity(relative, st) && !directory.remove(relative, st)) ok = false;
+        if (directory.identity(relative, st) && !removeFile(relative)) { ok = false; if (!owned) break; }
     }
     return ok;
 }
@@ -291,13 +304,17 @@ bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, q
         {"path", object}, {"bytes", qint64(st.st_size)}, {"height", rep.height}, {"variant", rep.variant},
         {"metadata", rep.metadata}, {"probe", probe}, {"completedAt", now}, {"identity", identity}};
     if (!prepareTransaction("publish", entry)) return false;
-    if (!directory.rename(part, object)) { removeFile("pending.json"); return false; }
+    if (!directory.rename(part, object)) {
+        if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+        else removeFile("pending.json");
+        return false;
+    }
     observe("renamed");
     completed.append(entry);
     if (!persistIndex()) {
         // Once committed, never roll back bytes that a public snapshot might
         // already contain. Startup will finish the pointer transaction.
-        if (indexCommitted) { owned = false; return false; }
+        if (indexCommitted || !owned) { owned = false; return false; }
         completed.removeLast();
         // No index entry exists. Keep the verified bytes as a resumable part.
         if (directory.rename(object, part)) removeFile("pending.json");
@@ -328,12 +345,18 @@ bool CacheStore::persistIndex(bool reclamation)
     const auto pointer = QJsonDocument(QJsonObject{{"version", 1}, {"generation", hash}}).toJson(QJsonDocument::Compact);
     const QJsonObject commit{{"version", 1}, {"generation", hash}, {"index", index}};
     const auto commitBytes = QJsonDocument(commit).toJson(QJsonDocument::Compact);
-    if (!existing && (!(canWrite(bytes.size()) || (shrinking && directory.available() >= freeReserve + bytes.size() + pointer.size()))
-        || !directory.replace(relative, bytes))) return false;
+    if (!existing) {
+        if (!(canWrite(bytes.size()) || (shrinking && directory.available() >= freeReserve + bytes.size() + pointer.size()))) return false;
+        if (!directory.replace(relative, bytes)) {
+            if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+            return false;
+        }
+    }
     if (existing && directory.read(relative, 8 * 1024 * 1024) != bytes) return false;
     observe("generation");
     if (!(shrinking ? directory.replace("committed.json", commitBytes) : writeMetadata("committed.json", commit))) {
-        if (!existing) removeFile(relative);
+        if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+        if (owned && !existing) removeFile(relative);
         return false;
     }
     indexCommitted = true;
@@ -377,11 +400,14 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
             const auto old = completed;
             completed = candidates;
             if (!persistIndex(true)) {
-                if (!indexCommitted) { completed = old; removeFile("pending.json"); }
+                if (!indexCommitted && owned) { completed = old; removeFile("pending.json"); }
                 else owned = false;
                 break;
             }
-            if (!directory.remove(relative, st)) { pending = metadata("pending.json"); break; }
+            if (!directory.remove(relative, st)) {
+                if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
+                pending = metadata("pending.json"); break;
+            }
             observe("removed");
             if (!removeFile("pending.json")) { owned = false; break; }
         }

@@ -305,7 +305,7 @@ $(OBJDIR)/policy-monitor.o: companion/policy-monitor.cpp companion/policy-monito
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I$(OBJDIR) -c companion/policy-monitor.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
 
 $(OBJDIR)/companion-main.o: companion/main.cpp companion/config-repository.h companion/service.h companion/transfer-queue.h companion/policy-monitor.h common/config-document.h native/shell-dir.h
-	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -DAERIAL_COMPANION_PROBE='"$(LIBEXECDIR)/aerial-media-probe"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus Qt6Network) -o $@
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c $< $$(pkg-config --cflags Qt6Core Qt6DBus Qt6Network) -o $@
 
 companion/aerial-companion: $(COMPANION_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(COMPANION_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus Qt6Network libarchive)

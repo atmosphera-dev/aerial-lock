@@ -18,10 +18,6 @@
 #ifndef AERIAL_COMPANION_DATADIR
 #define AERIAL_COMPANION_DATADIR "/usr/share/aerial-lock"
 #endif
-#ifndef AERIAL_COMPANION_PROBE
-#define AERIAL_COMPANION_PROBE "/usr/libexec/aerial-lock/aerial-media-probe"
-#endif
-
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -62,7 +58,7 @@ int main(int argc, char **argv)
         QFile root(paths.bundle + "/Config/apple-root.pem");
         const auto appleRoot = root.open(QIODevice::ReadOnly) ? root.readAll() : QByteArray{};
         queue = std::make_unique<Aerial::TransferQueue>(config, *cache, state, transport,
-            QStringLiteral(AERIAL_COMPANION_PROBE), appleRoot, clock);
+            QCoreApplication::applicationDirPath() + "/aerial-media-probe", appleRoot, clock);
         queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
         service.bind(&state, cache.get(), queue.get(), &policy);
         queue->start();

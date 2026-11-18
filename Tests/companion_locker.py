@@ -11,6 +11,7 @@ import time
 
 from fixture_files import publish
 from owned_instance import digest
+from private_runtime import PrivateRuntime
 
 
 def run(argv, environment, **kwargs):
@@ -47,9 +48,10 @@ class Companion:
         self.cache = self.root / "cache/aerial-lock/managed-v1"
         # No activation directory: absent/crashed service legs cannot be hidden
         # by an implicitly activated replacement on another environment.
+        self.runtime = PrivateRuntime("content-bus")
         config = session.output / "content-bus.conf"
         config.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth><listen>unix:path='
-                          + str(session.output / "content-bus") + '</listen><policy context="default">'
+                          + str(self.runtime.path / "content-bus") + '</listen><policy context="default">'
                           '<allow user="*"/><allow send_destination="*"/><allow receive_sender="*"/>'
                           '<allow own="*"/></policy></busconfig>')
         self.bus = subprocess.Popen(["dbus-daemon", "--config-file=" + str(config), "--nofork", "--nopidfile", "--print-address=1"],
@@ -57,8 +59,13 @@ class Companion:
         if not select.select([self.bus.stdout], [], [], 5)[0]:
             self.bus.terminate()
             self.bus.wait(timeout=10)
+            self.runtime.cleanup()
             raise RuntimeError("private content bus did not start")
         self.environment["DBUS_SESSION_BUS_ADDRESS"] = self.bus.stdout.readline().decode().strip()
+        if not self.environment["DBUS_SESSION_BUS_ADDRESS"].startswith("unix:"):
+            self.bus.wait(timeout=10)
+            self.runtime.cleanup()
+            raise RuntimeError("private content bus did not publish an address")
         self.service = None
         self.sequence = 0
         session.env.update(self.environment)
@@ -97,6 +104,7 @@ class Companion:
         self.stop()
         self.bus.terminate()
         self.bus.wait(timeout=10)
+        self.runtime.cleanup()
 
 
 def launch_episode(driver, session, cycle):

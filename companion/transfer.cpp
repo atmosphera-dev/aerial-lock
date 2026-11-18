@@ -86,7 +86,7 @@ void Transfer::hashPartial()
 
 void Transfer::request()
 {
-    HttpRequest query; query.url = rep.url;
+    HttpRequest query; query.url = rep.url; query.totalTimeoutMs = 0;
     if (resumeOffset > 0) {
         query.headers["Range"] = "bytes=" + QByteArray::number(resumeOffset) + '-';
         query.headers["If-Range"] = validator;

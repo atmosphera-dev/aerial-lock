@@ -3,6 +3,7 @@
 #include "../companion/transfer-queue.h"
 #include "../companion/policy-monitor.h"
 #include "../common/content-snapshot.h"
+#include "fsync-fixture.h"
 #include <QCoreApplication>
 #include <QDBusVirtualObject>
 #include <QDBusMetaType>
@@ -100,6 +101,16 @@ public:
                     const auto target = buffer->split(' ').value(1);
                     const auto mode = modes.value(target, this->mode);
                     if (mode == "hold" && !buffer->startsWith("HEAD ")) return;
+                    if (mode == "drip") {
+                        socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 8\r\n\r\n");
+                        auto *timer = new QTimer(socket);
+                        connect(timer, &QTimer::timeout, socket, [socket, timer, count = 0]() mutable {
+                            socket->write("x");
+                            if (++count == 8) { timer->stop(); socket->disconnectFromHost(); }
+                        });
+                        timer->start(40);
+                        return;
+                    }
                     QByteArray status = "200 OK", body = bodies.value(target, media), extra = "ETag: \"fixture-one\"\r\n";
                     if (mode == "retry") { status = "429 Too Many Requests"; body.clear(); extra += "Retry-After: 120\r\n"; }
                     if (mode == "conditional" && buffer->contains("If-None-Match:")) { status = "304 Not Modified"; body.clear(); }
@@ -228,6 +239,42 @@ private slots:
         QVERIFY(entry.value("probe").toObject().value("initialFrameDecoded").toBool());
         QCOMPARE(entry.value("probe").toObject().value("width").toInt(), 96);
         QFile file(entry.value("path").toString()); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), media);
+    }
+    void requestDeadlines()
+    {
+        HttpFixture server; QNetworkAccessManager network;
+        server.mode = "drip";
+        HttpRequest metadata; metadata.url = server.url(); metadata.totalTimeoutMs = 80;
+        HttpOperation bounded(network, metadata, {}, {}, {});
+        QSignalSpy first(&bounded, &HttpOperation::finished); bounded.start();
+        QTRY_COMPARE_WITH_TIMEOUT(first.size(), 1, 3000);
+        QCOMPARE(bounded.result().error, "Timeout");
+        HttpRequest media; media.url = server.url(); media.totalTimeoutMs = 0; media.inactivityTimeoutMs = 150;
+        QByteArray received;
+        HttpOperation healthy(network, media, {}, {}, [&](const QByteArray &bytes) { received += bytes; return QString(); });
+        QSignalSpy second(&healthy, &HttpOperation::finished); healthy.start();
+        QTRY_COMPARE_WITH_TIMEOUT(second.size(), 1, 3000);
+        QVERIFY(healthy.result().error.isEmpty()); QCOMPARE(received, "xxxxxxxx");
+        server.mode = "hold";
+        HttpOperation stalled(network, media, {}, {}, {});
+        QSignalSpy third(&stalled, &HttpOperation::finished); stalled.start();
+        QTRY_COMPARE_WITH_TIMEOUT(third.size(), 1, 3000);
+        QVERIFY(!stalled.result().error.isEmpty());
+    }
+    void credentialUrlsNeverReachTransport()
+    {
+        HttpFixture server; QNetworkAccessManager network;
+        HttpRequest request; request.url = server.url(); request.url.setUserInfo("user:password");
+        HttpOperation operation(network, request, {}, {}, {});
+        QSignalSpy finished(&operation, &HttpOperation::finished); operation.start();
+        QCOMPARE(finished.size(), 1); QCOMPARE(operation.result().error, "UnsafeUrl");
+        QVERIFY(server.requests.isEmpty());
+        server.redirects["/start"] = request.url.toEncoded();
+        request.url = server.url("/start");
+        HttpOperation redirect(network, request, {}, {}, {});
+        QSignalSpy redirected(&redirect, &HttpOperation::finished); redirect.start();
+        QTRY_COMPARE(redirected.size(), 1); QCOMPARE(redirect.result().error, "UnsafeRedirect");
+        QCOMPARE(server.requests.size(), 1);
     }
     void resume_data()
     {
@@ -624,6 +671,108 @@ private slots:
         QTRY_COMPARE(queue.status(), "downloading"); QVERIFY(queue.cancel(active));
         QTRY_VERIFY(ended(queue, active)); QCOMPARE(queue.job(active).value("state").toString(), "cancelled");
         QCOMPARE(cache.entries().size(), 2); QVERIFY(!queue.cancel(queued));
+    }
+    void queuePersistenceRecovery_data()
+    {
+        QTest::addColumn<QString>("stage");
+        for (const auto *stage : {"planning", "completion", "finalization"}) QTest::newRow(stage) << QString(stage);
+    }
+    void queuePersistenceRecovery()
+    {
+        QFETCH(QString, stage);
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
+        QString id;
+        bool failing = false, triggered = false;
+        SyncFault fault([&](int fd) {
+            const auto path = QFile::symLinkTarget("/proc/self/fd/" + QString::number(fd));
+            return failing && path.startsWith(paths.state + '/');
+        });
+        connect(&queue, &TransferQueue::contentChanged, &queue, [&] {
+            if (stage == "completion" && !triggered) { failing = true; triggered = true; }
+        });
+        connect(&queue, &TransferQueue::jobChanged, &queue, [&](const QString &changed) {
+            if (stage == "finalization" && !triggered && changed == id && queue.job(id).value("state") == "downloading"
+                && cache.entries().size() == 1) { failing = true; triggered = true; }
+        });
+        id = queue.acquire({}, 1); QVERIFY(!id.isEmpty());
+        const auto queued = queue.acquire({}, 2); QVERIFY(!queued.isEmpty());
+        if (stage == "planning") failing = true;
+        QTRY_COMPARE_WITH_TIMEOUT(queue.deferReason(), "StorageError", 10000);
+        QVERIFY(!ended(queue, id));
+        QTest::qWait(100); QVERIFY(!ended(queue, queued));
+        failing = false;
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, queued), 10000);
+        QCOMPARE(queue.job(id).value("state"), "succeeded");
+        QCOMPARE(queue.job(queued).value("state"), "succeeded");
+        QCOMPARE(cache.entries().size(), 2);
+    }
+    void queueCancelBetweenTransfers()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
+        const auto id = queue.acquire();
+        bool queuedCancel = false;
+        QStringList unexpectedErrors;
+        connect(&queue, &TransferQueue::changed, &queue, [&] {
+            if (queue.deferReason() == "StorageError") unexpectedErrors.append(queue.status());
+        });
+        connect(&queue, &TransferQueue::jobChanged, &queue, [&](const QString &changed) {
+            if (changed != id || queuedCancel || cache.entries().size() != 1) return;
+            queuedCancel = true;
+            // Posted before the next-transfer continuation, but after the
+            // completed transfer's durable progress notification.
+            QTimer::singleShot(0, &queue, [&] { QVERIFY(queue.cancel(id)); });
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id), 20000);
+        QCOMPARE(queue.job(id).value("state"), "cancelled");
+        QTest::qWait(200);
+        QCOMPARE(cache.entries().size(), 1);
+        int gets = 0;
+        for (const auto &request : server.requests)
+            if (request.startsWith("GET ") && request.split(' ').value(1).endsWith(".mp4")) ++gets;
+        QCOMPARE(gets, 1);
+        QVERIFY(unexpectedErrors.isEmpty());
+    }
+    void policySampleFailurePreservesObservation()
+    {
+        PolicyPeer peer;
+        PolicyMonitor monitor(QDBusConnection::sessionBus()); monitor.start();
+        QTRY_VERIFY(monitor.ready());
+        peer.hold = peer.manager;
+        peer.update(peer.manager, {{"Metered", uint(1)}});
+        QTRY_COMPARE(monitor.observations().value("metering"), "metered");
+        QTRY_VERIFY_WITH_TIMEOUT(!peer.held.isEmpty(), 5000);
+        QVERIFY(monitor.ready());
+        QTest::qWait(1200); // Real GetAll timeout, no fake monitor state.
+        QCOMPARE(monitor.observations().value("metering"), "metered");
+        QCOMPARE(monitor.observations().value("connectionType"), "ethernet");
+        const auto before = peer.calls.size();
+        peer.hold.clear();
+        QTRY_VERIFY_WITH_TIMEOUT(peer.calls.size() > before, 5000);
+        QTRY_VERIFY(monitor.ready());
+        QCOMPARE(monitor.observations().value("metering"), "metered");
+    }
+    void policyUnavailableBusIsUnknown()
+    {
+        QTemporaryDir directory;
+        const auto bus = QDBusConnection::connectToBus("unix:path=" + directory.path() + "/absent", "absent-policy-bus");
+        QVERIFY(!bus.isConnected());
+        PolicyMonitor monitor(bus); monitor.start();
+        QTRY_VERIFY_WITH_TIMEOUT(monitor.ready(), 3000);
+        QCOMPARE(monitor.observations().value("network"), "unknown");
+        QCOMPARE(monitor.observations().value("metering"), "unknown");
+        QCOMPARE(monitor.observations().value("power"), "unknown");
+        QDBusConnection::disconnectFromBus("absent-policy-bus");
     }
     void queuePolicyPauseManualBypassAndRestart()
     {

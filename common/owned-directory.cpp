@@ -53,7 +53,11 @@ OwnedDirectory::OwnedDirectory(const QString &path, bool create) : root(QDir::cl
     for (const auto &part : parts) {
         if (current < 0 || part == "." || part == "..") { if (current >= 0) close(current); return; }
         const auto name = QFile::encodeName(part);
-        if (create && mkdirat(current, name.constData(), 0700) && errno != EEXIST) { close(current); return; }
+        if (create) {
+            const int made = mkdirat(current, name.constData(), 0700);
+            // EEXIST may be a retry after an earlier failed synchronization.
+            if ((made && errno != EEXIST) || fsync(current)) { close(current); return; }
+        }
         const int next = openat(current, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         close(current);
         current = next;
@@ -74,7 +78,10 @@ int OwnedDirectory::parent(const QString &relative, bool create, QByteArray &nam
     int current = fcntl(fd, F_DUPFD_CLOEXEC, 3);
     for (qsizetype i = 0; i + 1 < parts.size(); ++i) {
         const auto component = QFile::encodeName(parts[i]);
-        if (create && mkdirat(current, component.constData(), 0700) && errno != EEXIST) { close(current); return -1; }
+        if (create) {
+            const int made = mkdirat(current, component.constData(), 0700);
+            if ((made && errno != EEXIST) || fsync(current)) { close(current); return -1; }
+        }
         const int next = openat(current, component.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         close(current);
         if (next < 0) return -1;
@@ -115,6 +122,7 @@ QByteArray OwnedDirectory::read(const QString &relative, qint64 maximum, bool *o
 
 bool OwnedDirectory::replace(const QString &relative, const QByteArray &bytes) const
 {
+    mutation = Mutation::NotApplied;
     QByteArray name;
     const int dir = parent(relative, true, name);
     if (dir < 0) return false;
@@ -133,11 +141,11 @@ bool OwnedDirectory::replace(const QString &relative, const QByteArray &bytes) c
     }
     const bool synced = offset == bytes.size() && fsync(file) == 0;
     close(file);
-    const bool success = synced && renameat(dir, temporary.constData(), dir, name.constData()) == 0;
-    if (!success) unlinkat(dir, temporary.constData(), 0);
-    else fsync(dir);
+    const bool applied = synced && renameat(dir, temporary.constData(), dir, name.constData()) == 0;
+    if (!applied) unlinkat(dir, temporary.constData(), 0);
+    else mutation = fsync(dir) == 0 ? Mutation::Durable : Mutation::Unsynchronized;
     close(dir);
-    return success;
+    return mutation == Mutation::Durable;
 }
 
 bool OwnedDirectory::same(const struct stat &a, const struct stat &b)
@@ -157,6 +165,7 @@ bool OwnedDirectory::identity(const QString &relative, struct stat &out) const
 
 bool OwnedDirectory::remove(const QString &relative, const struct stat &expected) const
 {
+    mutation = Mutation::NotApplied;
     QByteArray name;
     const int dir = parent(relative, false, name);
     if (dir < 0) return false;
@@ -164,22 +173,37 @@ bool OwnedDirectory::remove(const QString &relative, const struct stat &expected
     const bool ok = fstatat(dir, name.constData(), &current, AT_SYMLINK_NOFOLLOW) == 0
         && S_ISREG(current.st_mode) && current.st_uid == getuid() && current.st_nlink == 1
         && same(current, expected) && unlinkat(dir, name.constData(), 0) == 0;
-    if (ok) fsync(dir);
+    if (ok) mutation = fsync(dir) == 0 ? Mutation::Durable : Mutation::Unsynchronized;
     close(dir);
-    return ok;
+    return mutation == Mutation::Durable;
 }
 
 bool OwnedDirectory::rename(const QString &from, const QString &to) const
 {
+    mutation = Mutation::NotApplied;
     QByteArray source, destination;
     const int a = parent(from, false, source), b = parent(to, true, destination);
     struct stat st{};
     const bool ok = a >= 0 && b >= 0 && fstatat(a, source.constData(), &st, AT_SYMLINK_NOFOLLOW) == 0
         && S_ISREG(st.st_mode) && st.st_uid == getuid() && st.st_nlink == 1
         && renameat2(a, source.constData(), b, destination.constData(), RENAME_NOREPLACE) == 0;
-    if (ok) { fsync(a); fsync(b); }
+    if (ok) {
+        const bool sourceSynced = fsync(a) == 0;
+        const bool destinationSynced = fsync(b) == 0;
+        mutation = sourceSynced && destinationSynced ? Mutation::Durable : Mutation::Unsynchronized;
+    }
     if (a >= 0) close(a);
     if (b >= 0) close(b);
+    return mutation == Mutation::Durable;
+}
+
+bool OwnedDirectory::synchronizeParent(const QString &relative) const
+{
+    QByteArray name;
+    const int dir = parent(relative, false, name);
+    if (dir < 0) return false;
+    const bool ok = fsync(dir) == 0;
+    close(dir);
     return ok;
 }
 

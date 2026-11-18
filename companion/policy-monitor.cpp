@@ -6,6 +6,8 @@
 #include <QDBusServiceWatcher>
 #include <QJsonArray>
 #include <QSet>
+#include <QTimer>
+#include <memory>
 
 namespace Aerial {
 namespace {
@@ -81,7 +83,10 @@ void PolicyMonitor::sample(const QString &key)
     request.setAutoStartService(false);
     request << object.interface;
     auto *call = new QDBusPendingCallWatcher(bus.asyncCall(request, 1000), this);
-    connect(call, &QDBusPendingCallWatcher::finished, this, [this, call, key, epoch] {
+    const auto handled = std::make_shared<bool>(false);
+    const auto complete = [this, call, key, epoch, handled] {
+        if (*handled) return;
+        *handled = true;
         QDBusPendingReply<QVariantMap> reply = *call;
         call->deleteLater();
         auto it = objects.find(key);
@@ -89,11 +94,25 @@ void PolicyMonitor::sample(const QString &key)
         it->pending = false;
         // A signal received during GetAll makes that reply potentially stale.
         if (it->dirty) { sample(key); return; }
-        it->values = reply.isError() ? QVariantMap{} : reply.value();
+        if (!reply.isError()) it->values = reply.value();
+        else {
+            // A failed read says nothing about properties already observed
+            // from this owner. Owner replacement, not a transport error,
+            // invalidates that cache. Retry without discarding its topology.
+            QTimer::singleShot(1000, this, [this, key, epoch] {
+                const auto object = objects.constFind(key);
+                if (object != objects.cend() && object->serial == epoch && !object->pending) sample(key);
+            });
+        }
         it->sampled = true;
         topology();
         emit changed();
-    });
+    };
+    connect(call, &QDBusPendingCallWatcher::finished, this, complete);
+    // A disconnected optional bus can return an already-completed error with
+    // no later finished signal. Settle both forms through the same once-only
+    // path, after startup has installed every policy subscription.
+    if (call->isFinished()) QTimer::singleShot(0, this, complete);
 }
 
 void PolicyMonitor::propertiesChanged(const QString &interface, const QVariantMap &updated,
@@ -158,7 +177,9 @@ void PolicyMonitor::ownerChanged(const QString &service)
 bool PolicyMonitor::ready() const
 {
     if (!started || objects.isEmpty()) return false;
-    for (const auto &object : objects) if (!object.sampled || object.pending) return false;
+    // Background refresh does not revoke a settled observation. Only a new
+    // owner/object that has never been sampled is still initializing.
+    for (const auto &object : objects) if (!object.sampled) return false;
     return true;
 }
 

@@ -13,7 +13,7 @@ namespace Aerial {
 bool SourceResolver::remoteUrl(const QUrl &url)
 {
     return url.isValid() && (url.scheme() == "http" || url.scheme() == "https")
-        && !url.host().isEmpty() && url.fragment().isEmpty() && url.toEncoded().size() <= 16384;
+        && !url.host().isEmpty() && url.userInfo().isEmpty() && url.fragment().isEmpty() && url.toEncoded().size() <= 16384;
 }
 
 QUrl SourceResolver::manifestUrl(const QJsonObject &source)
@@ -104,7 +104,13 @@ ResolvedManifest SourceResolver::parse(const QJsonObject &source, const QUrl &ba
         }
         for (const auto &variant : variants) {
             if (!asset.value(variant.first).isString()) continue;
-            const auto url = resolveRemote(base, QUrl(asset.value(variant.first).toString()));
+            auto reference = QUrl(asset.value(variant.first).toString());
+            // Apple's current catalogue serves every representation over TLS.
+            // Older catalogues may still spell that same CDN as HTTP. Upgrade
+            // only its media links, never arbitrary providers or explicit
+            // source descriptors, and never retry an HTTPS failure over HTTP.
+            if (reference.scheme() == "http" && reference.host() == "sylvan.apple.com") reference.setScheme("https");
+            const auto url = resolveRemote(base, reference);
             if (url.isEmpty()) continue;
             Representation rep;
             rep.sourceId = source.value("id").toString(); rep.assetId = id; rep.url = url;

@@ -18,6 +18,10 @@ struct HttpRequest {
     QUrl url;
     HttpHeaders headers;
     bool head = false;
+    // Metadata has a total deadline. Media disables only that lifetime bound;
+    // inactivity still terminates stalled transfers regardless of validators.
+    int totalTimeoutMs = 5 * 60 * 1000;
+    int inactivityTimeoutMs = 30000;
 };
 
 // One bounded asynchronous HTTP transaction, including manually checked
