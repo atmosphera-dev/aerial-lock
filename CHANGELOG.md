@@ -3,6 +3,16 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Aerial videos work out of the box through a new background companion service.
+  Automatic downloads start at the next user-manager startup, default to up to
+  1080p, avoid metered connections and use a configurable 10 GB cache. The new
+  `aerialctl` command controls settings, downloads and cache management. Until a
+  video completes, locks use solid colour; new videos play from the next lock.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
