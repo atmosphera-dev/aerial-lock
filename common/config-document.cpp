@@ -186,6 +186,15 @@ ConfigPaths ConfigPaths::environment(const QString &bundle)
             homePath("XDG_RUNTIME_DIR", "/.local/run") + "/aerial-lock"};
 }
 
+bool isDefaultProfile(const ConfigPaths &paths, const QString &installedBundle, const QString &home, const QString &runtime)
+{
+    return paths.bundle == QDir::cleanPath(installedBundle)
+        && paths.config == home + "/.config/aerial-lock/config.json"
+        && paths.cache == home + "/.cache/aerial-lock/managed-v1"
+        && paths.state == home + "/.local/state/aerial-lock"
+        && paths.runtime == runtime + "/aerial-lock";
+}
+
 QJsonObject mergeObjects(QJsonObject base, const QJsonObject &overrides)
 {
     for (auto it = overrides.begin(); it != overrides.end(); ++it)

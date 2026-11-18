@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import select
 import subprocess
 import sys
 import time
@@ -154,7 +155,7 @@ def prepare(args):
     print("COMPANION_PREPARE_PASS " + json.dumps({"domain": identity["name"], "uuid": uuid, "source": source_identity}))
 
 
-def cold_load(args):
+def installed_session(args, case="cold-load"):
     spec = importlib.util.spec_from_file_location("companion_remediation", Path(__file__).with_name("remediation-driver.py"))
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
@@ -162,7 +163,7 @@ def cold_load(args):
     class InstalledSession(driver.Session):
         def __init__(self, options):
             super().__init__(options)
-            local_name = "cold-load-" + options.backend + "-" + time.strftime("%Y-%m-%d_%H%M%S") + "-" + self.output.name.rsplit("-", 1)[-1]
+            local_name = case + "-" + options.backend + "-" + time.strftime("%Y-%m-%d_%H%M%S") + "-" + self.output.name.rsplit("-", 1)[-1]
             destination = self.output.with_name(local_name)
             self.output.rename(destination)
             # These fixture paths were derived by the base constructor before
@@ -198,9 +199,14 @@ def cold_load(args):
 
     owned = OwnedInstance(args.vm_record, args.root)
     os.environ.update(owned.record["environment"])
-    options = SimpleNamespace(root=str(args.root), vm_record=str(args.vm_record), case="cold-load", backend=args.backend,
+    options = SimpleNamespace(root=str(args.root), vm_record=str(args.vm_record), case=case, backend=args.backend,
                               recover_owned_failures=False, outputs=1, hyprland_virtual_outputs=False)
     session = InstalledSession(options)
+    return driver, session
+
+
+def cold_load(args):
+    driver, session = installed_session(args)
     # Human-facing artifact timestamps follow the source-host local timezone,
     # supplied by the executor's guest environment (not the guest's UTC clock).
     result = 1
@@ -227,6 +233,101 @@ def cold_load(args):
     return result
 
 
+def playback(args):
+    """Installed cached playback, secure one-way hint and frame-driven recency.
+
+    This incremental gate does not stand in for the held-transfer/next-episode
+    locker acceptance. Export uses the actual acquisition/probe/cache classes.
+    """
+    driver, session = installed_session(args, "playback")
+    bus = service = None
+    result = 1
+    observations = {}
+    try:
+        session.start()
+        fixture = session.output / "content"
+        command([str(session.root / "build/debug/aerial-tests/companion-transfer-probe"), "--export", str(fixture),
+                 "/usr/lib/aerial-lock/aerial-media-probe"])
+        config = fixture / "config/aerial-lock/config.json"
+        document = json.loads(config.read_text())
+        document["acquisition"] = {"automatic": {"enabled": False}}
+        document["theme"] = "Macintosh.qml"
+        publish(config, json.dumps(document))
+        state = fixture / "state"
+        state.mkdir()
+        session.env.update(XDG_CONFIG_HOME=str(fixture / "config"), XDG_CACHE_HOME=str(fixture / "cache"),
+                           XDG_STATE_HOME=str(state), AERIAL_LOCK_SHELL=str(session.shell))
+        bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--nopidfile", "--print-address=1",
+                                "--address=unix:path=" + str(session.output / "bus")],
+                               env=session.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if not select.select([bus.stdout], [], [], 5)[0]:
+            raise RuntimeError("private bus did not publish its address")
+        session.env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().decode().strip()
+        service = driver.ObservedProcess(["/usr/lib/aerial-lock/aerial-companion"], session.env,
+                                         session.output / "companion.log")
+
+        def wait_value(read, label):
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                value = read()
+                if value:
+                    return value
+                if service.process.poll() is not None:
+                    raise RuntimeError("companion exited: " + label)
+                time.sleep(0.05)
+            raise RuntimeError("outcome not observed: " + label)
+
+        def status():
+            reply = subprocess.run(["/usr/bin/aerialctl", "status", "--json"], env=session.env,
+                                   capture_output=True, text=True, timeout=10)
+            return json.loads(reply.stdout) if reply.returncode == 0 else None
+
+        initial = wait_value(status, "matching installed service")
+        if initial["ReadyClips"] != 1 or initial["State"] != "paused":
+            raise RuntimeError("unexpected completed-content fixture state")
+        session.launch(1)
+        # Only the lock's native hint can stamp this absent preference. A
+        # paused service still accepts the observation without downloading.
+        height = wait_value(lambda: json.loads(config.read_text()).get("preferredResolution"), "secure height hint")
+        local = state / "aerial-lock/last-playback.json"
+        played = wait_value(lambda: json.loads(local.read_text()) if local.exists() else None, "decoded-frame local recency")
+        key = played["key"]
+        planner = state / "aerial-lock/planner-v1.json"
+        recency = wait_value(lambda: json.loads(planner.read_text()).get("played", {}).get(key) if planner.exists() else None,
+                             "service playback report")
+        # Capture the actual compositor frame, not just mpv's decoded screenshot.
+        command(["grim", "-t", "png", str(session.output / "managed-frame.png")], env=session.env)
+        session.unlock(1)
+        observations = {"readyClips": initial["ReadyClips"], "observedHeight": height, "lastPlayback": played,
+                        "servicePlayedAt": recency, "compositorFrame": "managed-frame.png"}
+        result = 0
+    except (RuntimeError, subprocess.SubprocessError, OSError, ValueError) as error:
+        publish(session.output / "failure.json", json.dumps({"reason": str(error)}))
+        print("COMPANION_PLAYBACK_FAILED " + str(error), file=sys.stderr, flush=True)
+    finally:
+        # If an assertion failed with a live lock, ordinary PAM unlock is the
+        # first recovery, not process termination or compositor teardown.
+        if session.locker and session.locker.process.poll() is None and result:
+            try:
+                command(["wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl", "-k", "BackSpace"], env=session.env)
+                session.unlock(0)
+            except (RuntimeError, subprocess.SubprocessError, OSError):
+                pass
+        cleanup = session.cleanup()
+        for process in (service.process if service else None, bus):
+            if process and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+        if service:
+            service.thread.join(2)
+        result = cleanup or result
+        publish(session.output / "result.json", json.dumps({"case": "playback", "exit": result,
+                "observations": observations, "legs": session.results}, indent=2))
+    if result == 0:
+        print("COMPANION_PLAYBACK_PASS " + str(session.output))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
@@ -242,6 +343,8 @@ def main():
         return 0
     if args.case == "cold-load":
         return cold_load(args)
+    if args.case == "playback":
+        return playback(args)
     parser.error("case is not implemented yet; no acceptance coverage may be inferred")
 
 

@@ -8,6 +8,7 @@ TestCase {
     width: 256
     height: 128
     property var fixture: null
+    SignalSpy { id: frames; signalName: "frameObserved" }
     // A lower-case file is created explicitly to retain the planned fixture name.
     function init() {
         var component = Qt.createComponent("accent-sampler-fixture.qml")
@@ -16,6 +17,8 @@ TestCase {
         // in the visible runner scene, as the production sampler does.
         fixture = component.createObject(tests.parent)
         verify(fixture !== null)
+        frames.target = fixture.sampler
+        frames.clear()
         tryCompare(fixture.imageWriter, "available", true, 2000)
         fixture.imageWriter.requestPaint()
         wait(50)
@@ -39,11 +42,14 @@ TestCase {
         wait(50)
         compare(fixture.fakePlayer.calls.length, 1)
         compare(fixture.sampler.accent.a, 0)
+        compare(frames.count, 0)
         fixture.fakePlayer.finish(call.id, 0, true)
         verify(fixture.lastSaveSucceeded)
         tryVerify(function () { return fixture.sampler.accent.a > 0.9 }, 2500)
         verify(fixture.sampler.accent.g > fixture.sampler.accent.r)
         verify(fixture.sampler.accent.r > fixture.sampler.accent.b)
+        compare(frames.count, 1)
+        compare(frames.signalArguments[0][0], fixture.sampler.trackKey)
         var canvas = findChild(fixture.sampler, "accentCanvas")
         verify(canvas !== null)
         verify(!canvas.isImageLoaded(call.url))
@@ -62,6 +68,7 @@ TestCase {
         wait(500)
         compare(fixture.fakePlayer.calls.length, 1)
         compare(fixture.sampler.accent.a, 0) // old green reply cannot tint C
+        compare(frames.count, 0)
         fixture.paintColor = "#4080c0"
         var paints = fixture.writerPaints
         fixture.imageWriter.requestPaint()
@@ -72,6 +79,8 @@ TestCase {
         tryVerify(function () { return fixture.sampler.accent.a > 0.9 }, 2500)
         verify(fixture.sampler.accent.b > fixture.sampler.accent.g)
         verify(fixture.sampler.accent.g > fixture.sampler.accent.r)
+        compare(frames.count, 1)
+        compare(frames.signalArguments[0][0], "C")
         var canvas = findChild(fixture.sampler, "accentCanvas")
         verify(!canvas.isImageLoaded(old.url))
         verify(!canvas.isImageLoaded(current.url))
@@ -86,6 +95,7 @@ TestCase {
         wait(700)
         compare(fixture.fakePlayer.calls.length, 3)
         compare(fixture.sampler.accent.a, 0)
+        compare(frames.count, 0)
     }
     function test_shutdown_before_late_success_never_loads_or_retries() {
         var call = firstCall()

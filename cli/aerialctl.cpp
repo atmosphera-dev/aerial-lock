@@ -13,6 +13,9 @@
 #include <QJsonObject>
 #include <QTextStream>
 #include <QTimer>
+#include <QDir>
+#include <unistd.h>
+#include <memory>
 
 #ifndef AERIAL_COMPANION_DATADIR
 #define AERIAL_COMPANION_DATADIR "/usr/share/aerial-lock"
@@ -62,9 +65,10 @@ QVariant unpack(const QVariant &value)
     }
     return value;
 }
-QVariantMap properties(const QDBusConnection &bus, const QString &object, const QString &interface, QDBusError &error)
+QVariantMap properties(const QDBusConnection &bus, const QString &object, const QString &interface, QDBusError &error,
+                       const QString &destination)
 {
-    auto call = QDBusMessage::createMethodCall(name, object, "org.freedesktop.DBus.Properties", "GetAll");
+    auto call = QDBusMessage::createMethodCall(destination, object, "org.freedesktop.DBus.Properties", "GetAll");
     call << interface;
     const QDBusReply<QVariantMap> reply = bus.call(call, QDBus::Block, 5000);
     if (!reply.isValid()) { error = reply.error(); return {}; }
@@ -99,23 +103,43 @@ QJsonArray jobs(CompanionClient &client, QDBusError &error)
     if (!completed(reply)) { error = reply.error(); return {}; }
     QJsonArray result;
     for (const auto &job : reply.value()) {
-        const auto values = properties(client.connection(), job.path(), jobInterface, error);
+        const auto values = properties(client.connection(), job.path(), jobInterface, error, client.service());
         if (error.isValid()) return {};
         auto row = QJsonObject::fromVariantMap(values); row["path"] = job.path(); result.append(row);
     }
     return result;
 }
+std::unique_ptr<CompanionClient> currentOwner(const QDBusConnection &bus, const QString &profile, QDBusError &error)
+{
+    const auto owner = bus.interface()->serviceOwner(name);
+    if (!owner.isValid()) { error = owner.error(); return {}; }
+    auto client = std::make_unique<CompanionClient>(owner.value(), path, bus);
+    client->setTimeout(5000);
+    auto settings = client->GetSettings();
+    if (!completed(settings)) { error = settings.error(); return {}; }
+    if (client->profile() != profile) {
+        error = QDBusError(QDBusMessage::createError("org.aeriallock.Companion1.Error.ProfileMismatch", "profile differs")); return {};
+    }
+    return client;
+}
 int waitJob(CompanionClient &client, const QDBusObjectPath &job, bool fetch, bool json)
 {
     if (job.path() == "/") { QTextStream(stderr) << "aerialctl: job was not accepted\n"; return 1; }
     Observer observer(client.connection());
+    const auto profile = client.profile();
+    std::unique_ptr<CompanionClient> replacement;
+    auto *owner = &client;
     for (;;) {
         QDBusError error;
-        const auto values = properties(client.connection(), job.path(), jobInterface, error);
+        const auto values = properties(owner->connection(), job.path(), jobInterface, error, owner->service());
         if (error.isValid()) {
             // Durable paths survive service restarts. Resnapshot the owner once
             // instead of treating an unknown job or a disconnected bus as success.
-            auto saved = client.ListJobs();
+            QDBusError connectionError;
+            replacement = currentOwner(client.connection(), profile, connectionError);
+            if (!replacement) return failure(connectionError);
+            owner = replacement.get();
+            auto saved = owner->ListJobs();
             if (!completed(saved)) return failure(saved.error());
             if (!saved.value().contains(job)) return failure(error);
             observer.wait(); continue;
@@ -210,11 +234,22 @@ int main(int argc, char **argv)
         patch = value.toObject();
     }
     const auto bus = QDBusConnection::sessionBus();
-    CompanionClient client(name, path, bus);
-    client.setTimeout(5000);
+    if (!bus.isConnected()) return failure(bus.lastError());
+    const auto local = Aerial::readConfig(Aerial::ConfigPaths::environment(shellDir(QStringLiteral(AERIAL_COMPANION_DATADIR))));
+    if (Aerial::isDefaultProfile(local.paths, QStringLiteral(AERIAL_COMPANION_DATADIR), QDir::homePath(),
+                                    "/run/user/" + QString::number(getuid()))) {
+        // Only the ordinary installed profile may activate. After that, all
+        // calls are pinned to a checked unique owner, including observations.
+        auto activate = QDBusMessage::createMethodCall(name, path, name, "GetSettings");
+        const auto reply = bus.call(activate, QDBus::Block, 5000);
+        if (reply.type() == QDBusMessage::ErrorMessage) return failure(QDBusError(reply));
+    }
+    QDBusError connectionError;
+    auto connection = currentOwner(bus, local.profile, connectionError);
+    if (!connection) return failure(connectionError);
+    auto &client = *connection;
     auto settings = client.GetSettings();
     if (!completed(settings)) return failure(settings.error());
-    const auto local = Aerial::readConfig(Aerial::ConfigPaths::environment(shellDir(QStringLiteral(AERIAL_COMPANION_DATADIR))));
     if (client.profile() != local.profile) { QTextStream(stderr) << "aerialctl: ProfileMismatch (service uses different XDG roots or bundle)\n"; return 1; }
 
     if (action == Show) { print(QJsonDocument::fromJson((effective ? settings.argumentAt<1>() : settings.argumentAt<0>()).toUtf8()).object(), json); return 0; }
@@ -244,11 +279,16 @@ int main(int argc, char **argv)
     Observer observer(bus);
     for (;;) {
         QDBusError error;
-        const auto rows = jobs(client, error);
-        if (error.isValid()) return failure(error);
+        auto rows = jobs(*connection, error);
+        if (error.isValid()) {
+            connection = currentOwner(bus, local.profile, connectionError);
+            if (!connection) return failure(connectionError);
+            error = QDBusError(); rows = jobs(*connection, error);
+            if (error.isValid()) return failure(error);
+        }
         if (action == Jobs) print(rows, json);
         else {
-            auto values = properties(bus, path, name, error);
+            auto values = properties(bus, path, name, error, connection->service());
             if (error.isValid()) return failure(error);
             auto result = QJsonObject::fromVariantMap(values); result["jobs"] = rows; print(result, json); return 0;
         }

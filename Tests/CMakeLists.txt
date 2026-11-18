@@ -44,6 +44,23 @@ target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_D
 target_link_libraries(companion-api-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
 add_test(NAME companion-api COMMAND dbus-run-session -- "$<TARGET_FILE:companion-api-probe>"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
+foreach(stem IN ITEMS companion-client companion-hint-probe)
+    if(stem STREQUAL "companion-client")
+        set(input "${AERIAL_LOCK_SOURCE}/native/companion-client.h")
+    else()
+        set(input "${CMAKE_CURRENT_SOURCE_DIR}/companion-hint-probe.cpp")
+    endif()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
+        COMMAND Qt6::moc "${input}" -o "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc" DEPENDS "${input}")
+endforeach()
+add_executable(companion-hint-probe companion-hint-probe.cpp "${AERIAL_LOCK_SOURCE}/native/companion-client.cpp"
+    "${AERIAL_LOCK_SOURCE}/common/config-document.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/companion-client.moc" "${CMAKE_CURRENT_BINARY_DIR}/companion-hint-probe.moc")
+target_include_directories(companion-hint-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET dbus-1)
+target_link_libraries(companion-hint-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test PkgConfig::DBUS)
+add_test(NAME companion-hint COMMAND dbus-run-session -- "$<TARGET_FILE:companion-hint-probe>")
 add_executable(auth-client-probe auth-client-probe.c "${AERIAL_LOCK_SOURCE}/native/auth-client.c")
 set_property(TARGET auth-client-probe PROPERTY C_STANDARD 11)
 target_link_options(auth-client-probe PRIVATE "-Wl,--wrap=send")
@@ -187,7 +204,7 @@ add_test(NAME companion-transfer COMMAND dbus-run-session -- "$<TARGET_FILE:comp
 add_test(NAME companion-policy COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" policyQueue policySnapshotsAndOwnerReplacement policyTransferPauseAndResume)
 add_test(NAME companion-control COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
-    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" serviceCliPolicy serviceCliTransactions)
+    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" serviceCliPolicy serviceCliTransactions serviceCliRestart)
 add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-queue.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-owner.py"

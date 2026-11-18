@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as d, PrivateRun
         "aerial-idle-main.o", "aerial-idle-proto.o", "connection-guard.o", "surface-input.o",
         "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o",
         "local-config.o", "config-document.o", "config-repository.o",
-        "local-content.o", "owned-directory.o", "content-snapshot.o",
+        "local-content.o", "companion-hint.o", "owned-directory.o", "content-snapshot.o",
         "companion-main.o", "companion-service.o", "companion_adaptor.o", "policy-monitor.o",
         "job-object.o", "job_adaptor.o", "aerialctl.o", "companion_client.o",
         "media-probe.o",
