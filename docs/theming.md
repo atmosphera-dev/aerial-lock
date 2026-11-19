@@ -212,6 +212,13 @@ consumes only the same writer generation. A focus/handoff change in between
 rejects submission without clearing the draft. File watching remains disabled;
 editing a theme mid-lock is not a supported replacement path.
 
+Elective replacement does not veto submission by an otherwise eligible active
+writer. Live composition in the actual native focus still defers submission;
+an unfocused editor's residual native composition flag does not describe that
+writer's activity. A rejected claim or vanished promoted candidate selects the
+trusted fallback through the model, preserving the draft and any independently
+focused surface writer. Showing a fallback alone is not authority recovery.
+
 ### Initial-space tunings
 
 Some setups (e.g. a hotkey-driven lock where Space triggers the lock)

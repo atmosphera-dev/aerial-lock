@@ -23,6 +23,7 @@ int main(int argc, char **argv) {
     const bool sameWindow = mode == QStringLiteral("same-window");
     const bool emptyState = mode == QStringLiteral("empty-state");
     const bool focusOut = mode == QStringLiteral("focus-out");
+    const bool handoff = mode == QStringLiteral("handoff");
     QQmlEngine engine;
     QQmlComponent component(&engine, QUrl::fromLocalFile(QString::fromLocal8Bit(argv[2])));
     std::unique_ptr<QObject> root(component.create());
@@ -47,7 +48,7 @@ int main(int argc, char **argv) {
     const int writer = model->property("activeWriter").toInt();
     const int generation = model->property("generation").toInt();
     const int revision = model->property("revision").toInt();
-    const bool residual = emptyState || focusOut;
+    const bool residual = emptyState || focusOut || handoff;
     QInputMethodEvent preedit(residual ? QString() : QStringLiteral("n"),
         {QInputMethodEvent::Attribute(QInputMethodEvent::Cursor, residual ? 0 : 1, 1, QVariant())});
     QCoreApplication::sendEvent(outgoing, &preedit);
@@ -55,6 +56,11 @@ int main(int argc, char **argv) {
            && model->property("compositionActive").toBool(), "native composition reported");
     expect(outgoing->property("preeditText").toString() == (residual ? QString() : QStringLiteral("n")),
            "native preedit matches surrogate state");
+    if (handoff) {
+        expect(QMetaObject::invokeMethod(root.get(), "requestHandoff"), "elective handoff requested");
+        expect(model->property("handoffState").toString() == QStringLiteral("releasing"),
+               "genuine focused composition defers elective release");
+    }
     if (sameWindow) {
         create("attachPanel", first);
         QTest::qWait(1);
@@ -98,12 +104,27 @@ int main(int argc, char **argv) {
            && model->property("activeWriter").toInt() != writer,
            "incoming editor owns authority without composition wait");
     expect(!model->property("compositionActive").toBool(), "activity describes current native focus");
+    if (handoff) {
+        QTest::qWait(1);
+        expect(outgoing->property("inputMethodComposing").toBool(),
+               "residual native session was neither committed nor reset");
+        expect(model->property("handoffState").toString().isEmpty(),
+               "unfocused residual composition does not strand elective release");
+        // Enter immediately, without another text edit that would incidentally
+        // clear the stale flag while hydrating the inactive mirror.
+        QTest::keyClick(&incoming, Qt::Key_Return);
+        expect(root->property("submitted").toString() == QStringLiteral("x"),
+               "active sink submits the existing draft without a repair edit");
+        expect(model->property("text").toString().isEmpty(), "accepted draft consumed exactly once");
+        std::printf("%s: %d failure(s)\n", failures == 0 ? "ALL OK" : "FAILURES", failures);
+        return failures == 0 ? 0 : 1;
+    }
     QTest::keyClick(&incoming, Qt::Key_B);
     const QString expected = residual ? QStringLiteral("xb") : QStringLiteral("xzb");
     expect(app.focusObject()->property("text").toString() == expected, "incoming native key delivered");
     expect(model->property("text").toString() == expected
            && model->property("revision").toInt() == revision + (residual ? 1 : 2),
-           "first incoming key publishes to shared draft exactly once");
+            "first incoming key publishes to shared draft exactly once");
     // A late notification from the old editor cannot poison the new owner.
     QInputMethodEvent ended;
     QCoreApplication::sendEvent(outgoing, &ended);

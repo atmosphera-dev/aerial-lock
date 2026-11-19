@@ -465,6 +465,35 @@ Item {
             compare(model.consumeSubmission(request.writer, request.generation), null)
             compare(model.text, "preserved")
         }
+
+        function test_fallback_recovery_preserves_independent_native_composition() {
+            var fallback = model.registerWriter()
+            var candidate = model.registerWriter()
+            var sink = model.registerWriter(false)
+            verify(model.claimWriter(fallback))
+            verify(model.transferFocus(sink))
+            model.applyEdit(sink, model.revision, "preserved", 3, 1)
+            var request = model.prepareSubmission()
+            model.setActivity(sink, true, true)
+            verify(model.requestHandoff(candidate))
+            model.releaseWriter(fallback)
+            verify(model.claimHandoff(candidate, model.handoffGeneration))
+            verify(model.restoreThemeWriter(fallback))
+            compare(model.themeWriter, fallback)
+            compare(model.activeWriter, sink)
+            compare(model.focusedWriter, sink)
+            verify(model.compositionActive)
+            verify(model.gestureActive)
+            compare(model.text, "preserved")
+            compare(model.cursorPosition, 3)
+            compare(model.anchorPosition, 1)
+            compare(model.consumeSubmission(request.writer, request.generation), null)
+            compare(model.prepareSubmission(), null, "recovery must not submit a live preedit")
+            model.setActivity(sink, false, false)
+            request = model.prepareSubmission()
+            verify(request !== null)
+            compare(model.consumeSubmission(request.writer, request.generation).text, "preserved")
+        }
     }
 
     Component {

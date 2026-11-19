@@ -83,10 +83,14 @@ Item {
     }
 
     function settle(useTheme, topics) {
-        if (internal.settled)
+        if (internal.settled && (useTheme || !internal.useTheme))
             return
         deadline.stop()
         handoffClaimGrace.stop()
+        if (!useTheme) {
+            internal.handoffPending = false
+            context.auth.input.restoreThemeWriter(fallbackPanel.authWriterToken)
+        }
         internal.useTheme = useTheme
         internal.topics = topics
         internal.settled = true
@@ -107,7 +111,7 @@ Item {
     }
 
     function failSelected(reason) {
-        if (internal.settled)
+        if (internal.settled && !internal.useTheme)
             return
         cancelPendingHandoff()
         root.logger.w("ThemeHost", "theme " + internal.selectedPath + " failed: " + reason
@@ -290,6 +294,10 @@ Item {
         focus: internal.useTheme && root.editorActive
         readonly property Item themeItem: item as Item
         property bool prepared: false
+        onItemChanged: {
+            if (internal.settled && internal.useTheme && item === null)
+                root.failSelected("theme vanished after promotion")
+        }
         onLoaded: {
             if (internal.settled || !root.allowLoading || root.fallbackPinned)
                 return

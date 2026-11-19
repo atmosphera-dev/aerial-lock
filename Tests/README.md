@@ -266,6 +266,14 @@ does not mean the lock window can receive keys. A parked observation precedes
 return, and no credential contents or lengths enter those readiness markers.
 Portable model/ThemeHost tests additionally reject competing/stale nominations
 and submissions whose writer generation changed during or after flushing.
+`tst_auth_recovery.qml` requires typed submission after rejected promotion,
+promoted-candidate teardown, fallback pinning and claim timeout. Elective theme
+replacement cannot globally block an otherwise usable active editor. The native
+`native-authority-handoff` case reproduces an unfocused TextInput retaining an
+empty-preedit composition flag, then submits the existing draft without an extra
+repair edit. It checks the native flag was not committed/reset during transfer.
+`test-auth-handoff-driver.py` verifies failure-safe cleanup and result persistence
+with synthetic log content, including credential-check and cleanup errors.
 
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
 with the tree under test at `$ROOT/src/aerial-lock` and the test build at

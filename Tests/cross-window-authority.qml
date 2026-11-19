@@ -9,6 +9,20 @@ Item {
     readonly property Services.AuthInputState draft: model
     property var panel: null
     property var sink: null
+    property var candidate: null
+    property var submitted: null
+    function submit() {
+        var request = model.prepareSubmission()
+        if (request !== null) {
+            const response = model.consumeSubmission(request.writer, request.generation)
+            if (response !== null)
+                submitted = response.text
+        }
+    }
+    function requestHandoff() {
+        candidate = panelComponent.createObject(root, {visible: false})
+        model.requestHandoff(candidate.writerToken)
+    }
     Services.AuthInputState { id: model }
     Component {
         id: panelComponent
@@ -17,6 +31,7 @@ Item {
             width: 280
             height: 40
             responseVisible: true
+            onSubmitRequested: root.submit()
         }
     }
     Component {
@@ -24,6 +39,7 @@ Item {
         LockModule.AuthInputSink {
             input: root.draft
             responseVisible: true
+            onSubmitRequested: root.submit()
         }
     }
     function newPanel(attachment) { panel = panelComponent.createObject(attachment) }

@@ -30,6 +30,23 @@ def outcome(locker, after):
     return hit[1].strip()
 
 
+def finalize_cycle(session, result, password):
+    try:
+        if password is not None and (session.output / "locker.log").exists():
+            if password.decode() in (session.output / "locker.log").read_text():
+                result.update(status="FAIL", error="fixture response leaked into locker.log")
+    except Exception:
+        result.update(status="FAIL", error="credential log check failed")
+    finally:
+        try:
+            session.cleanup()
+        except Exception as error:
+            result.update(status="FAIL", cleanup_error=str(error))
+            raise
+        finally:
+            (session.output / "handoff.json").write_text(json.dumps(result, indent=2) + "\n")
+
+
 def cycle(args, case):
     session = driver.Session(SimpleNamespace(root=args.root, vm_record=args.vm_record,
         backend="niri-drm", outputs=2, lane="debug", case="auth-handoff-" + args.ime + "-" + case,
@@ -167,10 +184,7 @@ def cycle(args, case):
             result["cleanup_external_release"] = True
         session.locker = None
     finally:
-        if password is not None and (session.output / "locker.log").exists():
-            assert password.decode() not in (session.output / "locker.log").read_text()
-        session.cleanup()
-        (session.output / "handoff.json").write_text(json.dumps(result, indent=2) + "\n")
+        finalize_cycle(session, result, password)
     print(json.dumps(dict(result=result, evidence=str(session.output))), flush=True)
     return result
 

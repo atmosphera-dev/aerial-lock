@@ -343,11 +343,40 @@ QtObject {
         handoffAborted()
     }
 
+    // A host can reject a claim after its pending handoff has completed, or
+    // lose a promoted candidate altogether. Recovery selects the trusted
+    // fallback here, not by making an ineligible mirror visible and hoping it
+    // claims. Keep an independent surface writer and its native activity.
+    function restoreThemeWriter(token) {
+        if (_writers[token] !== true)
+            return false
+        if (activeWriter !== token && _writers[activeWriter] === true)
+            flushFocus()
+        if (_writers[token] !== true)
+            return false
+        generation++
+        handoffState = ""
+        handoffTarget = -1
+        _pendingFocusWriter = -1
+        themeWriter = token
+        if (!_writers.hasOwnProperty(focusedWriter) || _writers[focusedWriter] === true)
+            focusedWriter = token
+        if (!_writers.hasOwnProperty(activeWriter) || _writers[activeWriter] === true) {
+            compositionActive = false
+            gestureActive = false
+            activeWriter = token
+        }
+        // Also re-arm the outgoing editor when a completed claim is rolled
+        // back; abortHandoff's pending-state-only path cannot do that.
+        handoffAborted()
+        return true
+    }
+
     // ---- Controller operations (Lock.qml; never widget-lifetime-driven) ----
 
     function submissionValid(writer, serial) {
         return writerEligible(writer) && activeWriter === writer && generation === serial
-                && handoffState === "" && !compositionActive
+                && !compositionActive
     }
 
     // A native flush may itself move focus. Its nested transfer uses the

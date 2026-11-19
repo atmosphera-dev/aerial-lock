@@ -100,7 +100,7 @@ Item {
         if (!root.visible || !root.enabled || root.inputBusy)
             return
         // A key used to finish a composition must not also submit to PAM.
-        if (field.inputMethodComposing || root.input.compositionActive)
+        if (root.composingInFocus() || root.input.compositionActive)
             return
         // A native focus object must not submit somebody else's draft.
         // An unfocused panel button may still submit the active surface sink.
@@ -123,6 +123,9 @@ Item {
     onSurfaceWindowChanged: { if (_token >= 0) root.focusField() }
     readonly property bool hasActiveFocus: field.activeFocus
     readonly property bool inputMethodComposing: field.inputMethodComposing
+    function composingInFocus() {
+        return windowActive && field.activeFocus && field.inputMethodComposing
+    }
     // Qt overwrites cursorVisible during focus events (documented by
     // TextInput). Restore the mirror caret after that native event settles.
     function updateCursorVisibility() {
@@ -130,6 +133,7 @@ Item {
     }
     onHasActiveFocusChanged: {
         root.reportActivity()
+        Qt.callLater(root.attemptRelease)
         Qt.callLater(root.updateCursorVisibility)
     }
 
@@ -137,8 +141,7 @@ Item {
     // Activity belongs to the current native focus, not that residual flag.
     function reportActivity() {
         if (root.input !== null && _token >= 0)
-            root.input.setActivity(_token, root.windowActive && root.hasActiveFocus
-                                   && field.inputMethodComposing, _gestureActive)
+            root.input.setActivity(_token, root.composingInFocus(), _gestureActive)
     }
 
     function reportWindowActivity() {
@@ -259,7 +262,7 @@ Item {
             return
         if (root.input.handoffState !== "releasing")
             return
-        if (field.inputMethodComposing || _gestureActive)
+        if (root.composingInFocus() || _gestureActive)
             return
         flush()
         _releasedForHandoff = true
@@ -397,6 +400,7 @@ Item {
     onWindowActiveChanged: {
         root.reportWindowActivity()
         root.reportActivity()
+        Qt.callLater(root.attemptRelease)
         if (windowActive) {
             root.activateSurface()
             // Keep the existing local focus backstop after Qt's resolution,

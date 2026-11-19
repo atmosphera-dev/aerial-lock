@@ -61,7 +61,7 @@ add_test(NAME native-input-sink-panel
     COMMAND native-input-probe --sink-panel "${AERIAL_LOCK_SOURCE}/Tests/auth-input-fixture.qml")
 add_executable(cross-window-authority cross-window-authority.cpp)
 target_link_libraries(cross-window-authority PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
-foreach(mode IN ITEMS natural empty-state same-window focus-out)
+foreach(mode IN ITEMS natural empty-state same-window focus-out handoff)
     add_test(NAME native-authority-${mode}
         COMMAND cross-window-authority "${mode}" "${AERIAL_LOCK_SOURCE}/Tests/cross-window-authority.qml")
 endforeach()
@@ -73,6 +73,8 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME auth-handoff-driver
+    COMMAND "${Python3_EXECUTABLE}" "${AERIAL_LOCK_SOURCE}/Tests/test-auth-handoff-driver.py")
 add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"
     "$<TARGET_FILE:power-actions-probe>" "$<TARGET_FILE:power-actions-bus-fixture>")
 add_test(NAME power-vm-discovery COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-vm.py")
