@@ -56,11 +56,17 @@ void Transfer::start()
     validator = saved.value("validator").toString().toLatin1();
     effectiveUrl = QUrl(saved.value("effectiveUrl").toString());
     expected = saved.value("total").toInteger(-1);
+    const auto savedOffset = saved.value("received").toInteger(-1);
     if (saved.value("key") != rep.key || saved.value("url") != rep.url.toString(QUrl::FullyEncoded)
-        || saved.value("received").toInteger(-1) != offset || validator.isEmpty() || !SourceResolver::remoteUrl(effectiveUrl)
-        || (expected >= 0 && offset > expected) || (rep.bytes >= 0 && expected != rep.bytes)) {
+        || savedOffset < 0 || savedOffset > offset || validator.isEmpty() || !SourceResolver::remoteUrl(effectiveUrl)
+        || (expected >= 0 && savedOffset > expected) || (rep.bytes >= 0 && expected != rep.bytes)) {
         if (ftruncate(file, 0) || lseek(file, 0, SEEK_SET) < 0) { finish("StorageError"); return; }
         offset = 0; expected = rep.bytes; validator.clear(); effectiveUrl = QUrl{};
+    } else if (offset != savedOffset) {
+        // A crash may leave received but uncheckpointed bytes after the durable
+        // prefix. Resume exactly that prefix, never append the uncommitted tail.
+        if (ftruncate(file, savedOffset)) { finish("StorageError"); return; }
+        offset = savedOffset;
     }
     resumeOffset = offset;
     if (!rep.checksum.isEmpty() && offset > 0) {
@@ -105,7 +111,7 @@ void Transfer::request()
             finish(result.error); return;
         }
         if (expected >= 0 && offset != expected) { persist(); finish("LengthMismatch"); return; }
-        if (offset <= 0 || fsync(file)) { finish("StorageError"); return; }
+        if (offset <= 0 || !persist()) { finish("StorageError"); return; }
         if (!rep.checksum.isEmpty()) {
             if (checksum.result().toHex() != rep.checksum) { cache.discardPartial(rep.key); finish("ChecksumMismatch"); return; }
         }
@@ -162,7 +168,11 @@ QString Transfer::chunk(const QByteArray &bytes)
     }
     offset += bytes.size();
     if (!rep.checksum.isEmpty()) checksum.addData(bytes);
-    if (!persist()) return "CacheFull";
+    // Progress remains live, but durable checkpoints amortize synchronous file
+    // and metadata flushes. Errors/cancellation and successful termination also
+    // persist, so restart loses at most the uncheckpointed received tail.
+    if ((offset - checkpointOffset >= 8 * 1024 * 1024 || checkpointAge.elapsed() >= 2000)
+        && !persist()) return "CacheFull";
     emit progress();
     return {};
 }
@@ -171,9 +181,11 @@ bool Transfer::persist()
 {
     if (file < 0) return false;
     if (fsync(file)) return false;
-    return cache.writeMetadata("partials/" + rep.key + ".json", {{"version", 1}, {"key", rep.key},
+    if (!cache.writeMetadata("partials/" + rep.key + ".json", {{"version", 1}, {"key", rep.key},
         {"url", rep.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", effectiveUrl.toString(QUrl::FullyEncoded)}, {"validator", QString::fromLatin1(validator)},
-        {"received", offset}, {"total", expected}});
+        {"received", offset}, {"total", expected}})) return false;
+    checkpointOffset = offset; checkpointAge.start();
+    return true;
 }
 
 void Transfer::probe()

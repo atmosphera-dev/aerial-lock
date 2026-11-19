@@ -479,6 +479,24 @@ private slots:
         QVERIFY(server.requests.last().contains("If-Range: \"fixture-one\""));
         QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
     }
+    void resumeUsesDurablePrefixAfterTail()
+    {
+        QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
+        HttpFixture server; server.media = media; server.mode = "206"; QNetworkAccessManager network;
+        auto representation = rep(server.url()); representation.checksum = QCryptographicHash::hash(media, QCryptographicHash::Sha256).toHex();
+        const auto prefix = media.size() / 2;
+        const int file = cache.openPartial(representation.key, true); QVERIFY(file >= 0);
+        const auto bytes = media.left(prefix) + QByteArray(17, 'x');
+        QVERIFY(cache.reserve(bytes.size())); QVERIFY(cache.append(file, bytes)); close(file); cache.releaseReservation();
+        QVERIFY(cache.writeMetadata("partials/" + representation.key + ".json", {{"version", 1}, {"key", representation.key},
+            {"url", representation.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", representation.url.toString(QUrl::FullyEncoded)},
+            {"validator", "\"fixture-one\""}, {"received", prefix}, {"total", media.size()}}));
+        Transfer transfer(cache, network, representation, probe, {}, [] { return 123; });
+        QSignalSpy done(&transfer, &Transfer::finished); transfer.start(); QTRY_COMPARE(done.size(), 1);
+        QVERIFY2(transfer.error().isEmpty(), qPrintable(transfer.error()));
+        QVERIFY(server.requests.first().contains("\r\nRange: bytes=" + QByteArray::number(prefix) + "-\r\n"));
+        QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
+    }
     void manifestValidatorsAreResourceScoped()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);

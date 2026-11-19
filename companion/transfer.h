@@ -5,6 +5,7 @@
 #include "local-probe.h"
 #include <QPointer>
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <functional>
 
 namespace Aerial {
@@ -47,6 +48,8 @@ private:
     QByteArray validator;
     QUrl effectiveUrl;
     qint64 offset = 0, expected = -1, resumeOffset = 0;
+    qint64 checkpointOffset = 0;
+    QElapsedTimer checkpointAge;
     int file = -1;
     int hashInput = -1;
     qint64 hashed = 0;
