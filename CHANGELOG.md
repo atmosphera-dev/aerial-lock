@@ -3,6 +3,12 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- On niri the password panel now appears on the default monitor; the optional qt6-niriqml dependency is gone.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added

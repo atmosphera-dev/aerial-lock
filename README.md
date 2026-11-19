@@ -91,8 +91,8 @@ systemctl --user enable --now aerial-idle.service
 ```
 
 The user manager must have the session's `WAYLAND_DISPLAY` and
-`XDG_RUNTIME_DIR` environment (and compositor IPC variables for focused-output
-selection). The unit belongs to `graphical-session.target` and requires
+`XDG_RUNTIME_DIR` environment (and `HYPRLAND_INSTANCE_SIGNATURE` for focused-output
+selection on Hyprland). The unit belongs to `graphical-session.target` and requires
 `WAYLAND_DISPLAY`. With no user config, suspend and logind lock/unlock handling
 are **on**, but there is **no idle timeout**:
 
@@ -345,10 +345,11 @@ Two separate questions: does the compositor implement
 | KDE KWin / Plasma| No        | —           |
 | GNOME / Mutter   | No        | —           |
 
-The password panel is placed on the compositor's focused output when that
-name matches a usable lock surface (`NIRI_SOCKET` → niri,
-`HYPRLAND_INSTANCE_SIGNATURE` → hyprland). Otherwise it goes on the first usable
-lock surface. The selection stays pinned while that surface exists. If it is
+On niri the password panel appears on the default monitor (the first usable
+lock surface), with no compositor library required. On Hyprland it uses the
+focused output when that name matches a usable lock surface
+(`HYPRLAND_INSTANCE_SIGNATURE`), otherwise the first usable lock surface.
+The selection stays pinned while that surface exists. If it is
 removed, the same theme and editor move to a surviving output without clearing
 the typed text or selection and without restarting PAM; if no lock surface is
 left, the editor waits until one returns. Hyprland's own `FALLBACK` output is a

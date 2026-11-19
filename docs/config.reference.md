@@ -322,10 +322,12 @@ rebuild the package.
 Not user configuration. At lock time, aerial-lock reads the focused output
 from a compositor backend if one is present:
 
-- `NIRI_SOCKET` set → niri (`NiriState.activeOutput`)
-- `HYPRLAND_INSTANCE_SIGNATURE` set → Hyprland (`Hyprland.focusedMonitor.name`)
-- otherwise, or if the backend fails to load, or if the name has no usable
-  lock surface → the first usable lock surface, with a warning in the last case
+- On niri (`NIRI_SOCKET` set), use the default monitor (the first usable lock
+  surface), without a compositor backend or optional library.
+- Otherwise, `HYPRLAND_INSTANCE_SIGNATURE` selects Hyprland
+  (`Hyprland.focusedMonitor.name`).
+- Without a backend, if it fails to load, or if its name has no usable lock
+  surface, use the first usable lock surface, with a warning in the last case.
 
 There is no config key to pick a screen. A wrong name must not hide the
 panel. The selected surface stays pinned until it disappears; the same

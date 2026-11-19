@@ -84,6 +84,10 @@ Invalid or blank leaves cannot erase usable lower-layer labels.
 
 ### QML suites
 
+`tst_compositor.qml` checks that niri uses the ready no-backend/default-output
+path, including when a stale Hyprland environment variable is also present.
+No niri QML module or IPC connection is needed.
+
 ```sh
 mkdir -p "$TMPDIR/qml-gate"
 log="$TMPDIR/qml-gate/qmltestrunner.log"
@@ -111,7 +115,7 @@ named object; those mutable properties must not decide which object is tested.
 Use `-input Tests/tst_theme_host.qml` to select just one suite. The test-only
 `imports/Quickshell` modules let standalone QtTest load ThemeHost's types
 without Quickshell's executable-linked plugins. They supply only its inactive
-I/O boundary; any environment or file access throws. The handoff suite loads
+I/O boundary; file access and unscripted environment access throw. The handoff suite loads
 the actual ThemeHost, Loader, timers, AuthInputState and candidate QML, while
 driving a synthetic writer's composition and explicit release. Real native
 IME handling belongs to the native input probe; real theme discovery and

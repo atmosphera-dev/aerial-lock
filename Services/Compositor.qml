@@ -5,9 +5,10 @@ Scope {
     id: root
 
     readonly property string backendName: {
+        // Niri uses portable defaults, even with stale Hyprland variables.
         var niri = Quickshell.env("NIRI_SOCKET")
         if (niri && niri.length > 0)
-            return "niri"
+            return "none"
         var hypr = Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
         if (hypr && hypr.length > 0)
             return "hyprland"
@@ -31,8 +32,6 @@ Scope {
     Loader {
         id: backendLoader
         source: {
-            if (root.backendName === "niri")
-                return "Compositor/NiriBackend.qml"
             if (root.backendName === "hyprland")
                 return "Compositor/HyprlandBackend.qml"
             return ""

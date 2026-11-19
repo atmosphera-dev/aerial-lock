@@ -263,7 +263,7 @@ def run_group(request_path):
             compositor.process.terminate()
             compositor.finish(10)
         summary['elapsed_seconds'] = time.monotonic() - start
-        summary['versions'] = subprocess.check_output(['pacman', '-Q', 'niri', 'quickshell', 'qt6-base', 'qt6-mpvqml', 'qt6-niriqml'], text=True).splitlines()
+        summary['versions'] = subprocess.check_output(['pacman', '-Q', 'niri', 'quickshell', 'qt6-base', 'qt6-mpvqml'], text=True).splitlines()
         if password and password in json.dumps(summary):
             summary.update(status='FAIL', reason='credential leak; public export forbidden', export_forbidden=True)
         if password:

@@ -36,11 +36,6 @@
       "version": "0.2.0-1",
       "recipe_sha256": "ba0996759474208ff77c83241ba60c764e253268bd2f921c33825cb9ace12f04",
       "source_sha256": "f172fa15a999cba29b00e2cc091b653c5224369caad4f7902df306d0641f809c"
-    },
-    "qt6-niriqml": {
-      "version": "0.2.0-1",
-      "recipe_sha256": "8fba51298c8175a10d2359f37da5fef6d488cf03b053303d292f1434544e60a0",
-      "source_sha256": "59079deeeed8dc245e35ee91846f0f7b32e005cc6ff716a1b05ed68de64e0b4f"
     }
   },
   "wtype": {

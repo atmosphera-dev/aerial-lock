@@ -27,15 +27,14 @@ systemctl daemon-reload
 systemctl restart qemu-guest-agent
 if ! id builder >/dev/null 2>&1; then useradd --create-home builder; fi
 install -d -o builder -g builder /home/builder/aerial-ci/tmp
-for package in qt6-mpvqml qt6-niriqml; do
-    install -d -o builder -g builder "/home/builder/aerial-ci/$package"
-    install -o builder -g builder "aur/$package/PKGBUILD" "/home/builder/aerial-ci/$package/PKGBUILD"
-    pushd "/home/builder/aerial-ci/$package"
-    runuser -u builder -- env TMPDIR=/home/builder/aerial-ci/tmp MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2 \
-        makepkg --noconfirm --cleanbuild
-    popd
-    pacman -U --noconfirm "/home/builder/aerial-ci/$package/$package"-[0-9]*-x86_64.pkg.tar.zst
-done
+package=qt6-mpvqml
+install -d -o builder -g builder "/home/builder/aerial-ci/$package"
+install -o builder -g builder "aur/$package/PKGBUILD" "/home/builder/aerial-ci/$package/PKGBUILD"
+pushd "/home/builder/aerial-ci/$package"
+runuser -u builder -- env TMPDIR=/home/builder/aerial-ci/tmp MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    makepkg --noconfirm --cleanbuild
+popd
+pacman -U --noconfirm "/home/builder/aerial-ci/$package/$package"-[0-9]*-x86_64.pkg.tar.zst
 mkdir -p "$root/wtype"
 cd "$root/wtype"
 curl --fail --location --retry 3 --max-time 120 \

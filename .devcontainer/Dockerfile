@@ -6,7 +6,7 @@ RUN pacman -Syu --noconfirm --needed \
         qt6-declarative qt6-5compat qt6-svg quickshell mpv git cmake shellcheck \
         ninja python nodejs dbus systemd wayland-protocols libxkbcommon ttf-dejavu sway mesa \
     && useradd --create-home builder \
-    && for package in qt6-mpvqml qt6-niriqml; do \
+    && for package in qt6-mpvqml; do \
         install -d -o builder -g builder "/var/tmp/$package" \
         && curl --fail --location --retry 3 --max-time 120 \
             "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=$package" \

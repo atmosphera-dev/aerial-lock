@@ -63,7 +63,7 @@ has_errors=0
 [ $ec -ne 0 ] && has_errors=1
 
 # Enforce zero warnings, including categories added by newer Qt releases.
-if grep -Eq '^(Warning|Error):|Failed to import (QtQuick|Quickshell|MpvQml|Niri)([. ]|$)' <<< "$output"; then
+if grep -Eq '^(Warning|Error):|Failed to import (QtQuick|Quickshell|MpvQml)([. ]|$)' <<< "$output"; then
     has_errors=1
 fi
 
