@@ -2,8 +2,8 @@
 
 This route has no Ark, libvirt, bridge, fleet SSH key or desktop dependency.
 Use a disposable Linux VM with nested KVM for local reproduction. Never run
-these test workloads on your live desktop. Standard public GitHub Linux runners
-are VMs and provide the CI execution boundary.
+these test workloads on your live desktop. Blacksmith x64 Linux runners are
+ephemeral VMs with nested KVM support and provide the CI execution boundary.
 
 ## First group
 
@@ -230,14 +230,18 @@ can replace its rebuild step with this exact-tag/digest download and retain
 the existing run-group command. This workflow does not yet offer prebuilt-image
 inputs; unavailable images must fail, not silently fall back to another image.
 
-GitHub constraints are 20 Free concurrent jobs, six hours/job, 256 matrix jobs,
-500 MB artifact storage, 10 GB cache/repository, and standard public Linux
-4 vCPU/16 GB/approximately 14 GB disk. This workflow uses one VM at a time,
-two vCPUs, explicit deadlines, three-day compact artifacts and no image cache.
+Both workflow jobs use `blacksmith-8vcpu-ubuntu-2404` (8 vCPU, 32 GB RAM,
+160 GB disk). Blacksmith documents nested KVM on x64 Linux, not ARM, and
+unlimited runner concurrency in its [runner documentation](https://docs.blacksmith.sh/blacksmith-runners/overview).
+The workflow still checks `/dev/kvm` and acquires its ACL at each use.
+It uses one nested VM at a time with two vCPUs and 4096 MiB RAM, unchanged
+explicit deadlines, three-day compact artifacts and no image cache.
+GitHub's artifact storage and workflow limits still apply; Blacksmith's runner
+capacity does not increase the repository's GitHub artifact storage quota.
 Opt-in master publication additionally needs the one-day image transfer quota
 above; release assets are durable and separate from Actions artifact storage.
-Measure before claiming it fits. Blacksmith is a later option only if actual
-GitHub limits obstruct the workload, not the initial provider.
+Measure before claiming it fits. The user selected Blacksmith on 2026-11-18
+after the shared Arch CI image builds ran out of memory on GitHub runners.
 
 ## Acceptance and split/merge extension (design only)
 

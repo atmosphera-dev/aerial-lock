@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   niri-smoke:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       image-artifact: ${{ steps.publication-assets.outputs.artifact_name }}
     # Step budgets total 166 minutes, including workflow validation and image staging.
@@ -174,7 +174,7 @@ jobs:
     if: ${{ inputs.publish && inputs.group == 'niri-smoke' && github.ref == 'refs/heads/master' && needs.niri-smoke.result == 'success' }}
     permissions:
       contents: write
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - name: Checkout tested publisher
