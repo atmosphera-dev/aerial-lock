@@ -14,7 +14,10 @@ make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 
 ## Portable checks
 
-The `Checks` GitHub workflow runs on pushes and PRs to master. Its separate
+The `Checks` GitHub workflow runs on pushes and PRs to master, using Blacksmith
+`blacksmith-8vcpu-ubuntu-2404` x64 VMs (8 vCPU, 32 GB RAM, 160 GB disk).
+The image-build and test container caps remain 4 GB RAM and two CPUs;
+runner capacity does not override those limits. Its separate
 `build-and-test` job uses the same Arch `.devcontainer/Dockerfile` as lint:
 it builds the production targets with `make`, builds `Tests/CMakeLists.txt`,
 runs the portable CTest/Python cases offscreen, the Node suites, and every
