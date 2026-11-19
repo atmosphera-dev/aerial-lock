@@ -95,6 +95,27 @@ Item {
         function test_elective_handoff_cannot_block_active_writer_submission_data() {
             return [{tag: "outgoing", sink: false}, {tag: "surface-sink", sink: true}]
         }
+        function test_failed_async_load_preserves_active_fallback_composition() {
+            const fallback = findChild(host, "authField")
+            fallback.focusField()
+            tryCompare(fallback, "hasActiveFocus", true)
+            keyClick(Qt.Key_A)
+            const model = context.auth.input
+            const writer = model.activeWriter
+            model.setActivity(writer, true, true)
+            ignoreWarning(/ThemeHost: theme .* failed: synthetic async load error - using built-in panel/)
+            host.failSelected("synthetic async load error")
+            compare(model.activeWriter, writer)
+            verify(model.compositionActive, "same editor keeps its native composition activity")
+            verify(model.gestureActive, "same editor keeps its gesture activity")
+            context.auth.submit()
+            compare(accepted.length, 0, "live composition cannot become a submitted committed prefix")
+            compare(model.text, "a")
+            model.setActivity(writer, false, false)
+            keyClick(Qt.Key_Return)
+            compare(accepted.length, 1)
+            compare(accepted[0], "a")
+        }
         function test_elective_handoff_cannot_block_active_writer_submission(data) {
             const model = context.auth.input
             const candidate = model.registerWriter()

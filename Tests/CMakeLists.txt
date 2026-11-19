@@ -61,7 +61,7 @@ add_test(NAME native-input-sink-panel
     COMMAND native-input-probe --sink-panel "${AERIAL_LOCK_SOURCE}/Tests/auth-input-fixture.qml")
 add_executable(cross-window-authority cross-window-authority.cpp)
 target_link_libraries(cross-window-authority PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
-foreach(mode IN ITEMS natural empty-state same-window focus-out handoff)
+foreach(mode IN ITEMS natural empty-state same-window focus-out handoff same-writer-recovery)
     add_test(NAME native-authority-${mode}
         COMMAND cross-window-authority "${mode}" "${AERIAL_LOCK_SOURCE}/Tests/cross-window-authority.qml")
 endforeach()

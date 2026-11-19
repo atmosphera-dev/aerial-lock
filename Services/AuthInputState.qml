@@ -361,7 +361,7 @@ QtObject {
         themeWriter = token
         if (!_writers.hasOwnProperty(focusedWriter) || _writers[focusedWriter] === true)
             focusedWriter = token
-        if (!_writers.hasOwnProperty(activeWriter) || _writers[activeWriter] === true) {
+        if (activeWriter !== token && (!_writers.hasOwnProperty(activeWriter) || _writers[activeWriter] === true)) {
             compositionActive = false
             gestureActive = false
             activeWriter = token

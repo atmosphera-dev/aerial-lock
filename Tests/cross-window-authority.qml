@@ -23,6 +23,7 @@ Item {
         candidate = panelComponent.createObject(root, {visible: false})
         model.requestHandoff(candidate.writerToken)
     }
+    function recoverPanel() { model.restoreThemeWriter(panel.writerToken) }
     Services.AuthInputState { id: model }
     Component {
         id: panelComponent

@@ -272,6 +272,9 @@ replacement cannot globally block an otherwise usable active editor. The native
 `native-authority-handoff` case reproduces an unfocused TextInput retaining an
 empty-preedit composition flag, then submits the existing draft without an extra
 repair edit. It checks the native flag was not committed/reset during transfer.
+`native-authority-same-writer-recovery` keeps a real preedit active while
+recovering the already-selected fallback: context submission must remain blocked
+until natural completion, then consume the exact committed response.
 `test-auth-handoff-driver.py` verifies failure-safe cleanup and result persistence
 with synthetic log content, including credential-check and cleanup errors.
 

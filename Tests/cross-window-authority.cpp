@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
     const bool emptyState = mode == QStringLiteral("empty-state");
     const bool focusOut = mode == QStringLiteral("focus-out");
     const bool handoff = mode == QStringLiteral("handoff");
+    const bool recovery = mode == QStringLiteral("same-writer-recovery");
     QQmlEngine engine;
     QQmlComponent component(&engine, QUrl::fromLocalFile(QString::fromLocal8Bit(argv[2])));
     std::unique_ptr<QObject> root(component.create());
@@ -56,6 +57,25 @@ int main(int argc, char **argv) {
            && model->property("compositionActive").toBool(), "native composition reported");
     expect(outgoing->property("preeditText").toString() == (residual ? QString() : QStringLiteral("n")),
            "native preedit matches surrogate state");
+    if (recovery) {
+        expect(QMetaObject::invokeMethod(root.get(), "recoverPanel"), "active fallback recovered");
+        expect(model->property("compositionActive").toBool(), "same native writer retains composition activity");
+        expect(outgoing->property("inputMethodComposing").toBool()
+               && outgoing->property("preeditText").toString() == QStringLiteral("n"),
+               "recovery preserves the native preedit session");
+        expect(QMetaObject::invokeMethod(root.get(), "submit"), "context submit requested during preedit");
+        expect(root->property("submitted").isNull()
+               && model->property("text").toString() == QStringLiteral("x"),
+               "context submission stays blocked until natural composition completion");
+        QInputMethodEvent commit;
+        commit.setCommitString(QStringLiteral("z"));
+        QCoreApplication::sendEvent(outgoing, &commit);
+        QTest::keyClick(&first, Qt::Key_Return);
+        expect(root->property("submitted").toString() == QStringLiteral("xz"),
+               "natural composition completion restores exact submission");
+        std::printf("%s: %d failure(s)\n", failures == 0 ? "ALL OK" : "FAILURES", failures);
+        return failures == 0 ? 0 : 1;
+    }
     if (handoff) {
         expect(QMetaObject::invokeMethod(root.get(), "requestHandoff"), "elective handoff requested");
         expect(model->property("handoffState").toString() == QStringLiteral("releasing"),
