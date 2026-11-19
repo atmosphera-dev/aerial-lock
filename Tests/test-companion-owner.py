@@ -119,6 +119,21 @@ with tempfile.TemporaryDirectory(prefix="companion-owner-") as temporary:
         assert snapshot["ManagedBytes"] == 0 and not snapshot["UsageKnown"]
         assert command(env, "fetch", "--wait").returncode == 1
         assert foreign.read_bytes() == b"not adopted"
+        owner.terminate()
+        assert owner.wait(timeout=5) == 0 or owner.returncode == -15
+
+        env, profile = environment(second_address, "planner-recovery")
+        config = profile / "config/aerial-lock/config.json"
+        document = json.loads(config.read_text())
+        document["cache"]["maxBytes"] = 1000000
+        config.write_text(json.dumps(document))
+        obstruction = profile / "state/aerial-lock"
+        obstruction.write_bytes(b"temporary storage obstruction")
+        owner = start(env)
+        snapshot = wait(status, "planner failure did not export status")
+        assert snapshot["DeferReason"] == "StorageError", snapshot
+        obstruction.unlink()
+        wait(lambda: (status() or {}).get("State") == "paused", "planner did not recover without a restart or edit")
         print("COMPANION_OWNER_PASS zero_cap status independent_bus_conflict bus_loss storage_error no_unowned_deletion help_without_bus custom_profile_no_activation")
     finally:
         for process in reversed(processes):

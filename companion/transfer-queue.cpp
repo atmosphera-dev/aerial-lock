@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
+#include <QScopeGuard>
 #include <algorithm>
 #include <limits>
 
@@ -47,7 +48,6 @@ void TransferQueue::start()
 {
     if (running) return;
     running = true;
-    if (!cache.valid() || !state.valid() || !state.initializeRotation()) { publishState("error", "StorageError"); return; }
     const auto saved = state.jobs();
     for (auto it = saved.begin(); it != saved.end(); ++it)
         if (!terminal(it.value().toObject())) pending.append(it.key());
@@ -119,17 +119,26 @@ void TransferQueue::invalidate()
 void TransferQueue::evaluate()
 {
     if (!running) return;
+    // Every evaluation owns a future wakeup, including storage-error exits.
+    const auto wakeup = qScopeGuard([this] { armCheck(); emit changed(); });
+    if (!transfer && !cache.valid() && !cache.recover()) { publishState("error", "StorageError"); return; }
+    if (!state.valid() || !state.initializeRotation()) { publishState("error", "StorageError"); return; }
     const auto settings = config.document().effective;
     const auto limits = settings.value("cache").toObject();
     cache.configure(limits.value("maxBytes").toInteger(), limits.value("minFreeBytes").toInteger());
+    QSet<QString> configured;
+    for (const auto &value : settings.value("sources").toArray()) {
+        const auto source = value.toObject();
+        if (source.value("type") == "apple" || source.value("type") == "community") configured.insert(source.value("id").toString());
+    }
+    cache.setSources(configured);
     const auto usage = cache.usage();
     if (!transfer && usage.safe && usage.bytes > quint64(limits.value("maxBytes").toInteger())) {
         const auto maintenance = cache.prune(false, {}, usage.bytes - quint64(limits.value("maxBytes").toInteger()));
         if (maintenance.value("removedBytes").toInteger() > 0) emit contentChanged();
         if (maintenance.contains("error")) { publishState("error", maintenance.value("error").toString()); return; }
     }
-    armCheck();
-    ensure(topics); schedule(); emit changed();
+    ensure(topics); schedule();
 }
 
 void TransferQueue::armCheck()
@@ -137,6 +146,8 @@ void TransferQueue::armCheck()
     const auto settings = config.document().effective;
     const auto interval = settings.value("acquisition").toObject().value("checkIntervalSeconds").toInteger();
     next = clock() + std::min(std::max<qint64>(1, interval), std::numeric_limits<qint64>::max() - std::max<qint64>(0, clock()));
+    if (!cache.valid() || (phase == "error" && reason == "StorageError"))
+        next = std::min(next, clock() < std::numeric_limits<qint64>::max() ? clock() + 1 : clock());
     // A failed item can wake sooner than the ordinary maintenance interval.
     for (const auto &rep : catalogue) {
         const auto retry = state.nextAttempt(rep.key);
@@ -186,6 +197,14 @@ void TransferQueue::retryPersistence()
 {
     if (!afterPersistence) return;
     if (!state.saveJob(active, current)) {
+        if (state.capacityExceeded()) {
+            // A permanently oversized transition cannot be retried like ENOSPC.
+            // The last durable job reserved this exact terminal escape path.
+            current = state.jobs().value(active).toObject();
+            afterPersistence = {};
+            finish("StorageError");
+            return;
+        }
         publishState("error", "StorageError");
         persistenceTimer.start(1000);
         return;
@@ -349,7 +368,15 @@ bool TransferQueue::finalizeRotation()
 int TransferQueue::readyCount() const
 {
     int count = 0;
-    for (const auto &rep : selected()) if (cache.contains(rep.key)) ++count;
+    QSet<QString> published;
+    if (!cache.valid()) {
+        // A durable commit awaiting pointer repair is not yet visible to the
+        // locker. Count the public snapshot, not the failed writer's inventory.
+        const ContentSnapshot snapshot(cache.path());
+        for (const auto &entry : snapshot.entries()) published.insert(entry.toObject().value("key").toString());
+    }
+    for (const auto &rep : selected())
+        if (cache.valid() ? cache.contains(rep.key) : published.contains(rep.key)) ++count;
     return count;
 }
 
@@ -386,6 +413,20 @@ void TransferQueue::nextTransfer()
     auto candidate = std::find_if(plan.candidates.begin(), plan.candidates.end(), [this](const Representation &rep) {
         return rep.bytes < 0 || cache.canAcquire(rep);
     });
+    if (candidate == plan.candidates.end()) {
+        QSet<QString> configured, useful;
+        for (const auto &value : settings.value("sources").toArray()) configured.insert(value.toObject().value("id").toString());
+        for (const auto &value : cache.entries()) {
+            const auto entry = value.toObject();
+            if (configured.contains(entry.value("sourceId").toString())) useful.insert(entry.value("key").toString());
+        }
+        if (useful.size() < cache.entries().size()) {
+            const auto reclaimed = cache.prune(false, useful);
+            if (reclaimed.contains("error")) { finish("StorageError"); return; }
+            if (reclaimed.value("removedBytes").toInteger() > 0) emit contentChanged();
+            candidate = std::find_if(plan.candidates.begin(), plan.candidates.end(), [this](const Representation &rep) { return cache.canAcquire(rep); });
+        }
+    }
     QString victim = pendingRotation.value("victim").toString();
     if (victim.isEmpty() && automatic) victim = plan.rotationVictim;
     if (candidate == plan.candidates.end() && !victim.isEmpty() && cache.entries().size() > 1) {

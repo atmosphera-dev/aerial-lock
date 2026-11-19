@@ -15,6 +15,8 @@ public:
                  std::function<quint32()> random);
     ~PlannerState();
     bool valid() const { return ready; }
+    static constexpr qint64 maximumBytes = 8 * 1024 * 1024;
+    bool capacityExceeded() const { return oversized; }
     bool eligible(const QString &key) const;
     qint64 nextAttempt(const QString &key) const;
     bool failed(const QString &key, const QString &error, int httpStatus = 0,
@@ -42,6 +44,6 @@ private:
     std::function<quint32()> random;
     QJsonObject document;
     int owner = -1;
-    bool ready = false;
+    bool ready = false, oversized = false;
 };
 }

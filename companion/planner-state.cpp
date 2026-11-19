@@ -17,7 +17,7 @@ PlannerState::PlannerState(const QString &root, std::function<qint64()> clock,
     owner = directory.open("planner.lock", O_RDWR | O_CREAT);
     if (owner < 0 || flock(owner, LOCK_EX | LOCK_NB)) return;
     bool ok = false;
-    const auto raw = directory.read("planner-v1.json", 8 * 1024 * 1024, &ok);
+    const auto raw = directory.read("planner-v1.json", maximumBytes, &ok);
     struct stat identity{};
     if (!ok && directory.identity("planner-v1.json", identity)) return;
     if (ok) {
@@ -37,7 +37,24 @@ PlannerState::~PlannerState() { if (owner >= 0) close(owner); }
 
 bool PlannerState::save(const QJsonObject &next)
 {
-    if (!ready || !directory.replace("planner-v1.json", QJsonDocument(next).toJson(QJsonDocument::Compact))) return false;
+    const auto bytes = QJsonDocument(next).toJson(QJsonDocument::Compact);
+    // Every admitted nonterminal job must retain enough space for a durable
+    // failure receipt, even if a later provider/progress observation is too big.
+    // This is encoding headroom, not an extra limit on jobs or content volume.
+    auto terminalBudget = next;
+    auto jobs = next.value("jobs").toObject();
+    for (auto it = jobs.begin(); it != jobs.end(); ++it) {
+        auto job = it.value().toObject();
+        if (job.contains("finishedAt")) continue;
+        job["finishedAt"] = std::numeric_limits<qint64>::max();
+        job["state"] = "failed"; job["errorCode"] = "StorageError";
+        job["ready"] = std::numeric_limits<qint64>::max();
+        it.value() = job;
+    }
+    terminalBudget["jobs"] = jobs;
+    oversized = bytes.size() > maximumBytes
+        || QJsonDocument(terminalBudget).toJson(QJsonDocument::Compact).size() > maximumBytes;
+    if (!ready || oversized || !directory.replace("planner-v1.json", bytes)) return false;
     document = next;
     return true;
 }

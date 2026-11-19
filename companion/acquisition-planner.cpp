@@ -46,15 +46,16 @@ AcquisitionPlan AcquisitionPlanner::evaluate(const QJsonObject &settings, const 
         else eligible.append(rep);
     }
     plan.candidates = eligible;
-    if (plan.candidates.isEmpty() && rotationDue && !retired.isEmpty()) {
+    const bool revisitRetired = plan.candidates.isEmpty() && rotationDue && !retired.isEmpty();
+    if (revisitRetired) {
         std::sort(retired.begin(), retired.end(), [&state](const Representation &a, const Representation &b) {
             if (state.retiredAt(a.key) != state.retiredAt(b.key)) return state.retiredAt(a.key) < state.retiredAt(b.key);
             return a.key < b.key;
         });
         // Revisit retired content only at the next cadence, never hourly.
-        plan.candidates.append(retired.first());
+        plan.candidates = retired;
     }
-    SourceResolver::smallestFirst(plan.candidates);
+    if (!revisitRetired) SourceResolver::smallestFirst(plan.candidates);
     if (manual) plan.priority = "manual";
     else if (active.isEmpty()) plan.priority = "critical";
     else {
@@ -67,9 +68,10 @@ AcquisitionPlan AcquisitionPlanner::evaluate(const QJsonObject &settings, const 
             for (const auto &topic : topics) if (!topic.isEmpty() && text.contains(topic, Qt::CaseInsensitive)) return 1;
             return 2;
         };
-        std::stable_sort(plan.candidates.begin(), plan.candidates.end(), [&](const Representation &a, const Representation &b) {
-            return rank(a) < rank(b);
-        });
+        if (!revisitRetired)
+            std::stable_sort(plan.candidates.begin(), plan.candidates.end(), [&](const Representation &a, const Representation &b) {
+                return rank(a) < rank(b);
+            });
         plan.priority = !plan.candidates.isEmpty() && !covered.contains(plan.candidates.first().sourceId) ? "coverage" : "variety";
     }
     if (rotationDue && !plan.candidates.isEmpty()) {

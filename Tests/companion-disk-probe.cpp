@@ -93,6 +93,12 @@ int main(int argc, char **argv)
         require(!cache.complete(value, {{"initialFrameDecoded", true}}, 2), "publication must report disk failure");
         clearFiller();
         ContentSnapshot old(path); require(old.valid() && old.entries().size() == 1, "public old snapshot survives ENOSPC");
+        if (step == "committed") {
+            require(!cache.valid(), "unpublished commit inhibits writes");
+            require(cache.recover() && cache.valid(), "live owner repairs committed pointer after space returns");
+            ContentSnapshot live(path); require(live.valid() && live.entries().size() == 2, "live consumer sees committed object without reopening owner");
+            require(cache.canWrite(1), "live owner resumes acquisition");
+        }
     }
     {
         CacheStore recovered(path); require(recovered.valid(), "recover committed publication");

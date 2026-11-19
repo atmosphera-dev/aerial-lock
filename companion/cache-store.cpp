@@ -15,7 +15,6 @@ bool matches(const struct stat &st, const QJsonObject &entry)
 {
     const auto identity = entry.value("identity").toObject();
     return st.st_size == entry.value("bytes").toInteger(-1)
-        && qint64(st.st_dev) == identity.value("device").toInteger(-1)
         && qint64(st.st_ino) == identity.value("inode").toInteger(-1)
         && st.st_mtim.tv_sec == identity.value("seconds").toInteger(-1)
         && st.st_mtim.tv_nsec == identity.value("nanoseconds").toInteger(-1);
@@ -40,25 +39,34 @@ CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximu
     }
     writer = directory.open("owner.lock", O_RDWR | O_CREAT);
     if (writer < 0 || flock(writer, LOCK_EX | LOCK_NB)) return;
+    writerOwned = true;
     const int playback = directory.open("playback.lock", O_RDWR | O_CREAT);
     if (playback < 0) return;
     close(playback);
+    recover();
+}
+
+bool CacheStore::recover()
+{
+    if (!writerOwned || !directory.valid()) return false;
+    owned = false;
+    completed = {};
     // The durable commit pointer precedes the public pointer. It is the recovery
     // authority, never a directory scan or a filename claiming to be complete.
     struct stat commitStat{};
     const bool hasCommit = directory.identity("committed.json", commitStat);
     const auto commit = metadata("committed.json");
-    if (hasCommit && (commit.value("version").toInt() != 1 || !contentKey(commit.value("generation").toString()))) return;
+    if (hasCommit && (commit.value("version").toInt() != 1 || !contentKey(commit.value("generation").toString()))) return false;
     if (hasCommit) {
         const auto index = commit.value("index").toObject();
         const auto bytes = QJsonDocument(index).toJson(QJsonDocument::Compact);
         if (index.value("version").toInt() != 1 || !index.value("entries").isArray()
-            || contentDigest(bytes) != commit.value("generation")) return;
+            || contentDigest(bytes) != commit.value("generation")) return false;
         const auto relative = "generations/" + commit.value("generation").toString() + ".json";
-        if (directory.read(relative, 8 * 1024 * 1024) != bytes && !directory.replace(relative, bytes)) return;
+        if (directory.read(relative, 8 * 1024 * 1024) != bytes && !directory.replace(relative, bytes)) return false;
     }
     {
-        const ContentSnapshot snapshot(root, hasCommit ? std::optional<QString>(commit.value("generation").toString()) : std::nullopt);
+        const ContentSnapshot snapshot(directory.path(), hasCommit ? std::optional<QString>(commit.value("generation").toString()) : std::nullopt);
         if (snapshot.valid()) {
             for (const auto &value : snapshot.entries()) {
                 auto item = value.toObject();
@@ -69,19 +77,20 @@ CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximu
             // Without a validated receipt an existing corrupt index is not an
             // empty cache and must never be inferred from media filenames.
             struct stat st{};
-            if (hasCommit || directory.identity("current.json", st)) return;
+            if (hasCommit || directory.identity("current.json", st)) return false;
         }
     }
     owned = true;
     pending = metadata("pending.json");
     struct stat pendingStat{};
-    if ((pending.isEmpty() && directory.identity("pending.json", pendingStat)) || !recoverTransaction()) { owned = false; return; }
+    if ((pending.isEmpty() && directory.identity("pending.json", pendingStat)) || !recoverTransaction()) { owned = false; return false; }
     const QJsonObject pointer{{"version", 1}, {"generation", commit.value("generation")}};
     if (hasCommit && metadata("current.json") != pointer) {
         // Existing verified data may be above a newly lowered cap. Repair only
         // its small pointer; real usage remains visible and acquisition stops.
         if (!directory.replace("current.json", QJsonDocument(pointer).toJson(QJsonDocument::Compact))) owned = false;
     }
+    return owned;
 }
 
 CacheStore::~CacheStore() { if (writer >= 0) close(writer); }
@@ -199,7 +208,7 @@ bool CacheStore::writeMetadata(const QString &relative, const QJsonObject &objec
 {
     const auto bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
     // Count the old and replacement bytes while atomic replacement is staged.
-    if (!canWrite(bytes.size())) return false;
+    if (bytes.size() > SourceResolver::maximumManifest || !canWrite(bytes.size())) return false;
     const bool saved = directory.replace(relative, bytes);
     if (!saved && directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
     return saved;
@@ -298,7 +307,7 @@ bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, q
     const auto part = "partials/" + rep.key + ".part", object = "objects/" + rep.key + ".media";
     struct stat st{};
     if (!directory.identity(part, st) || st.st_size <= 0) return false;
-    QJsonObject identity{{"device", qint64(st.st_dev)}, {"inode", qint64(st.st_ino)},
+    QJsonObject identity{{"inode", qint64(st.st_ino)},
         {"seconds", qint64(st.st_mtim.tv_sec)}, {"nanoseconds", qint64(st.st_mtim.tv_nsec)}};
     const QJsonObject entry{{"key", rep.key}, {"sourceId", rep.sourceId}, {"assetId", rep.assetId},
         {"path", object}, {"bytes", qint64(st.st_size)}, {"height", rep.height}, {"variant", rep.variant},
@@ -380,13 +389,19 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
     }
     quint64 removed = 0;
     auto candidates = completed;
-    // Last verified fallback survives even if the caller has no recency hint.
-    while (candidates.size() > 1) {
+    // Protect the last fallback the consumer can actually use, not a clip from
+    // a removed source. The playback lock still protects every old generation.
+    const auto usable = [this](const QJsonObject &entry) {
+        return !configuredSources || configuredSources->contains(entry.value("sourceId").toString());
+    };
+    while (!candidates.isEmpty()) {
+        const auto usableCount = std::count_if(candidates.begin(), candidates.end(), [&](const QJsonValue &entry) { return usable(entry.toObject()); });
         qsizetype selected = -1;
         qint64 oldest = std::numeric_limits<qint64>::max();
         for (qsizetype i = 0; i < candidates.size(); ++i) {
             const auto entry = candidates.at(i).toObject();
             if (protectedKeys.contains(entry.value("key").toString())) continue;
+            if (usable(entry) && usableCount <= 1) continue;
             const auto timestamp = entry.value("playedAt").toInteger(entry.value("completedAt").toInteger());
             if (timestamp < oldest) { oldest = timestamp; selected = i; }
         }

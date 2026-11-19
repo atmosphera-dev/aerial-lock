@@ -88,8 +88,11 @@ QJsonArray CompanionService::configuredEntries() const
     QSet<QString> configured;
     for (const auto &source : config.document().effective.value("sources").toArray()) configured.insert(source.toObject().value("id").toString());
     QJsonArray result;
-    if (cache) for (const auto &entry : cache->entries())
-        if (configured.contains(entry.toObject().value("sourceId").toString())) result.append(entry);
+    if (cache) {
+        const auto visible = cache->valid() ? cache->entries() : ContentSnapshot(cache->path()).entries();
+        for (const auto &entry : visible)
+            if (configured.contains(entry.toObject().value("sourceId").toString())) result.append(entry);
+    }
     return result;
 }
 uint CompanionService::readyClips() const { return uint(configuredEntries().size()); }

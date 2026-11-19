@@ -147,7 +147,7 @@ int waitJob(CompanionClient &client, const QDBusObjectPath &job, bool fetch, boo
         if (!values.value("Cancellable").toBool()) {
             print(QJsonObject::fromVariantMap(values), json);
             const auto state = values.value("State").toString();
-            if (state == "succeeded" && (!fetch || values.value("ReadyClips").toUInt() > 0)) return 0;
+            if (fetch ? values.value("ReadyClips").toUInt() > 0 : state == "succeeded") return 0;
             return !fetch && state == "deferred" ? 3 : 1;
         }
         observer.wait();

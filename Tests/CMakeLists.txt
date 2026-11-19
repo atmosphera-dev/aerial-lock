@@ -163,9 +163,9 @@ target_include_directories(companion-content-probe PRIVATE "${CMAKE_CURRENT_BINA
 target_compile_definitions(companion-content-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-content-probe PRIVATE Qt6::Core Qt6::Test PkgConfig::ARCHIVE)
 add_test(NAME companion-provider COMMAND companion-content-probe resolver selectedTarMember)
-add_test(NAME companion-cache COMMAND companion-content-probe directoryDurability uncertainCacheCommit cacheAccountingAndOwnership loweredCapReclamation corruptPointerRecovery crashTransactions reconciliationOwnership recoveryReaderProtection)
+add_test(NAME companion-cache COMMAND companion-content-probe directoryDurability uncertainCacheCommit cacheAccountingAndOwnership loweredCapReclamation corruptPointerRecovery crashTransactions reconciliationOwnership recoveryReaderProtection persistedIdentitySurvivesMountDeviceChange metadataReadWriteLimit)
 add_test(NAME companion-snapshot COMMAND companion-content-probe snapshotPinningAndRestart nonblockingAndCorruption nativeEpisodeGeneration localFallbackInventory)
-add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerSelectionAndCadence)
+add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerSelectionAndCadence plannerReadWriteLimit)
 # Explicit VM acceptance only: needs a dedicated small loop-mounted filesystem.
 # It must not fill the caller's normal workspace or the CI container filesystem.
 add_executable(companion-disk-probe companion-disk-probe.cpp

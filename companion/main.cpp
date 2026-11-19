@@ -44,32 +44,45 @@ int main(int argc, char **argv)
     if (!service.start()) { qWarning("companion bus ownership failed"); return 1; }
     QNetworkAccessManager transport;
     const auto clock = [] { return QDateTime::currentSecsSinceEpoch(); };
-    Aerial::PlannerState state(paths.state, clock, [] { return QRandomGenerator::global()->generate(); });
+    std::unique_ptr<Aerial::PlannerState> state;
     std::unique_ptr<Aerial::CacheStore> cache;
     std::unique_ptr<Aerial::TransferQueue> queue;
     Aerial::PolicyMonitor policy(QDBusConnection::systemBus());
-    service.bind(&state, nullptr, nullptr, &policy);
+    QTimer storageRetry;
+    storageRetry.setSingleShot(true);
+    storageRetry.setInterval(1000);
     const auto initialize = [&] {
         if (queue) return;
+        if (!state || !state->valid()) {
+            service.bind(nullptr, cache.get(), nullptr, &policy);
+            state.reset();
+            state = std::make_unique<Aerial::PlannerState>(paths.state, clock, [] { return QRandomGenerator::global()->generate(); });
+            service.bind(state.get(), cache.get(), nullptr, &policy);
+            if (!state->valid()) { storageRetry.start(); return; }
+        }
         const auto maximum = config.document().effective.value("cache").toObject().value("maxBytes").toInteger();
         // A fresh zero-cap profile creates no managed metadata or media. A later
         // settings transaction can initialize it without restarting the owner.
         if (!maximum && !QFileInfo::exists(paths.cache)) return;
+        service.bind(state.get(), nullptr, nullptr, &policy);
+        cache.reset();
         cache = std::make_unique<Aerial::CacheStore>(paths.cache, quint64(maximum));
-        service.bind(&state, cache.get(), nullptr, &policy);
-        if (!cache->valid() || !state.valid()) { qWarning("companion storage unavailable"); return; }
+        service.bind(state.get(), cache.get(), nullptr, &policy);
+        if (!cache->valid()) { storageRetry.start(); return; }
+        storageRetry.stop();
         QFile root(paths.bundle + "/Config/apple-root.pem");
         const auto appleRoot = root.open(QIODevice::ReadOnly) ? root.readAll() : QByteArray{};
         // Build-tree binaries are paired siblings; installed aerial is in BINDIR
         // while the private decoder remains under the configured LIBEXECDIR.
         const auto sibling = QCoreApplication::applicationDirPath() + "/aerial-media-probe";
         const auto probe = QFileInfo(sibling).isExecutable() ? sibling : QStringLiteral(AERIAL_MEDIA_PROBE_PATH);
-        queue = std::make_unique<Aerial::TransferQueue>(config, *cache, state, transport,
+        queue = std::make_unique<Aerial::TransferQueue>(config, *cache, *state, transport,
             probe, appleRoot, clock);
         queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
-        service.bind(&state, cache.get(), queue.get(), &policy);
+        service.bind(state.get(), cache.get(), queue.get(), &policy);
         queue->start();
     };
+    QObject::connect(&storageRetry, &QTimer::timeout, &app, initialize);
     const auto updatePolicy = [&] {
         if (queue) queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
         else initialize();

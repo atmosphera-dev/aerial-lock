@@ -606,6 +606,10 @@ private slots:
         const auto before = server.requests.size();
         QCOMPARE(cli(environment, {"--limit", "1"}, true).code, 0);
         for (int i = before; i < server.requests.size(); ++i) QVERIFY(!server.requests[i].startsWith("GET /a") && !server.requests[i].startsWith("GET /b"));
+        QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "200000"}).code, 0);
+        for (const auto *path : {"/a1.mp4", "/a2.mp4", "/b1.mp4", "/b2.mp4"}) server.bodies[path] = QByteArray(300000, 'x');
+        const auto partial = cli(environment, {}, true);
+        QCOMPARE(partial.code, 0); QVERIFY(partial.out.contains("CacheFull"));
         QCOMPARE(cli(environment, {"config", "set", "sources", "[]"}).code, 0);
         QCOMPARE(cli(environment, {}, true).code, 1);
         QCOMPARE(ContentSnapshot(cache).entries().size(), 2); // Existing managed files are not discarded.
@@ -746,6 +750,124 @@ private slots:
             if (request.startsWith("GET ") && request.split(' ').value(1).endsWith(".mp4")) ++gets;
         QCOMPARE(gets, 1);
         QVERIFY(unexpectedErrors.isEmpty());
+    }
+    void queueStorageFaultRecovery()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto paths = queueConfig(directory.path(), {source(server)}, true);
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        bool armed = false, failed = false;
+        // Fail the public-pointer directory sync after a durable committed index.
+        SyncFault fault([&](int fd) {
+            const auto path = QFile::symLinkTarget("/proc/self/fd/" + QString::number(fd));
+            struct stat st{};
+            if (armed && !failed && path == paths.cache && !fstat(fd, &st) && S_ISDIR(st.st_mode)
+                && cache.metadata("committed.json").value("index").toObject().value("entries").toArray().size() == 1) {
+                failed = true; return true;
+            }
+            return false;
+        });
+        armed = true;
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
+        QSignalSpy added(&queue, &TransferQueue::jobAdded); queue.start();
+        QTRY_VERIFY_WITH_TIMEOUT(failed, 10000);
+        QVERIFY(!added.isEmpty());
+        const auto firstJob = added.first().first().toString();
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, firstJob), 5000);
+        QCOMPARE(queue.job(firstJob).value("ready").toInt(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), 2, 15000);
+        QVERIFY(cache.valid());
+        ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 2);
+    }
+    void queueRemovedSourceIsNotFallback()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one"});
+        server.bodies["/replacement.json"] = manifest({"two"});
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
+        const auto first = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, first), 10000);
+        QCOMPARE(cache.entries().size(), 1);
+        const auto oldKey = cache.entries()[0].toObject().value("key").toString();
+        auto replacement = SourceResolver::parse(source(server, "replacement"), server.url("/replacement.json"), server.bodies["/replacement.json"]).representations.first();
+        replacement.bytes = media.size();
+        quint64 low = cache.usage().bytes, high = low + 1000000;
+        while (high - low > 1) {
+            const auto middle = low + (high - low) / 2; cache.configure(middle, 0);
+            if (cache.canAcquire(replacement)) high = middle; else low = middle;
+        }
+        auto reader = std::make_unique<ContentSnapshot>(paths.cache); QVERIFY(reader->valid());
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{source(server, "replacement")}},
+            {"cache", QJsonObject{{"maxBytes", qint64(high - media.size() / 2)}}}}).ok());
+        const auto pinned = queue.prune(false); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, pinned), 10000);
+        QVERIFY(cache.contains(oldKey));
+        reader.reset();
+        const auto next = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, next), 10000);
+        QCOMPARE(queue.job(next).value("state"), "succeeded"); QCOMPARE(cache.entries().size(), 1);
+        QVERIFY(!cache.contains(oldKey));
+        QCOMPARE(cache.entries()[0].toObject().value("sourceId"), "replacement");
+    }
+    void queuePruneFaultRearmsMaintenance()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"one", "two"});
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
+        const auto job = queue.acquire(); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, job), 10000);
+        QCOMPARE(cache.entries().size(), 2);
+        bool failed = false;
+        {
+            SyncFault fault([&](int fd) {
+                struct stat st{};
+                if (!failed && !fstat(fd, &st) && S_ISDIR(st.st_mode)
+                    && QFile::symLinkTarget("/proc/self/fd/" + QString::number(fd)) == paths.cache + "/objects") {
+                    failed = true; return true;
+                }
+                return false;
+            });
+            QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", 0}}}}).ok());
+            QTRY_VERIFY(failed);
+            QCOMPARE(queue.deferReason(), "StorageError");
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(cache.valid(), 5000);
+        QCOMPARE(cache.entries().size(), 1);
+        ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 1);
+    }
+    void queueOversizedTransitionTerminatesDurably()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = QJsonDocument(QJsonObject{{"assets", QJsonArray{QJsonObject{
+            {"id", QString(1024, 'x')}, {"url-1080-H264", "clip.mp4"},
+            {"sizes", QJsonObject{{"url-1080-H264", media.size()}}}}}}}).toJson(QJsonDocument::Compact);
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", 100000000}}}}).ok());
+        QString id;
+        {
+            PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+            QVERIFY(state.saveJob(contentDigest("padding"), {{"finishedAt", 100000},
+                {"padding", QString(PlannerState::maximumBytes - 1200, 'x')}}));
+            TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
+            id = queue.acquire({}, 1); QVERIFY(!id.isEmpty());
+            QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id), 15000);
+            QCOMPARE(queue.job(id).value("state"), "failed");
+            QCOMPARE(queue.job(id).value("errorCode"), "StorageError");
+            QVERIFY(cache.entries().isEmpty());
+            for (const auto &request : server.requests) QVERIFY(!request.startsWith("GET /clip.mp4 "));
+        }
+        PlannerState reopened(paths.state, [] { return 100000; }, [] { return 0; });
+        QVERIFY(reopened.valid());
+        QCOMPARE(reopened.jobs().value(id).toObject().value("state"), "failed");
+        QCOMPARE(reopened.jobs().value(id).toObject().value("errorCode"), "StorageError");
     }
     void policySampleFailurePreservesObservation()
     {

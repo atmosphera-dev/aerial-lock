@@ -68,7 +68,9 @@ bool ContentSnapshot::available(const QJsonObject &entry) const
     const auto identity = entry.value("identity").toObject();
     return cache.identity("objects/" + key + ".media", st) && st.st_size > 0
         && entry.value("bytes").toInteger() == st.st_size
-        && qint64(st.st_dev) == identity.value("device").toInteger()
+        // The descriptor-rooted path supplies the filesystem context. st_dev is
+        // a mount-local identifier, not persistent identity (legacy entries may
+        // still contain it). Inode, size and nanosecond mtime survive remounts.
         && qint64(st.st_ino) == identity.value("inode").toInteger()
         && st.st_mtim.tv_sec == identity.value("seconds").toInteger()
         && st.st_mtim.tv_nsec == identity.value("nanoseconds").toInteger();

@@ -137,6 +137,71 @@ private slots:
         QVERIFY(state.recordPlayback(key, now));
     }
 
+    void persistedIdentitySurvivesMountDeviceChange()
+    {
+        QTemporaryDir root;
+        const auto path = root.path() + "/cache";
+        {
+            CacheStore cache(path); cache.configure(1000000, 0);
+            QVERIFY(publish(cache, representation("first"), 1));
+            QVERIFY(publish(cache, representation("second"), 2));
+            auto entries = cache.entries();
+            for (qsizetype i = 0; i < entries.size(); ++i) {
+                auto entry = entries[i].toObject();
+                auto identity = entry.value("identity").toObject();
+                identity["device"] = identity.value("device").toInteger() + 100;
+                entry["identity"] = identity; entries[i] = entry;
+            }
+            const QJsonObject index{{"version", 1}, {"entries", entries}};
+            const auto bytes = QJsonDocument(index).toJson(QJsonDocument::Compact);
+            const auto hash = contentDigest(bytes);
+            QVERIFY(cache.files().replace("generations/" + hash + ".json", bytes));
+            QVERIFY(cache.files().replace("committed.json", QJsonDocument(QJsonObject{{"version", 1},
+                {"generation", hash}, {"index", index}}).toJson(QJsonDocument::Compact)));
+            QVERIFY(cache.files().replace("current.json", QJsonDocument(QJsonObject{{"version", 1},
+                {"generation", hash}}).toJson(QJsonDocument::Compact)));
+        }
+        CacheStore cache(path); cache.configure(1000000, 0); QVERIFY(cache.valid());
+        {
+            ContentSnapshot snapshot(path); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 2);
+            QVERIFY(snapshot.available(snapshot.entries()[0].toObject()));
+        }
+        QCOMPARE(cache.prune(false).value("removedBytes").toInteger(), 4096);
+        QCOMPARE(cache.entries().size(), 1);
+    }
+
+    void metadataReadWriteLimit()
+    {
+        QTemporaryDir root; CacheStore cache(root.path() + "/cache"); cache.configure(100000000, 0);
+        const QJsonObject prior{{"value", "readable"}};
+        QVERIFY(cache.writeMetadata("manifests/test.json", prior));
+        const QJsonObject oversized{{"value", QString(SourceResolver::maximumManifest, 'x')}};
+        QVERIFY(!cache.writeMetadata("manifests/test.json", oversized));
+        QCOMPARE(cache.metadata("manifests/test.json"), prior);
+    }
+
+    void plannerReadWriteLimit()
+    {
+        QTemporaryDir root; const auto key = representation("job").key;
+        {
+            PlannerState state(root.path(), [] { return 100000; }, [] { return 0; });
+            QVERIFY(state.initializeRotation());
+            const QJsonObject job{{"state", "queued"}, {"sources", QJsonArray{QString(9 * 1024 * 1024, 'x')}}};
+            QVERIFY(!state.saveJob(key, job));
+            QVERIFY(state.jobs().isEmpty());
+            auto accepted = job;
+            accepted["sources"] = QJsonArray{QString(8 * 1024 * 1024 - 2048, 'x')};
+            QVERIFY(state.saveJob(key, accepted));
+            auto transition = accepted; transition["assetId"] = QString(4096, 'x');
+            QVERIFY(!state.saveJob(key, transition));
+            QVERIFY(state.capacityExceeded());
+            accepted["state"] = "failed"; accepted["errorCode"] = "StorageError"; accepted["finishedAt"] = 100000;
+            QVERIFY(state.saveJob(key, accepted));
+        }
+        PlannerState reopened(root.path(), [] { return 100000; }, [] { return 0; });
+        QVERIFY(reopened.valid()); QCOMPARE(reopened.jobs().value(key).toObject().value("state"), "failed");
+    }
+
     void resolver()
     {
         const QJsonObject source{{"id", "fixture"}, {"type", "community"}, {"source", "http://localhost/pack"}};
@@ -580,6 +645,13 @@ private slots:
         now += 7 * 86400;
         plan = AcquisitionPlanner::evaluate(settings, {small, large}, replacement, *state, now);
         QCOMPARE(plan.candidates.size(), 1); QCOMPARE(plan.candidates[0].key, small.key);
+        auto newer = representation("newer"); newer.bytes = 500;
+        QVERIFY(state->rotated(newer.key));
+        now += 7 * 86400;
+        plan = AcquisitionPlanner::evaluate(settings, {small, large, newer}, replacement, *state, now);
+        QCOMPARE(plan.candidates.size(), 2);
+        QCOMPARE(plan.candidates[0].key, small.key); // Retirement order, not size order.
+        QCOMPARE(plan.candidates[1].key, newer.key);
         auto never = settings.value("cache").toObject(); never["rotationDays"] = 0; settings["cache"] = never;
         QVERIFY(AcquisitionPlanner::evaluate(settings, {small, large}, replacement, *state, now).candidates.isEmpty());
         auto automatic = settings.value("acquisition").toObject().value("automatic").toObject();

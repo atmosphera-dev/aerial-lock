@@ -16,8 +16,10 @@ public:
                         std::function<void(const QString &)> transactionObserver = {});
     ~CacheStore();
     bool valid() const { return owned; }
+    bool recover();
     QString path() const { return directory.path(); }
     void configure(quint64 maximum, quint64 reserve) { cap = maximum; freeReserve = reserve; }
+    void setSources(const QSet<QString> &sources) { configuredSources = sources; }
     CacheUsage usage() const;
     bool reserve(quint64 remaining);
     void releaseReservation() { remaining = 0; }
@@ -45,9 +47,10 @@ private:
     OwnedDirectory directory;
     std::function<void(const QString &)> transactionObserver;
     int writer = -1;
-    bool owned = false, indexCommitted = false;
+    bool owned = false, writerOwned = false, indexCommitted = false;
     QJsonObject pending;
     quint64 cap = 0, freeReserve = 0, remaining = 0;
     QJsonArray completed;
+    std::optional<QSet<QString>> configuredSources;
 };
 }
