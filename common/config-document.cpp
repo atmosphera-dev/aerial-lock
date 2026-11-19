@@ -221,11 +221,23 @@ ConfigDocument readConfig(const ConfigPaths &paths)
     QJsonObject defaults;
     const bool readDefaults = objectFile(paths.bundle + "/Config/defaults.json", defaultsBytes, defaults, result.diagnostics);
     const bool readSchema = objectFile(paths.bundle + "/Config/settings-schema.json", schemaBytes, result.schema, result.diagnostics);
+    const auto idleSpec = result.schema.value("properties").toObject().value("idle").toObject();
+    const auto idleFields = idleSpec.value("properties").toObject();
+    const QJsonObject idleTypes{{"timeoutSeconds", "integer"}, {"respectInhibitors", "boolean"},
+        {"lockOnSuspend", "boolean"}, {"logindLockUnlock", "boolean"}};
+    result.idleBundleValid = readDefaults && readSchema && idleSpec.value("type") == "object"
+        && completeValue(defaults.value("idle"), idleSpec);
+    // The consumer requires this complete typed policy even if a damaged schema
+    // omits its fields. Values and their constraints still come from the bundle.
+    for (auto it = idleTypes.begin(); it != idleTypes.end(); ++it)
+        if (!defaults.value("idle").toObject().contains(it.key())
+            || idleFields.value(it.key()).toObject().value("type") != it.value()) result.idleBundleValid = false;
+    if (!result.idleBundleValid) result.diagnostics.append("idle: incomplete or invalid bundled policy/schema");
     if (readDefaults && readSchema) {
         const auto before = result.diagnostics.size();
         normalize(defaults, {}, result.schema, {}, result.diagnostics);
         normalizeSources(defaults.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), result.diagnostics);
-        result.bundleValid = result.diagnostics.size() == before;
+        result.bundleValid = result.idleBundleValid && result.diagnostics.size() == before;
     }
     const auto info = QFileInfo(paths.config);
     result.present = info.exists() || info.isSymLink();
@@ -249,6 +261,13 @@ ConfigDocument readConfig(const ConfigPaths &paths)
         result.effective = normalize(mergeObjects(defaults, result.projectedUser), defaults, result.schema, {}, result.diagnostics);
         if (!result.userValid || !result.sourcesValid) result.effective["sources"] = QJsonArray{};
         result.effective["sources"] = normalizeSources(result.effective.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), result.diagnostics);
+    } else if (result.idleBundleValid) {
+        // Content validation cannot disable the independent idle/suspend daemon.
+        const QJsonObject idleDefaults{{"idle", defaults.value("idle")}};
+        QJsonObject overrides;
+        if (result.projectedUser.contains("idle")) overrides["idle"] = result.projectedUser.value("idle");
+        result.effective = normalize(mergeObjects(idleDefaults, overrides), idleDefaults,
+            {{"type", "object"}, {"properties", QJsonObject{{"idle", idleSpec}}}}, {}, result.diagnostics);
     }
     const auto identity = QJsonDocument(QJsonArray{paths.bundle, paths.config, paths.cache, paths.state, paths.runtime,
                                                   digest(defaultsBytes), digest(schemaBytes)}).toJson(QJsonDocument::Compact);

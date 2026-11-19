@@ -19,6 +19,7 @@ struct ConfigDocument {
     QString profile, revision;
     QStringList diagnostics;
     bool present = false, userValid = true, bundleValid = false, migrated = false;
+    bool idleBundleValid = false;
     bool acquisitionAllowed() const { return bundleValid && userValid && sourcesValid; }
     bool sourcesValid = true;
 };

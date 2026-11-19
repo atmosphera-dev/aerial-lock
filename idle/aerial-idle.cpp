@@ -70,7 +70,7 @@ static bool loadConfig(const QString &shell, QJsonObject &idle)
     const auto document = Aerial::readConfig(Aerial::ConfigPaths::environment(shell));
     for (const auto &warning : document.diagnostics) qWarning().noquote() << "aerial-idle:" << warning;
     idle = document.effective.value("idle").toObject();
-    return document.bundleValid;
+    return document.idleBundleValid;
 }
 
 class Idle : public QObject {
