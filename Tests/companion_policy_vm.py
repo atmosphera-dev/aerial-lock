@@ -90,8 +90,9 @@ def policy(args):
             types = {"802-3-ethernet": "ethernet", "802-11-wireless": "wifi", "gsm": "cellular",
                      "bluetooth": "bluetooth", "vpn": "vpn", "": "unknown"}
             expected = {"network": "offline" if wire["State"] == 20 else "online", "connectionType": types.get(wire["Type"], "other"),
-                        "power": "unknown" if wire["OnBattery"] is None else "battery" if wire["OnBattery"] else "ac",
-                        "metering": "metered" if wire["Metered"] == 1 or wire["DeviceMetered"] == 1 else "unmetered"}
+                         "power": "unknown" if wire["OnBattery"] is None else "battery" if wire["OnBattery"] else "ac",
+                         "metering": "metered" if wire["Metered"] == 1 or wire["DeviceMetered"] == 1 else "unmetered"}
+            expected["connectionTypes"] = [expected["connectionType"]]
             wait(lambda: value if (value := companion.status()) and value["Observations"] == expected else None,
                  "complete private observation snapshot")
             companion.cli("config", "set", prefix + key, json.dumps(disallowed))

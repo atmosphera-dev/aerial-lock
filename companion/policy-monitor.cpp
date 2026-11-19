@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QTimer>
 #include <memory>
+#include <algorithm>
 
 namespace Aerial {
 namespace {
@@ -94,7 +95,7 @@ void PolicyMonitor::sample(const QString &key)
         it->pending = false;
         // A signal received during GetAll makes that reply potentially stale.
         if (it->dirty) { sample(key); return; }
-        if (!reply.isError()) it->values = reply.value();
+        if (!reply.isError()) { it->values = reply.value(); it->invalidated.clear(); }
         else {
             // A failed read says nothing about properties already observed
             // from this owner. Owner replacement, not a transport error,
@@ -122,8 +123,13 @@ void PolicyMonitor::propertiesChanged(const QString &interface, const QVariantMa
     // enter this cache. Re-snapshot on invalidation without synchronous proxies.
     for (auto it = objects.begin(); it != objects.end(); ++it) {
         if (it->path != message.path() || it->interface != interface) continue;
-        for (auto value = updated.begin(); value != updated.end(); ++value) it->values[value.key()] = value.value();
-        for (const auto &name : invalidated) it->values.remove(name);
+        for (auto value = updated.begin(); value != updated.end(); ++value) {
+            it->values[value.key()] = value.value(); it->invalidated.remove(value.key());
+        }
+        // Keep the previous restrictive observation until a fresh sample, and
+        // mark the invalidated topology/property unresolved. Ordinary refreshes
+        // do not revoke readiness or interrupt a healthy transfer.
+        for (const auto &name : invalidated) it->invalidated.insert(name);
         sample(it.key());
         break;
     }
@@ -179,7 +185,7 @@ bool PolicyMonitor::ready() const
     if (!started || objects.isEmpty()) return false;
     // Background refresh does not revoke a settled observation. Only a new
     // owner/object that has never been sampled is still initializing.
-    for (const auto &object : objects) if (!object.sampled) return false;
+    for (const auto &object : objects) if (!object.sampled || !object.invalidated.isEmpty()) return false;
     return true;
 }
 
@@ -193,15 +199,18 @@ QJsonObject PolicyMonitor::observations() const
     const auto primaryPath = path(manager.value("PrimaryConnection"));
     const auto primary = values(NM, primaryPath, Active);
     auto type = connectionType(primary.value("Type", manager.value("PrimaryConnectionType")).toString());
+    QSet<QString> types;
     auto metered = metering(manager.value("Metered"));
     QSet<QString> routes;
-    if (!primaryPath.isEmpty() && primaryPath != "/") routes.insert(primaryPath);
+    if (!primaryPath.isEmpty() && primaryPath != "/") { routes.insert(primaryPath); types.insert(type); }
     for (const auto &active : paths(manager.value("ActiveConnections"))) {
         const auto connection = values(NM, active.path(), Active);
         if (connection.value("State").toUInt() == 2
             && (connection.value("Default").toBool() || connection.value("Default6").toBool())) {
             routes.insert(active.path());
-            if (connection.value("Vpn").toBool() || connectionType(connection.value("Type").toString()) == "vpn") type = "vpn";
+            const auto routeType = connection.value("Vpn").toBool() ? QString("vpn") : connectionType(connection.value("Type").toString());
+            types.insert(routeType);
+            if (routeType == "vpn") type = "vpn";
         }
     }
     // PrimaryConnection remains the underlying route for default-route VPNs.
@@ -213,15 +222,20 @@ QJsonObject PolicyMonitor::observations() const
         }
     const auto power = values(UP, UPPath, UP).value("OnBattery");
     const auto powerState = power.metaType().id() == QMetaType::Bool ? power.toBool() ? "battery" : "ac" : "unknown";
-    return {{"network", online}, {"connectionType", type}, {"metering", metered}, {"power", powerState}};
+    if (types.isEmpty()) types.insert(type);
+    auto orderedTypes = types.values(); std::sort(orderedTypes.begin(), orderedTypes.end());
+    return {{"network", online}, {"connectionType", type}, {"connectionTypes", QJsonArray::fromStringList(orderedTypes)},
+        {"metering", metered}, {"power", powerState}};
 }
 
 QString PolicyMonitor::deferReason(const QJsonObject &settings) const
 {
+    if (!ready()) return "Initializing";
     const auto automatic = settings.value("acquisition").toObject().value("automatic").toObject();
     const auto observed = observations();
     if (observed.value("network") == "offline") return "Offline";
-    if (!automatic.value("connectionTypes").toObject().value(observed.value("connectionType").toString()).toBool()) return "ConnectionTypeDisallowed";
+    for (const auto &type : observed.value("connectionTypes").toArray())
+        if (!automatic.value("connectionTypes").toObject().value(type.toString()).toBool()) return "ConnectionTypeDisallowed";
     if (observed.value("metering") == "metered" && !automatic.value("allowMetered").toBool()) return "Metered";
     if (!automatic.value("power").toObject().value(observed.value("power").toString()).toBool()) return "PowerDisallowed";
     return {};

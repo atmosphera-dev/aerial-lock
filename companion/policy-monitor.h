@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QVariantMap>
 
 namespace Aerial {
@@ -27,6 +28,7 @@ private:
     struct Object {
         QString service, path, interface;
         QVariantMap values;
+        QSet<QString> invalidated;
         quint64 serial = 0;
         bool pending = false, dirty = false, sampled = false;
     };

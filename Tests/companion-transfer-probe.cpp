@@ -70,7 +70,7 @@ public:
         for (auto it = patch.begin(); it != patch.end(); ++it) data[path][it.key()] = it.value();
         for (const auto &key : invalidated) data[path].remove(key);
         auto message = QDBusMessage::createSignal(path, "org.freedesktop.DBus.Properties", "PropertiesChanged");
-        const auto interface = path == manager ? nm : path == power ? up : path == device ? nm + ".Device" : nm + ".Connection.Active";
+        const auto interface = path == manager ? nm : path == power ? up : path.contains("/Devices/") ? nm + ".Device" : nm + ".Connection.Active";
         message << interface << patch << invalidated;
         if (!bus.send(message)) qFatal("policy signal failed");
     }
@@ -975,6 +975,33 @@ private slots:
         QCOMPARE(monitor.observations().value("metering"), "unknown");
         QCOMPARE(monitor.observations().value("power"), "unknown");
         QDBusConnection::disconnectFromBus("absent-policy-bus");
+    }
+    void policySecondaryDefaultRouteAndInvalidation()
+    {
+        PolicyPeer peer;
+        const auto secondDevice = peer.manager + "/Devices/2";
+        peer.data[peer.vpn] = {{"Type", "802-11-wireless"}, {"Default6", true}, {"State", uint(2)},
+            {"Devices", QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(secondDevice)})}};
+        peer.data[secondDevice] = {{"Metered", uint(1)}};
+        peer.data[peer.manager]["ActiveConnections"] = QVariant::fromValue(QList<QDBusObjectPath>{QDBusObjectPath(peer.primary), QDBusObjectPath(peer.vpn)});
+        PolicyMonitor monitor(QDBusConnection::sessionBus()); monitor.start();
+        QTRY_VERIFY(monitor.ready());
+        QTemporaryDir directory; HttpFixture server;
+        ConfigRepository config(queueConfig(directory.path(), {source(server)}, true));
+        QCOMPARE(monitor.deferReason(config.document().effective), "Metered");
+        peer.hold = secondDevice;
+        peer.update(secondDevice, {}, {"Metered"});
+        QTRY_VERIFY(!peer.held.isEmpty());
+        QVERIFY(!monitor.ready() || monitor.observations().value("metering") == "metered");
+        QVERIFY(!monitor.deferReason(config.document().effective).isEmpty());
+        peer.data[secondDevice]["Metered"] = uint(2); peer.hold.clear();
+        peer.bus.send(peer.held.takeFirst().createReply(QVariantList{peer.data[secondDevice]}));
+        QTRY_VERIFY(monitor.ready());
+        QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"automatic", QJsonObject{
+            {"connectionTypes", QJsonObject{{"wifi", false}}}}}}}}).ok());
+        QCOMPARE(monitor.deferReason(config.document().effective), "ConnectionTypeDisallowed");
+        peer.update(peer.vpn, {{"Default6", false}});
+        QTRY_VERIFY(monitor.deferReason(config.document().effective).isEmpty());
     }
     void queuePolicyPauseManualBypassAndRestart()
     {
