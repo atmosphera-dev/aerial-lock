@@ -9,7 +9,6 @@
 #include <QDBusMetaType>
 #include <QDBusConnectionInterface>
 #include <QDBusReply>
-#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QNetworkProxy>
@@ -205,10 +204,12 @@ public:
     CommandResult cli(const QProcessEnvironment &environment, const QStringList &arguments, bool legacy = false)
     {
         QProcess process; process.setProcessEnvironment(environment);
+        QSignalSpy finished(&process, &QProcess::finished);
         process.start(QStringLiteral(AERIAL_TEST_SOURCE) + (legacy ? "/Scripts/aerial-lock-fetch" : "/cli/aerialctl"), arguments);
         if (!process.waitForStarted(5000)) qFatal("CLI failed to start");
-        QElapsedTimer timer; timer.start();
-        while (process.state() != QProcess::NotRunning && timer.elapsed() < 20000) QTest::qWait(10);
+        // Dispatch the peer/server event loop until the child actually exits,
+        // rather than adding a polling sleep to every CLI transaction.
+        if (process.state() != QProcess::NotRunning) finished.wait(20000);
         if (process.state() != QProcess::NotRunning) qFatal("CLI did not finish: %s", qPrintable(arguments.join(' ')));
         return {process.exitCode(), process.readAllStandardOutput(), process.readAllStandardError()};
     }
@@ -614,7 +615,8 @@ private slots:
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(20000000, 0);
         HttpFixture server; QNetworkAccessManager network;
         auto representation = rep(server.url());
-        const QByteArray bytes(8 * 1024 * 1024, 'x');
+        // Four hash chunks still require yielding before HTTP can begin.
+        const QByteArray bytes(4 * 65536, 'x');
         representation.bytes = bytes.size(); representation.checksum = contentDigest(bytes).toLatin1();
         const auto file = cache.openPartial(representation.key, true); QVERIFY(file >= 0);
         QVERIFY(cache.reserve(bytes.size())); QVERIFY(cache.append(file, bytes)); close(file); cache.releaseReservation();
@@ -755,7 +757,8 @@ private slots:
         QTRY_COMPARE(monitor.observations().value("metering"), "metered");
         QTRY_VERIFY_WITH_TIMEOUT(!peer.held.isEmpty(), 5000);
         QVERIFY(monitor.ready());
-        QTest::qWait(1200); // Real GetAll timeout, no fake monitor state.
+        QSignalSpy sampled(&monitor, &PolicyMonitor::changed);
+        QVERIFY(sampled.wait(3000)); // Observe the real GetAll timeout completion.
         QCOMPARE(monitor.observations().value("metering"), "metered");
         QCOMPARE(monitor.observations().value("connectionType"), "ethernet");
         const auto before = peer.calls.size();
@@ -1093,7 +1096,7 @@ private slots:
         QTRY_COMPARE(peer.held.size(), 1); QVERIFY(!monitor.ready());
         const auto old = peer.data[peer.manager];
         peer.update(peer.manager, {{"Metered", uint(1)}});
-        QTest::qWait(30);
+        QTRY_COMPARE(monitor.observations().value("metering"), "metered");
         peer.hold.clear();
         peer.bus.send(peer.held.takeFirst().createReply(QVariantList{old}));
         QTRY_VERIFY(monitor.ready());

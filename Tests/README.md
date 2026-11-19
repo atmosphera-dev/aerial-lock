@@ -168,6 +168,16 @@ the cap below existing usage, retaining the last verified fallback. Such
 reclamation atomically publishes a smaller index before removing media; its
 temporary bookkeeping and any remaining overage stay included in reported usage.
 
+The transfer, policy and control CTests share one Qt probe, but the discovered
+test functions have disjoint suite ownership: `serviceCli*` and the compatibility
+frontend run in control, `policy*` in policy, and the remaining functions in
+transfer. `run-companion-suite.py` discovers the complete function set each run,
+so adding a test does not require updating a second selection list. No policy or
+CLI matrix is also rerun inside transfer. CLI fixture waits observe process
+completion signals; the resume-hashing cancellation fixture uses four 64 KiB
+chunks rather than a large payload. Planner cadence/backoff still use injected
+clocks, and real media decoding and every case assertion remain enabled.
+
 The cache writer journals publication/reclamation before renaming or unlinking
 media. Its durable committed inventory repairs a damaged public pointer or
 generation without treating arbitrary media filenames as completed content.
@@ -401,7 +411,18 @@ backend, and fails anywhere else if video does not start) and output-selection
 policy. `-DAERIAL_LOCK_VM_RECORD=<manifest>` adds the `owned-instance`
 regression for a prepared VM (below).
 
-`build-config` also rebuilds every native target with LTO. On Arch it sources
+`build-config-paths`, `build-config-dev`, `build-config-flags`,
+`build-config-install` and `build-config-lto` run the original incremental sequence
+as focused CTest cases with the unchanged default timeout. They share one owned
+workspace through chained fixtures, retaining objects rather than repeating setup
+builds. CTest adds prerequisites and `build-config-cleanup` even when selecting a
+middle case, for example `ctest --test-dir "$ROOT/build/debug/aerial-tests"
+--output-on-failure --timeout 300 -R '^build-config-dev$'`. Cleanup runs after
+failed setup too. Each make and phase prints its duration and build/codegen work.
+`python3 Tests/test-build-config.py .` still runs the entire sequence standalone
+and removes its private workspace on exit.
+
+`build-config-lto` rebuilds every native target with LTO. On Arch it sources
 `CFLAGS`, `CXXFLAGS`, `LDFLAGS` and `LTOFLAGS` from `/etc/makepkg.conf`; elsewhere
 it uses a minimal optimized LTO build. This exercises Qt's protected-data-symbol
 contract at final link, as well as compilation, and checks the rebuilt idle
@@ -678,7 +699,7 @@ cannot emit that observation, and reports never activate an absent companion.
 checks the dbus unit/description and relative vendor wants link, then activates
 the actual companion through a conventional private dbus-daemon. The private
 descriptor remaps only Exec to the built executable. It uses explicit empty
-sources and verifies that the owner retires on bus loss. `build-config` repeats
+sources and verifies that the owner retires on bus loss. `build-config-install` repeats
 the layout assertions for the default prefix, `/usr/local`, BINDIR override and
 Arch LIBEXECDIR, including staged uninstall.
 

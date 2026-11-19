@@ -198,11 +198,13 @@ add_executable(companion-transfer-probe companion-transfer-probe.cpp
 target_include_directories(companion-transfer-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(companion-transfer-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Network Qt6::Test PkgConfig::ARCHIVE)
-add_test(NAME companion-transfer COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
-add_test(NAME companion-policy COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
-    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" policyQueue policySnapshotsAndOwnerReplacement policyTransferPauseAndResume)
-add_test(NAME companion-control COMMAND dbus-run-session -- "$<TARGET_FILE:companion-transfer-probe>"
-    "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe" serviceCliPolicy serviceCliTransactions serviceCliRestart)
+# Discover every Qt slot, but give it one suite owner. Running the unfiltered
+# probe here would repeat the policy/control matrix before those suites run.
+foreach(suite IN ITEMS transfer policy control)
+    add_test(NAME companion-${suite} COMMAND dbus-run-session -- "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run-companion-suite.py" "${suite}"
+        "$<TARGET_FILE:companion-transfer-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial-media-probe")
+endforeach()
 add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-queue.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial-companion" "${AERIAL_LOCK_SOURCE}")
 add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-owner.py"
@@ -264,9 +266,26 @@ add_test(NAME supervisor-failures
 add_test(NAME script-arguments
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-script-arguments.py"
             "${AERIAL_LOCK_SOURCE}")
-add_test(NAME build-config
+# Preserve the original incremental sequence without placing every full rebuild
+# under one CTest deadline. Fixture prerequisites also support focused -R runs.
+set(build_config_workspace "${CMAKE_CURRENT_BINARY_DIR}/build-config-workspace")
+set(build_config_fixtures)
+set(build_config_previous)
+foreach(phase IN ITEMS paths dev flags install lto)
+    add_test(NAME build-config-${phase}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-build-config.py"
+                "${AERIAL_LOCK_SOURCE}" --case "${phase}" --workspace "${build_config_workspace}")
+    set_tests_properties(build-config-${phase} PROPERTIES FIXTURES_SETUP build-config-${phase})
+    if(build_config_previous)
+        set_tests_properties(build-config-${phase} PROPERTIES FIXTURES_REQUIRED "${build_config_previous}")
+    endif()
+    list(APPEND build_config_fixtures build-config-${phase})
+    set(build_config_previous build-config-${phase})
+endforeach()
+add_test(NAME build-config-cleanup
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-build-config.py"
-            "${AERIAL_LOCK_SOURCE}")
+            "${AERIAL_LOCK_SOURCE}" --case cleanup --workspace "${build_config_workspace}")
+set_tests_properties(build-config-cleanup PROPERTIES FIXTURES_CLEANUP "${build_config_fixtures}")
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 add_library(full-caller-faults SHARED full-caller-faults.c)
 target_link_libraries(full-caller-faults PRIVATE PkgConfig::MPV pthread ${CMAKE_DL_LIBS})
