@@ -554,6 +554,10 @@ def validate_result_identity(summary, request):
 def validate_summary(summary, request):
     validate_result_identity(summary, request)
     group = request.get('group', 'niri-smoke')
+    if group not in ('niri-smoke', 'niri-emergency'):
+        import acceptance
+        acceptance.validate_group(summary, request)
+        return
     if group == 'niri-emergency':
         expected = {'missing-runner', 'main-crash'}
         outcomes = summary.get('outcomes', [])
@@ -594,11 +598,15 @@ def run_group(args, cfg):
     identity = hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()
     results = Path(args.results).resolve()
     results.mkdir(parents=True, exist_ok=False, mode=0o700)
+    backend = getattr(args, 'backend', 'niri')
+    acceptance_plan = getattr(args, 'acceptance_plan', None)
     vm = VM(cfg, args.image, Path(cfg['storage']) / 'test', online=False)
     request = dict(root=cfg['guest_root'], source_files=inventory, source_freeze_identity=identity,
         image_sha256=args.sha256, domain=vm.name, host=cfg['host'], uuid=vm.uuid, mac=vm.mac,
         base_domain='aerial-ci-image-' + args.sha256[:12], build_seconds=cfg['build_seconds'],
-        group_seconds=cfg['group_seconds'], source_revision=args.source_revision, group=args.group)
+        group_seconds=cfg['group_seconds'], source_revision=args.source_revision, group=args.group,
+        backend=backend, acceptance_plan=acceptance_plan)
+    vm.receipt.update(image_sha256=args.sha256, source_identity=identity, acceptance_plan=acceptance_plan)
     primary = None
     summary = None
 
@@ -663,6 +671,7 @@ def run_group(args, cfg):
         retain('failure.json', failure_details(error) | dict(status=summary.get('status') if summary else 'INFRA_ERROR',
                                    instance_uuid=vm.uuid, phase=vm.receipt['phase']))
     finally:
+        retain('request.json', request)
         # This independent SSH request still runs when the group process is
         # waiting behind BLOCKED. Only sanitized results are exported.
         try:
@@ -690,7 +699,11 @@ def run_group(args, cfg):
         except Exception as error:
             primary = primary or error
             retain('diagnostic-error.json', failure_details(error))
-        names = ['niri/unlock/1'] if args.group == 'niri-smoke' else ['niri/emergency/missing-runner', 'niri/emergency/main-crash']
+        if acceptance_plan:
+            import acceptance
+            names = [f'{backend}/{args.group}/{case}' for case in acceptance.cases(backend, args.group)]
+        else:
+            names = ['niri/unlock/1'] if args.group == 'niri-smoke' else ['niri/emergency/missing-runner', 'niri/emergency/main-crash']
         suite = ET.Element('testsuite', name=args.group, tests=str(len(names)), failures=str(len(names)) if primary else '0')
         for name in names:
             cell = ET.SubElement(suite, 'testcase', name=name, classname='aerial-lock.vm')
@@ -706,7 +719,7 @@ def run_group(args, cfg):
             retain('summary.json', summary)
     if primary is not None:
         raise primary
-    print('NIRI_SMOKE_PASS ' + str(results), flush=True)
+    print('VM_GROUP_PASS ' + str(results), flush=True)
 
 
 def preserve_failure(vm, output, error):
@@ -805,7 +818,9 @@ def main():
     group.add_argument('--sha256', required=True)
     group.add_argument('--source', required=True)
     group.add_argument('--source-revision')
-    group.add_argument('--group', choices=['niri-smoke', 'niri-emergency'], required=True)
+    import acceptance
+    group.add_argument('--group', choices=['niri-smoke', 'niri-emergency', *acceptance.GROUPS], required=True)
+    group.add_argument('--backend', choices=acceptance.COMPOSITORS, default='niri')
     group.add_argument('--results', required=True)
     args = parser.parse_args()
     cfg = config(args.config)

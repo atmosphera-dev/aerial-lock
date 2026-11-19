@@ -243,18 +243,125 @@ above; release assets are durable and separate from Actions artifact storage.
 Measure before claiming it fits. The user selected Blacksmith on 2026-11-18
 after the shared Arch CI image builds ran out of memory on GitHub runners.
 
-## Acceptance and split/merge extension (design only)
+## Master acceptance and split/merge
 
-A later planner freezes source/image/tool/rulings identities and all stable
-cell IDs for M1-M9 and panel on niri and Hyprland. It deterministically assigns
-disjoint cells to slices before execution, one fresh VM per slice. A merge
-requires exact expected coverage, no duplicate/omitted cells, matching
-identities and evidence hashes. Cancelled, unsupported and BLOCKED cells
-remain non-PASS; retries preserve attempt identity and failed evidence.
+`VM acceptance` is a separate manual workflow, not a replacement for PR Checks
+or `VM niri smoke`. Dispatch the candidate branch/commit with `purpose=on-demand`
+for ordinary acceptance, or `purpose=before-release` **before creating its tag**.
+Require the final `merge` job to succeed before the release. Both choices run
+the same complete matrix; there is no partial/reduced release tier.
+Before the new workflow is registered on master, dispatch the existing
+`VM niri smoke` workflow on the candidate branch with `group=acceptance`,
+`publish=false` and the desired purpose. It calls the exact same acceptance
+workflow and skips its smoke/image-publication producer; no PR or temporary
+push trigger is needed to prove the branch.
 
-The M-group tools live on the parked IME experiment, not master. Importing
-them and their accepted-limit rulings is separate approved work. Nested-one-
-output, virtual-output and native DRM/multi-output lanes must expose their
-different capabilities. Slice durations must leave boot/build/export margin
-under six hours; matrix size/parallelism must respect the actual limits.
-No scheduler, acceptance import or split/merge engine is implemented here.
+The plan freezes four disjoint niri group slices and 12 stable cell IDs:
+
+| # | Group | Cells | Consumer outcomes |
+|---|---|---|---|
+| 1 | `smoke` | 1 | Real PAM unlock, natural exit and desktop key witness |
+| 2 | `pam` | 1 | Wrong/right PAM with retained lock, then unlock and desktop input |
+| 3 | `emergency-recovery` | 2 | Missing runner and three confirmed normal crashes, real PAM, no sampled desktop exposure |
+| 4 | `emergency-failures` | 8 | Installed-supervisor fault cases, authenticated recovery or explicitly observed protection/exhaustion |
+
+All CI groups use nested one-output niri under headless Sway/pixman and Mesa
+software OpenGL. This is not native DRM, multi-output, power, Hyprland, physical
+display, IME or soak proof. There is no QEMU graphics bridge or render-node
+dependency. Native niri rejects software EGL devices, and Hyprland's allocator
+also needs a GPU render node; neither is assumed on GPU-less Blacksmith runners.
+
+M1-M9 belong to the parked IME experiment and are intentionally not imported.
+Companion acquisition/playback is added only after its driver merges into master;
+it cannot be inferred from plugin installation or borrowed from an open branch.
+
+### Frozen identities and exact coverage
+
+`Tests/vm/acceptance.py plan` writes the complete deterministic matrix before
+execution. It binds source revision/content, image lock and provisioning/tool
+identity, workflow run and attempt. Each slice rebuilds the same locked image
+specification independently. Random machine identities and filesystem timestamps
+make image bytes differ across rebuilds: the merge requires common specification
+identity and validates the **exact per-slice image hash** against that slice's
+VM request/receipt, never treats independent builds as byte-identical.
+
+No image artifact is uploaded or fanned out. Each job uploads JSON, JUnit and
+compressed sanitized diagnostics only, with evidence hashes and three-day
+retention. The unconditional final merge requires every expected slice once,
+every cell once, a distinct instance per slice, matching source/run/attempt,
+validated end-of-chain consumer fields, correct image/request identity and clean
+guest disposal. It rehashes downloaded evidence before accepting it. Missing,
+failed, BLOCKED, cancelled, unavailable, stale or corrupt slices fail the combined
+JSON/JUnit/Markdown result. A failed matrix job cannot be hidden by PASS artifacts.
+Reruns preserve attempt identity; never merge artifacts from different attempts.
+
+### Runtime and reproduction
+
+Blacksmith runs all four slices in parallel (at most eight jobs). Each nested guest gets two
+vCPUs and 4096 MiB. Each slice has a 150-minute job deadline, including a
+55-minute image step and 65-minute boot/product-build/group/export step; group
+execution itself is bounded to 20 minutes. The expected full wall time is
+45-90 minutes, to be checked against the measured combined summary. The job
+deadline stays below six hours with cleanup/upload margin. Independent image
+builds trade runner time for avoiding multi-GiB Actions artifact storage.
+
+For local reproduction **inside an authorized disposable execution VM** with
+nested KVM and at least 12 GiB outer memory, use disk-backed paths. Build the
+locked image as above, then from the source root:
+
+```sh
+export TMPDIR="$HOME/aerial-work/tmp"
+python3 Tests/vm/test_platform.py
+python3 Tests/vm/test_acceptance.py
+python3 Tests/vm/acceptance.py local --workspace "$HOME/aerial-work" --source "$PWD" \
+  --config "$HOME/aerial-work/test.json" \
+  --image "$HOME/aerial-work/vm/image/aerial-ci-arch-x86_64.qcow2" \
+  --checksums "$HOME/aerial-work/vm/image/SHA256SUMS"
+```
+
+`local` makes one fresh guest per slice, preserves failed evidence and updates
+one interim combined result after every slice. It exits successfully only for
+the complete valid matrix. Its unique run directory holds `plan.json`, `slices/`
+and `merged/{summary.json,junit.xml,summary.md}`. Do not replay an interrupted
+instance or accept an interim incomplete summary as full acceptance.
+
+### Manual pre-release acceptance on Ark
+
+Before releasing, also run the GPU-dependent groups in fresh, owned GPU-backed
+Ark VMs using the `mpvqml-vm` / `ark-user-vms` route. Use a disk-backed workspace,
+TMPDIR inside it, an operator-produced owned manifest and throwaway real-PAM
+fixtures as described in [Tests/README.md](../README.md#real-session-integration-drivers).
+Do not use a shared base or the host desktop. The CI result does not cover these
+groups, and a successful CI merge does not replace their manual receipts.
+
+| # | Manual lane | Required acceptance |
+|---|---|---|
+| 1 | Native two-output niri | `auth-handoff-vm.py --ime none`, remediation `panel-zero-outputs`, emergency `outputs` and power-actions VM groups |
+| 2 | Hyprland | Smoke/PAM, emergency recovery/failures, password/output handoff, panel failover and power-actions VM groups |
+
+Existing entry points, run **inside the owned Ark guest**, with `$ROOT` and
+`$VM_RECORD` prepared using the real-session driver instructions:
+
+```sh
+export TMPDIR="$ROOT/tmp"
+python3 Tests/auth-handoff-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --ime none
+bash Tests/run-remediation.sh --root "$ROOT" --vm-record "$VM_RECORD" --lane debug \
+  --backend niri-drm --case panel-zero-outputs --cycles 1
+python3 Tests/emergency-integration.py --root "$ROOT" --vm-record "$VM_RECORD" \
+  --backend niri-drm --case outputs --outputs 2
+python3 Tests/emergency-integration.py --root "$ROOT" --vm-record "$VM_RECORD" \
+  --backend hyprland --case recovery --outputs 2 --hyprland-virtual-outputs
+python3 Tests/emergency-integration.py --root "$ROOT" --vm-record "$VM_RECORD" \
+  --backend hyprland --case failures --outputs 2 --hyprland-virtual-outputs
+bash Tests/run-remediation.sh --root "$ROOT" --vm-record "$VM_RECORD" --lane debug \
+  --backend hyprland --case panel-failover --outputs 3 --hyprland-virtual-outputs --cycles 1
+```
+
+Power acceptance requires the fixture preparation and launch from the active
+graphical login1 subject documented in [Tests/README.md](../README.md).
+Hyprland password/output handoff remains a manual session exercise; the existing
+`auth-handoff-vm.py` only automates native niri. Retain exact compositor versions,
+outcomes and limitations with each release's manual report. Hyprland's mapped
+FALLBACK is not a true zero-output state; its known crash-replacement pixel
+exposure is not a zero-exposure PASS. Adding these lanes to CI requires a
+GPU-capable runner or a proven virgl path; no bridge experiment is part of this tier.

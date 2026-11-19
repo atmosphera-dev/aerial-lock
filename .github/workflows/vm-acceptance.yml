@@ -1,0 +1,167 @@
+name: VM acceptance
+
+on:
+  workflow_call:
+    inputs:
+      purpose:
+        description: Same complete tier, including a candidate before its tag
+        type: string
+        default: on-demand
+  workflow_dispatch:
+    inputs:
+      purpose:
+        description: Run on demand, or prove a candidate before creating its release tag
+        type: choice
+        options: [on-demand, before-release]
+        default: on-demand
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Freeze exact source, image specification and cells
+        id: plan
+        run: |
+          mkdir -p .ci-vm/tmp
+          export TMPDIR="$GITHUB_WORKSPACE/.ci-vm/tmp"
+          matrix=$(python3 Tests/vm/acceptance.py plan --source "$GITHUB_WORKSPACE" \
+            --revision "$GITHUB_SHA" --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --output .ci-vm/plan.json)
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: acceptance-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm/plan.json
+          if-no-files-found: error
+          retention-days: 3
+
+  slice:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: ${{ matrix.slice }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # 55m image, 60m build/group/boot/export, 25m setup/upload leaves margin.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: acceptance-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm
+      - name: Prepare ephemeral runner VM
+        timeout-minutes: 5
+        env:
+          SLICE_ID: ${{ matrix.slice }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client acl
+          test -c /dev/kvm
+          mkdir -p .ci-vm/tmp .ci-vm/state
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path.cwd() / '.ci-vm'
+          config = dict(instance=f'acceptance-{os.environ["SLICE_ID"]}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}',
+                        host=os.environ['RUNNER_NAME'], user='tester', storage=str(root / 'state'),
+                        guest_root='/home/tester/aerial-ci', memory_mib=4096, cpus=2,
+                        build_seconds=2100, group_seconds=1200, boot_seconds=300, export_seconds=60)
+          (root / 'config.json').write_text(json.dumps(config))
+          PY
+      - name: Contract tests
+        timeout-minutes: 3
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+        run: |
+          python3 Tests/vm/test_platform.py
+          python3 Tests/vm/test_acceptance.py
+      - name: Rebuild identical locked image specification
+        timeout-minutes: 55
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+        run: |
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          python3 Tests/vm/vm_platform.py build-image --config .ci-vm/config.json \
+            --lock Tests/vm/image.lock.json --output-dir .ci-vm/image
+          (cd .ci-vm/image && sha256sum -c SHA256SUMS)
+      - name: Execute exact planned slice
+        timeout-minutes: 65
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+          SLICE_ID: ${{ matrix.slice }}
+        run: |
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          expected=$(awk '$2 == "aerial-ci-arch-x86_64.qcow2" { print $1 }' .ci-vm/image/SHA256SUMS)
+          python3 Tests/vm/acceptance.py run-slice --plan .ci-vm/plan.json --slice "$SLICE_ID" \
+            --config .ci-vm/config.json --source "$GITHUB_WORKSPACE" \
+            --image .ci-vm/image/aerial-ci-arch-x86_64.qcow2 --sha256 "$expected" --results .ci-vm/results
+      - name: Seal compact slice evidence, including failures
+        if: always()
+        env:
+          TMPDIR: ${{ github.workspace }}/.ci-vm/tmp
+          SLICE_ID: ${{ matrix.slice }}
+        run: |
+          mkdir -p .ci-vm/results
+          python3 Tests/vm/acceptance.py result --plan .ci-vm/plan.json --slice "$SLICE_ID" --results .ci-vm/results
+      - name: Upload only compact diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: acceptance-slice-${{ matrix.slice }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm/results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  merge:
+    needs: [plan, slice]
+    if: always()
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: acceptance-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          pattern: acceptance-slice-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm/slices
+          merge-multiple: false
+      - name: Require every exact slice and publish combined summary
+        if: always()
+        env:
+          MATRIX_STATUS: ${{ needs.slice.result }}
+        run: |
+          mkdir -p .ci-vm/tmp .ci-vm/slices
+          export TMPDIR="$GITHUB_WORKSPACE/.ci-vm/tmp"
+          python3 Tests/vm/acceptance.py merge --plan .ci-vm/plan.json \
+            --inputs .ci-vm/slices --output .ci-vm/merged --matrix-status "$MATRIX_STATUS"
+      - name: Combined JSON, JUnit and summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: acceptance-merged-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-vm/merged/
+          if-no-files-found: error
+          retention-days: 3

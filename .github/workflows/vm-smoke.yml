@@ -6,8 +6,13 @@ on:
       group:
         description: Real-session group
         type: choice
-        options: [niri-smoke, niri-emergency]
+        options: [niri-smoke, niri-emergency, acceptance]
         default: niri-smoke
+      purpose:
+        description: Acceptance purpose (the complete matrix runs for both)
+        type: choice
+        options: [on-demand, before-release]
+        default: on-demand
       publish:
         description: Publish the tested image (master only)
         type: boolean
@@ -18,6 +23,7 @@ permissions:
 
 jobs:
   niri-smoke:
+    if: ${{ inputs.group != 'acceptance' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       image-artifact: ${{ steps.publication-assets.outputs.artifact_name }}
@@ -196,3 +202,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 Tests/vm/publish_image.py publish --directory publication
+
+  acceptance:
+    if: ${{ inputs.group == 'acceptance' }}
+    uses: ./.github/workflows/vm-acceptance.yml
+    with:
+      purpose: ${{ inputs.purpose }}
