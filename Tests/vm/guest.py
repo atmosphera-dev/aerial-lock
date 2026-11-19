@@ -59,15 +59,16 @@ def write_json(path, value):
 
 
 def start_outer(driver, root, env, config, session_identity):
+    runtime = Path(env['XDG_RUNTIME_DIR'])
     compositor = driver.ObservedProcess(['sway', '-c', str(config)], env, root / 'results/outer-compositor.log')
     deadline = time.monotonic() + 30
-    ipc = root / 'runtime' / f'sway-ipc.{os.getuid()}.{compositor.process.pid}.sock'
+    ipc = runtime / f'sway-ipc.{os.getuid()}.{compositor.process.pid}.sock'
     while time.monotonic() < deadline:
-        sockets = [p for p in (root / 'runtime').glob('wayland-*') if p.is_socket()]
+        sockets = [p for p in runtime.glob('wayland-*') if p.is_socket()]
         if ipc.is_socket():
             for socket in sockets:
                 try:
-                    session = session_identity(compositor.process.pid, 'sway', root / 'runtime', socket, ipc)
+                    session = session_identity(compositor.process.pid, 'sway', runtime, socket, ipc)
                 except RuntimeError:
                     continue  # disk-backed workspace may retain an earlier boot's socket
                 env.update(WAYLAND_DISPLAY=socket.name, SWAYSOCK=str(ipc))
@@ -111,7 +112,8 @@ def run_group(request_path):
     spec.loader.exec_module(driver)
     paths = dict(root=root, source=source, build=root / 'build/debug/aerial-tests',
                  stage=root / 'stage', run=root / 'run', results=root / 'results', media=root / 'media')
-    for path in (*paths.values(), root / 'tmp', root / 'runtime'):
+    runtime = root / 'runtime'
+    for path in (*paths.values(), root / 'tmp', runtime):
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         if path.resolve() != path or path.stat().st_uid != os.getuid():
             raise RuntimeError('unowned workspace or symlink: ' + str(path))
@@ -124,15 +126,17 @@ def run_group(request_path):
     os.environ.update(TMPDIR=str(root / 'tmp'))
     env = dict(os.environ, TMPDIR=str(root / 'tmp'), MAKEFLAGS='-j2', CMAKE_BUILD_PARALLEL_LEVEL='2',
                LIBGL_ALWAYS_SOFTWARE='1', QSG_RHI_BACKEND='opengl', QT_QPA_PLATFORM='wayland',
-               XDG_RUNTIME_DIR=str(root / 'runtime'), WLR_BACKENDS='headless',
+               XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
                WLR_HEADLESS_OUTPUTS='1', WLR_RENDERER='pixman')
     for key in ('WAYLAND_DISPLAY', 'DISPLAY', 'NIRI_SOCKET', 'SWAYSOCK', 'WAYLAND_DEBUG',
                 'QT_QUICK_BACKEND', 'QML_IMPORT_PATH', 'LD_PRELOAD'):
         env.pop(key, None)
     group = request.get('group', 'niri-smoke')
-    if group not in ('niri-smoke', 'niri-emergency'):
+    import acceptance
+    if group not in ('niri-smoke', 'niri-emergency', *acceptance.GROUPS):
         raise RuntimeError('unknown group')
-    planned = {'recovery': 2, 'outputs': 1, 'failures': 8}[request.get('case', 'recovery')] if group == 'niri-emergency' else 1
+    planned = (len(acceptance.cases(request['backend'], group)) if group in acceptance.GROUPS else
+               {'recovery': 2, 'outputs': 1, 'failures': 8}[request.get('case', 'recovery')] if group == 'niri-emergency' else 1)
     summary = dict(schema=1, group=group, status='INFRA_ERROR', planned=planned, exercised=0,
         instance_uuid=request['uuid'], image_sha256=request['image_sha256'],
         source_identity=request['source_freeze_identity'], source_revision=request.get('source_revision'),
@@ -212,14 +216,21 @@ def run_group(request_path):
             compiled_payload_hashes=installed,
             pam_fixture=dict(prepared=True, uuid=request['uuid'], uid=os.getuid(), operator_session=request['uuid'],
                              service=service, secret_file=str(secret)), recovery_authorization=None)
-        manifest = root / 'run/owned.json'
+        manifest = root / 'run/owned-vm.json'
         write_json(manifest, record)
+        tools = root / 'tools/bin'
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / 'wtype').symlink_to('/usr/local/bin/wtype')
         OwnedInstance(manifest, root).check(require_binaries=True)
         summary['phase'] = 'ownership-regression'
         with (root / 'results/ownership.log').open('w') as log:
             subprocess.run([sys.executable, str(source / 'Tests/test-owned-instance.py'), '--vm-record', str(manifest)],
                            env=env, check=True, timeout=60, stdout=log, stderr=subprocess.STDOUT)
-        if group == 'niri-emergency':
+        if group in acceptance.GROUPS:
+            import guest_acceptance
+            os.environ.update(env)
+            guest_acceptance.run(summary, source, root, paths, manifest, env, request, driver)
+        elif group == 'niri-emergency':
             summary['phase'] = 'emergency-recovery'
             case, backend = request.get('case', 'recovery'), request.get('backend', 'niri')
             before = set(paths['results'].glob(f'{case}-{backend}-*/result.json'))

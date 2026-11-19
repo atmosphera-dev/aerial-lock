@@ -389,11 +389,15 @@ also checks journal replacement visibility and failed-publication preservation.
 
 ## Real-session integration drivers
 
-The optional [KVM CI platform](vm/README.md) rebuilds a pinned official Arch
-cloud image and runs one nested niri real-PAM unlock group on demand. It uses
-configurable QEMU/SSH identities and the owned manifest below, not Ark-specific
-settings. The manual `VM niri smoke` workflow leaves existing PR checks alone;
-it is not full acceptance, IME or multi-output proof.
+The [KVM CI platform](vm/README.md) rebuilds a pinned official Arch cloud image
+with niri. `VM niri smoke` keeps its short manual groups and optional
+master image publication. The separate `VM acceptance` workflow freezes and
+runs master's four software-capable niri group slices (12 cells), then requires exact coverage in one
+combined result. Dispatch it on demand or with `purpose=before-release` on the
+candidate before tagging. It uses configurable QEMU/SSH identities and the owned
+manifest below, not Ark-specific settings. Native niri writer-handoff, panel and
+power groups, plus all Hyprland acceptance, remain manual pre-release runs in
+GPU-backed Ark VMs. CI is not their proof; see its matrix and manual procedure.
 
 Stock wtype 0.4 writes its keymap to a hardcoded shared temporary path, ignoring
 `TMPDIR`. For disk-backed-only guest testing, put a workspace-local build with
