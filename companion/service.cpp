@@ -19,7 +19,7 @@ CompanionService::CompanionService(ConfigRepository &repository, QDBusConnection
     : QObject(parent), config(repository), bus(std::move(connection))
 {
     registerBusTypes();
-    new Companion1Adaptor(this);
+    new Aerial1Adaptor(this);
     connect(&config, &ConfigRepository::changed, this, [this](const QString &revision, const QStringList &paths) {
         emit SettingsChanged(revision, paths);
         notify();
@@ -29,9 +29,9 @@ CompanionService::CompanionService(ConfigRepository &repository, QDBusConnection
 bool CompanionService::start()
 {
     // Methods are available before the non-replacing bus name is claimed.
-    if (!bus.registerObject("/org/aeriallock/Companion1", this, QDBusConnection::ExportAdaptors)) return false;
-    if (!bus.registerService("org.aeriallock.Companion1")) {
-        bus.unregisterObject("/org/aeriallock/Companion1");
+    if (!bus.registerObject("/org/aeriallock/Aerial1", this, QDBusConnection::ExportAdaptors)) return false;
+    if (!bus.registerService("org.aeriallock.Aerial1")) {
+        bus.unregisterObject("/org/aeriallock/Aerial1");
         return false;
     }
     return true;
@@ -111,14 +111,14 @@ void CompanionService::notify()
         if (lastProperties.value(it.key()) != it.value()) changed.insert(it.key(), it.value());
     lastProperties = properties;
     if (changed.isEmpty()) return;
-    auto signal = QDBusMessage::createSignal("/org/aeriallock/Companion1", "org.freedesktop.DBus.Properties", "PropertiesChanged");
-    signal << QString("org.aeriallock.Companion1") << changed << QStringList{};
+    auto signal = QDBusMessage::createSignal("/org/aeriallock/Aerial1", "org.freedesktop.DBus.Properties", "PropertiesChanged");
+    signal << QString("org.aeriallock.Aerial1") << changed << QStringList{};
     bus.send(signal);
 }
 
 QDBusObjectPath CompanionService::jobPath(const QString &id)
 {
-    return QDBusObjectPath(id.isEmpty() ? "/" : "/org/aeriallock/Companion1/jobs/j" + id);
+    return QDBusObjectPath(id.isEmpty() ? "/" : "/org/aeriallock/Aerial1/jobs/j" + id);
 }
 QDBusObjectPath CompanionService::acceptedJob(const QString &id)
 {
@@ -234,7 +234,7 @@ QString CompanionService::GetSettings(QString &effective, QString &revision)
 void CompanionService::error(const ConfigTransaction &result)
 {
     if (!result.ok() && calledFromDBus())
-        sendErrorReply("org.aeriallock.Companion1.Error." + result.error, result.diagnostics.join("; "));
+        sendErrorReply("org.aeriallock.Aerial1.Error." + result.error, result.diagnostics.join("; "));
 }
 
 QString CompanionService::UpdateSettings(const QString &expected, const QString &patch)

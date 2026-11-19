@@ -33,7 +33,7 @@ def main():
     assert record["uuid"] == Path("/sys/class/dmi/id/product_uuid").read_text().strip()
     assert record["guest"]["boot_id"] == Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     private = root / "run/companion-login-private"
-    name = "aerial-companion-test"
+    name = "aerial-test"
     home = Path("/home") / name
     if args.operation == "create":
         assert not private.exists() and not home.exists()
@@ -69,7 +69,7 @@ def main():
     if args.operation == "observe-bus":
         address = sys.stdin.read().strip()
         assert re.fullmatch("unix:abstract=aerial-policy-" + re.escape(record["uuid"]) + r"-[0-9]+", address)
-        directory = home / ".config/systemd/user/aerial-companion.service.d"
+        directory = home / ".config/systemd/user/aerial.service.d"
         assert not directory.exists()
         directory.mkdir(mode=0o700, parents=True)
         override = directory / "observations.conf"
@@ -94,7 +94,7 @@ def main():
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         for path in (home / ".config/systemd", directory):
             os.chown(path, account.pw_uid, account.pw_gid)
-        mask = directory / "aerial-companion.service"
+        mask = directory / "aerial.service"
         if args.operation == "mask":
             assert not mask.exists() and not mask.is_symlink()
             mask.symlink_to("/dev/null")

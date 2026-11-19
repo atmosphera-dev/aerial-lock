@@ -80,7 +80,8 @@ def prepare(args):
             raise RuntimeError("unowned/symlink workspace path")
     stage = paths["stage"] / "usr"
     required = [stage / "lib/aerial-lock" / name for name in
-                ("aerial-lock-run", "aerial-lock-auth", "aerial-lock-emergency", "aerial-companion")]
+                ("aerial-lock-run", "aerial-lock-auth", "aerial-lock-emergency")]
+    required += [stage / "bin/aerial"]
     required += [stage / "lib/aerial-lock/qt-plugins/generic" / name for name in
                  ("libAerialLockConnectionGuard.so", "libAerialLockSurfaceInput.so")]
     required += [paths["build"] / name for name in ("desktop-input-probe", "libfull-caller-faults.so", "companion-transfer-probe")]
@@ -144,7 +145,7 @@ def prepare(args):
                   binary_hashes=binaries, binary_source_identity=source_identity, installed_hashes=installed,
                   session=session, environment=environment, initial_outputs=mapped,
                   pam_fixture={"prepared": True, "uuid": uuid, "uid": os.getuid(), "operator_session": "receipt-bound-ssh",
-                               "service": "aerial-companion-test", "secret_file": str(root / "run/pam-fixture-secret")},
+                               "service": "aerial-test", "secret_file": str(root / "run/pam-fixture-secret")},
                   recovery_authorization=None)
     publish(args.vm_record, json.dumps(record, indent=2))
     command(["sudo", "python3", str(source / "Tests/companion-fixtures.py"), "--root", str(root), "--vm-record", str(args.vm_record), "prepare"])
@@ -265,7 +266,7 @@ def playback(args):
         if not select.select([bus.stdout], [], [], 5)[0]:
             raise RuntimeError("private bus did not publish its address")
         session.env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().decode().strip()
-        service = driver.ObservedProcess(["/usr/lib/aerial-lock/aerial-companion"], session.env,
+        service = driver.ObservedProcess(["/usr/bin/aerial"], session.env,
                                          session.output / "companion.log")
 
         def wait_value(read, label):

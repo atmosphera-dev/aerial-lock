@@ -12,8 +12,8 @@ void CompanionContentClient::ensureContent(const QString &bundle, const QString 
 {
     if (ensured || profile.isEmpty()) return;
     ensured = true;
-    auto message = QDBusMessage::createMethodCall("org.aeriallock.Companion1", "/org/aeriallock/Companion1",
-                                                  "org.aeriallock.Companion1", "EnsureContent");
+    auto message = QDBusMessage::createMethodCall("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1",
+                                                  "org.aeriallock.Aerial1", "EnsureContent");
     const auto paths = Aerial::ConfigPaths::environment(bundle);
     // Activation inherits the manager's environment, never this caller's.
     // A custom/private profile may only notify an already running owner;
@@ -29,8 +29,8 @@ void CompanionContentClient::ensureContent(const QString &bundle, const QString 
 void CompanionContentClient::reportPlayback(const QString &profile, const QString &assetKey)
 {
     if (profile.isEmpty() || assetKey.isEmpty()) return;
-    auto message = QDBusMessage::createMethodCall("org.aeriallock.Companion1", "/org/aeriallock/Companion1",
-                                                  "org.aeriallock.Companion1", "ReportPlayback");
+    auto message = QDBusMessage::createMethodCall("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1",
+                                                  "org.aeriallock.Aerial1", "ReportPlayback");
     message.setAutoStartService(false); // recency never starts acquisition
     message << profile << assetKey;
     (bus ? *bus : QDBusConnection::sessionBus()).send(message);

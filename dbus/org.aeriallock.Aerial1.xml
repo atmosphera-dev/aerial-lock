@@ -1,7 +1,7 @@
 <!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
 <node>
-  <interface name="org.aeriallock.Companion1">
+  <interface name="org.aeriallock.Aerial1">
     <property name="ApiVersion" type="u" access="read"/>
     <property name="Version" type="s" access="read"/>
     <property name="Profile" type="s" access="read"/>

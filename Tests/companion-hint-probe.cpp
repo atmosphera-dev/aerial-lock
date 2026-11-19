@@ -39,8 +39,8 @@ private slots:
     {
         auto server = QDBusConnection::connectToBus(qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS"), "hint-peer");
         HintPeer peer;
-        QVERIFY(server.registerVirtualObject("/org/aeriallock/Companion1", &peer));
-        QVERIFY(server.registerService("org.aeriallock.Companion1"));
+        QVERIFY(server.registerVirtualObject("/org/aeriallock/Aerial1", &peer));
+        QVERIFY(server.registerService("org.aeriallock.Aerial1"));
         CompanionContentClient client(QDBusConnection::sessionBus());
         QElapsedTimer timer; timer.start();
         client.ensureContent("/fixture/dev-bundle", "fixture-profile", 1440, {"mountain", "sea"});
@@ -61,8 +61,8 @@ private slots:
         QCOMPARE(report.member(), "ReportPlayback");
         QVERIFY(!report.isReplyRequired());
         QCOMPARE(report.arguments(), (QList<QVariant>{QString("fixture-profile"), QString(64, 'a')}));
-        server.unregisterService("org.aeriallock.Companion1");
-        server.unregisterObject("/org/aeriallock/Companion1");
+        server.unregisterService("org.aeriallock.Aerial1");
+        server.unregisterObject("/org/aeriallock/Aerial1");
         CompanionContentClient absent(QDBusConnection::sessionBus());
         timer.restart(); absent.ensureContent("/fixture", "fixture", 0, {});
         QVERIFY(timer.elapsed() < 100);
@@ -79,7 +79,7 @@ private slots:
         auto server = dbus_bus_get_private(DBUS_BUS_SESSION, &error);
         QVERIFY(server != nullptr);
         dbus_connection_set_exit_on_disconnect(server, false);
-        QCOMPARE(dbus_bus_request_name(server, "org.aeriallock.Companion1", DBUS_NAME_FLAG_DO_NOT_QUEUE, &error), DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER);
+        QCOMPARE(dbus_bus_request_name(server, "org.aeriallock.Aerial1", DBUS_NAME_FLAG_DO_NOT_QUEUE, &error), DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER);
         CompanionContentClient client(QDBusConnection::sessionBus());
         client.ensureContent("/fixture/dev-bundle", "profile", 0, {});
         client.reportPlayback("profile", QString(64, 'a'));

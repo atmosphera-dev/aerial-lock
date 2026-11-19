@@ -7,7 +7,7 @@ Notable user-facing changes are recorded here, following
 
 ### Added
 
-- Aerial videos work out of the box through a new background companion service.
+- Aerial videos work out of the box through the new `aerial` background service.
   Automatic downloads start at the next user-manager startup, default to up to
   1080p, avoid metered connections and use a configurable 10 GB cache. The new
   `aerialctl` command controls settings, downloads and cache management. Until a

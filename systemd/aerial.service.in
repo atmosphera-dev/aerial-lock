@@ -3,8 +3,8 @@ Description=Aerial content and settings companion
 
 [Service]
 Type=dbus
-BusName=org.aeriallock.Companion1
-ExecStart=@LIBEXECDIR@/aerial-companion
+BusName=org.aeriallock.Aerial1
+ExecStart=@BINDIR@/aerial
 Restart=on-failure
 RestartSec=5
 UMask=0077

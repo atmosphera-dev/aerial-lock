@@ -22,9 +22,9 @@
 #endif
 
 namespace {
-constexpr auto name = "org.aeriallock.Companion1";
-constexpr auto path = "/org/aeriallock/Companion1";
-constexpr auto jobInterface = "org.aeriallock.Companion1.Job1";
+constexpr auto name = "org.aeriallock.Aerial1";
+constexpr auto path = "/org/aeriallock/Aerial1";
+constexpr auto jobInterface = "org.aeriallock.Aerial1.Job1";
 int failure(const QDBusError &error)
 {
     // Error codes are stable; never echo remote prose that might contain a URL.
@@ -118,7 +118,7 @@ std::unique_ptr<CompanionClient> currentOwner(const QDBusConnection &bus, const 
     auto settings = client->GetSettings();
     if (!completed(settings)) { error = settings.error(); return {}; }
     if (client->profile() != profile) {
-        error = QDBusError(QDBusMessage::createError("org.aeriallock.Companion1.Error.ProfileMismatch", "profile differs")); return {};
+        error = QDBusError(QDBusMessage::createError("org.aeriallock.Aerial1.Error.ProfileMismatch", "profile differs")); return {};
     }
     return client;
 }
@@ -211,7 +211,7 @@ int main(int argc, char **argv)
         else if (verb == "resume" && args.isEmpty()) action = Resume;
         else return usage();
     } else if (command == "jobs") { action = Jobs; watch = option(args, "--watch"); if (!args.isEmpty()) return usage(); }
-    else if (command == "cancel" && args.size() == 1 && args[0].startsWith("/org/aeriallock/Companion1/jobs/j")) { action = Cancel; key = args[0]; }
+    else if (command == "cancel" && args.size() == 1 && args[0].startsWith("/org/aeriallock/Aerial1/jobs/j")) { action = Cancel; key = args[0]; }
     else if (command == "cache" && !args.isEmpty()) {
         const auto verb = args.takeFirst();
         if (verb == "status" && args.isEmpty()) action = Status;

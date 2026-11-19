@@ -81,7 +81,7 @@ class Companion:
 
     def start(self):
         self.sequence += 1
-        self.service = self.driver.ObservedProcess(["/usr/lib/aerial-lock/aerial-companion"], self.environment,
+        self.service = self.driver.ObservedProcess(["/usr/bin/aerial"], self.environment,
                                                    self.session.output / f"companion-{self.sequence}.log")
         wait(self.status, "installed companion API")
 

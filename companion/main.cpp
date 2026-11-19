@@ -18,12 +18,15 @@
 #ifndef AERIAL_COMPANION_DATADIR
 #define AERIAL_COMPANION_DATADIR "/usr/share/aerial-lock"
 #endif
+#ifndef AERIAL_MEDIA_PROBE_PATH
+#define AERIAL_MEDIA_PROBE_PATH "/usr/libexec/aerial-lock/aerial-media-probe"
+#endif
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     ::umask(0077);
-    app.setApplicationName("aerial-companion");
-    if (app.arguments().size() != 1) { qWarning("usage: aerial-companion"); return 2; }
+    app.setApplicationName("aerial");
+    if (app.arguments().size() != 1) { qWarning("usage: aerial"); return 2; }
     const auto paths = Aerial::ConfigPaths::environment(shellDir(QStringLiteral(AERIAL_COMPANION_DATADIR)));
     Aerial::ConfigRepository config(paths);
     if (!config.document().bundleValid) {
@@ -57,8 +60,12 @@ int main(int argc, char **argv)
         if (!cache->valid() || !state.valid()) { qWarning("companion storage unavailable"); return; }
         QFile root(paths.bundle + "/Config/apple-root.pem");
         const auto appleRoot = root.open(QIODevice::ReadOnly) ? root.readAll() : QByteArray{};
+        // Build-tree binaries are paired siblings; installed aerial is in BINDIR
+        // while the private decoder remains under the configured LIBEXECDIR.
+        const auto sibling = QCoreApplication::applicationDirPath() + "/aerial-media-probe";
+        const auto probe = QFileInfo(sibling).isExecutable() ? sibling : QStringLiteral(AERIAL_MEDIA_PROBE_PATH);
         queue = std::make_unique<Aerial::TransferQueue>(config, *cache, state, transport,
-            QCoreApplication::applicationDirPath() + "/aerial-media-probe", appleRoot, clock);
+            probe, appleRoot, clock);
         queue->setPolicyReason(policy.ready() ? policy.deferReason(config.document().effective) : QStringLiteral("Initializing"));
         service.bind(&state, cache.get(), queue.get(), &policy);
         queue->start();

@@ -104,13 +104,13 @@ def activation(args):
         # socket as that account, not via tester's inaccessible pathname walk.
         wait(lambda: user("test", "-S", f"/run/user/{uid}/bus", checked=False).returncode == 0, "new login user bus")
         # Observe the vendor-started unit before invoking any activatable CLI.
-        wait(lambda: user("systemctl", "--user", "is-active", "aerial-companion.service", checked=False).stdout.strip() == "active",
+        wait(lambda: user("systemctl", "--user", "is-active", "aerial.service", checked=False).stdout.strip() == "active",
              "vendor wants link started companion without a client")
         initial = wait(status, "future-manager automatic startup")
         ready = wait(lambda: (value if (value := status()) and value["ReadyClips"] == 2 else None), "automatic fixture acquisition")
         payloads = [row["path"] for row in requests if row["method"] == "GET" and row["path"].endswith(".mp4")]
         assert payloads == ["/small.mp4", "/large.mp4"], payloads
-        unit = user("systemctl", "--user", "show", "aerial-companion.service", "-p", "Type", "-p", "MainPID",
+        unit = user("systemctl", "--user", "show", "aerial.service", "-p", "Type", "-p", "MainPID",
                     "-p", "UMask", "-p", "FragmentPath", "-p", "ActiveState").stdout
         broker = user("systemctl", "--user", "show", "dbus.service", "-p", "FragmentPath").stdout
         assert "Type=dbus" in unit and "ActiveState=active" in unit and "UMask=0077" in unit, unit
@@ -123,19 +123,19 @@ def activation(args):
         run([*helper, "mask"])
         login = manager_login("masked-login")
         wait(lambda: user("test", "-S", f"/run/user/{uid}/bus", checked=False).returncode == 0, "masked login user bus")
-        masked = user("systemctl", "--user", "is-enabled", "aerial-companion.service", checked=False)
+        masked = user("systemctl", "--user", "is-enabled", "aerial.service", checked=False)
         assert masked.stdout.strip() == "masked", masked.stdout + masked.stderr
         blocked = user("aerialctl", "status", "--json", checked=False)
         assert blocked.returncode == 1, blocked.stdout + blocked.stderr
-        assert user("systemctl", "--user", "is-active", "aerial-companion.service", checked=False).stdout.strip() != "active"
+        assert user("systemctl", "--user", "is-active", "aerial.service", checked=False).stdout.strip() != "active"
         run([*helper, "unmask"])
         user("systemctl", "--user", "daemon-reload")
         # The owner is absent; the actual CLI triggers broker -> systemd, not a
         # private wrapper or a direct companion launch.
         activated = wait(status, "installed broker/systemd D-Bus backup")
         assert activated["ReadyClips"] == 2
-        user("systemctl", "--user", "stop", "aerial-companion.service")
-        user("systemctl", "--user", "start", "aerial-companion.service")
+        user("systemctl", "--user", "stop", "aerial.service")
+        user("systemctl", "--user", "start", "aerial.service")
         explicit = wait(status, "documented explicit start-now")
         assert explicit["ReadyClips"] == 2
         run([*helper, "stop"])
@@ -157,7 +157,7 @@ def activation(args):
         run([*helper, "observe-bus"], input=policy_bus.address)
         login = manager_login("no-config-login")
         wait(lambda: user("test", "-S", f"/run/user/{uid}/bus", checked=False).returncode == 0, "no-config login bus")
-        wait(lambda: user("systemctl", "--user", "is-active", "aerial-companion.service", checked=False).stdout.strip() == "active",
+        wait(lambda: user("systemctl", "--user", "is-active", "aerial.service", checked=False).stdout.strip() == "active",
              "no-config vendor startup before CLI")
         fresh_default = wait(lambda: value if (value := status()) and value["DeferReason"] == "Offline" else None,
                              "fresh no-config offline defer")
@@ -203,7 +203,7 @@ def activation(args):
         assert address.startswith("unix:")
         environment["DBUS_SESSION_BUS_ADDRESS"] = address
         exec_activation = run(["busctl", "--address=" + address, "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
-                               "org.freedesktop.DBus", "StartServiceByName", "su", "org.aeriallock.Companion1", "0"], env=environment)
+                               "org.freedesktop.DBus", "StartServiceByName", "su", "org.aeriallock.Aerial1", "0"], env=environment)
         assert exec_activation.stdout.strip() == "u 1", exec_activation.stdout
         private_status = json.loads(run(["aerialctl", "status", "--json"], env=environment).stdout)
         assert private_status["State"] == "paused" and private_status["ReadyClips"] == 0

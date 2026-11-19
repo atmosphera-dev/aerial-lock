@@ -46,6 +46,6 @@ native/aerial-lock-auth
 emergency/aerial-lock-emergency
 emergency/ext-session-lock-v1-client.h
 emergency/ext-session-lock-v1-protocol.c
-companion/aerial-companion
+companion/aerial
 companion/aerial-media-probe
 cli/aerialctl

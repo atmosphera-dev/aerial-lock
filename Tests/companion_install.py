@@ -12,25 +12,29 @@ def section(path, name):
     return dict(document[name])
 
 
-def check_layout(stage, prefix, libexec):
+def check_layout(stage, prefix, libexec, bindir=None):
     stage, prefix, libexec = map(Path, (stage, prefix, libexec))
+    bindir = Path(bindir) if bindir else prefix / "bin"
     systemd = stage / prefix.relative_to("/") / "lib/systemd/user"
-    unit = systemd / "aerial-companion.service"
+    unit = systemd / "aerial.service"
     assert section(unit, "Service") == {
-        "Type": "dbus", "BusName": "org.aeriallock.Companion1",
-        "ExecStart": str(libexec / "aerial-companion"), "Restart": "on-failure",
+        "Type": "dbus", "BusName": "org.aeriallock.Aerial1",
+        "ExecStart": str(bindir / "aerial"), "Restart": "on-failure",
         "RestartSec": "5", "UMask": "0077"}
     assert section(unit, "Install") == {"WantedBy": "default.target"}
     assert "After=" not in unit.read_text() and "Requires=" not in unit.read_text()
-    link = systemd / "default.target.wants/aerial-companion.service"
-    assert link.is_symlink() and os.readlink(link) == "../aerial-companion.service", link
+    link = systemd / "default.target.wants/aerial.service"
+    assert link.is_symlink() and os.readlink(link) == "../aerial.service", link
     assert link.resolve() == unit.resolve()
-    descriptor = stage / prefix.relative_to("/") / "share/dbus-1/services/org.aeriallock.Companion1.service"
+    descriptor = stage / prefix.relative_to("/") / "share/dbus-1/services/org.aeriallock.Aerial1.service"
+    binary = stage / bindir.relative_to("/") / "aerial"
+    assert binary.is_file() and binary.stat().st_mode & 0o777 == 0o755
+    assert not (stage / libexec.relative_to("/") / "aerial").exists()
     assert section(descriptor, "D-BUS Service") == {
-        "Name": "org.aeriallock.Companion1", "Exec": str(libexec / "aerial-companion"),
-        "SystemdService": "aerial-companion.service"}
+        "Name": "org.aeriallock.Aerial1", "Exec": str(bindir / "aerial"),
+        "SystemdService": "aerial.service"}
     for path in (unit, descriptor):
-        assert "@LIBEXECDIR@" not in path.read_text()
+        assert "@BINDIR@" not in path.read_text()
         if stage != Path("/"):
             assert str(stage) not in path.read_text()
     licenses = stage / prefix.relative_to("/") / "share/licenses/aerial-lock"

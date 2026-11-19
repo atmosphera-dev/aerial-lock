@@ -85,7 +85,7 @@ def main():
     assert record["host_identity"]["uuid"] == record["uuid"]
     assert Path("/sys/class/dmi/id/product_uuid").read_text().strip() == record["uuid"]
     private = root / "run/companion-fixture-private"
-    service = Path("/etc/pam.d/aerial-companion-test")
+    service = Path("/etc/pam.d/aerial-test")
     secret = root / "run/pam-fixture-secret"
     if private.exists():
         assert not private.is_symlink() and private.stat().st_uid == 0 and stat.S_IMODE(private.stat().st_mode) == 0o700

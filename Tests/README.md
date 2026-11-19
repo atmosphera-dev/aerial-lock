@@ -726,7 +726,7 @@ cached managed playback, a post-engagement output-height hint, local decoded-fra
 recency and the service's matching recency update, plus ordinary PAM unlock:
 
 ```sh
-# Inside aerial-companion on ark, ROOT/TMPDIR/VM_RECORD as above.
+# Inside your owned test VM on ark, ROOT/TMPDIR/VM_RECORD as above.
 python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case playback --backend niri
 ```
 
@@ -748,7 +748,7 @@ Arch LIBEXECDIR, including staged uninstall.
 The installed identity-bound gate is separate:
 
 ```sh
-# Inside aerial-companion on ark, with disk-backed ROOT/TMPDIR and current record.
+# Inside your owned test VM on ark, with disk-backed ROOT/TMPDIR and current record.
 python3 Tests/companion-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --case activation
 ```
 

@@ -27,13 +27,13 @@ with tempfile.TemporaryDirectory(prefix="companion-install-") as temporary:
     installed = subprocess.run(["make", "-C", str(source), "install", "DESTDIR=" + str(stage), "PREFIX=" + prefix, *options],
                                capture_output=True, text=True, timeout=120)
     assert installed.returncode == 0, installed.stdout + installed.stderr
-    descriptor = check_layout(stage, prefix, config["LIBEXECDIR"])
+    descriptor = check_layout(stage, prefix, config["LIBEXECDIR"], config["BINDIR"])
     services = root / "services"
     services.mkdir()
     # Conventional daemon activation honors Exec, ignoring SystemdService.
     # Only the executable is remapped from its installation path to this build.
-    text = descriptor.read_text().replace("Exec=" + config["LIBEXECDIR"] + "/aerial-companion",
-                                          'Exec="' + str(source / "companion/aerial-companion") + '"')
+    text = descriptor.read_text().replace("Exec=" + config["BINDIR"] + "/aerial",
+                                          'Exec="' + str(source / "companion/aerial") + '"')
     (services / descriptor.name).write_text(text)
     profile = root / "profile"
     env = dict(os.environ, AERIAL_LOCK_SHELL=str(source))
@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="companion-install-") as temporary:
             assert address.startswith("unix:"), address
             env["DBUS_SESSION_BUS_ADDRESS"] = address
             reply = subprocess.run(["busctl", "--address=" + address, "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
-                                    "org.freedesktop.DBus", "StartServiceByName", "su", "org.aeriallock.Companion1", "0"],
+                                    "org.freedesktop.DBus", "StartServiceByName", "su", "org.aeriallock.Aerial1", "0"],
                                    env=env, capture_output=True, text=True, timeout=10)
             assert reply.returncode == 0 and reply.stdout.strip() == "u 1", reply.stdout + reply.stderr + (root / "bus.log").read_text()
             status = subprocess.run([str(source / "cli/aerialctl"), "status", "--json"], env=env,
@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix="companion-install-") as temporary:
             snapshot = json.loads(status.stdout)
             assert snapshot["State"] == "paused" and snapshot["ReadyClips"] == 0, snapshot
             pid = subprocess.check_output(["busctl", "--address=" + address, "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
-                                          "org.freedesktop.DBus", "GetConnectionUnixProcessID", "s", "org.aeriallock.Companion1"], text=True)
+                                          "org.freedesktop.DBus", "GetConnectionUnixProcessID", "s", "org.aeriallock.Aerial1"], text=True)
             service_pid = int(pid.split()[1])
         finally:
             bus.terminate()

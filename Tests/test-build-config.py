@@ -88,7 +88,7 @@ def paths(fixture, runtime):
         "auth-context.o", "auth-client.o", "aerial-lock-auth.o", "power-actions.o",
         "local-config.o", "config-document.o", "config-repository.o",
         "local-content.o", "companion-hint.o", "owned-directory.o", "content-snapshot.o",
-        "companion-main.o", "companion-service.o", "companion_adaptor.o", "policy-monitor.o",
+        "aerial-main.o", "aerial-service.o", "companion_adaptor.o", "policy-monitor.o",
         "job-object.o", "job_adaptor.o", "aerialctl.o", "companion_client.o",
         "media-probe.o",
         "source-resolver.o", "cache-store.o", "http-operation.o", "manifest-store.o", "local-probe.o",
@@ -185,7 +185,7 @@ def install(fixture, runtime):
         assert commands == [f"ExecStart={bindir}/aerial-idle"], (label, commands)
         assert unit.stat().st_mode & 0o777 == 0o644, (label, oct(unit.stat().st_mode))
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
-        check_layout(stage, prefix, prefix / "libexec/aerial-lock")
+        check_layout(stage, prefix, prefix / "libexec/aerial-lock", bindir)
         helper_path(stage / prefix.relative_to("/") / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so",
                     prefix / "libexec/aerial-lock/aerial-lock-auth", dev_helper)
         emergency = stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency"

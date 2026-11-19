@@ -593,9 +593,9 @@ private slots:
                  QStringList{"--other"}, QStringList{"source-id"}}) QCOMPARE(cli(environment, args, true).code, 2);
         QCOMPARE(cli(environment, {"--help"}, true).code, 0); QVERIFY(server.requests.isEmpty());
         QProcess process; process.setProcessEnvironment(environment);
-        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial", {}); QVERIFY(process.waitForStarted(5000));
         struct Retire { QProcess &p; ~Retire() { if (p.state() != QProcess::NotRunning) { p.terminate(); if (!p.waitForFinished(5000)) { p.kill(); p.waitForFinished(5000); } } } } retire{process};
-        QTRY_VERIFY(QDBusConnection::sessionBus().interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(QDBusConnection::sessionBus().interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         QCOMPARE(cli(environment, {"--limit", "1"}, true).code, 0);
         const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
         const auto entries = ContentSnapshot(cache).entries(); QCOMPARE(entries.size(), 2);
@@ -839,11 +839,11 @@ private slots:
                 process.terminate(); if (!process.waitForFinished(5000)) { process.kill(); process.waitForFinished(5000); }
             }
         } retireOwner{process}, retireCaller{caller};
-        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion";
+        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial";
         process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
         auto bus = QDBusConnection::sessionBus();
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
-        const auto oldOwner = bus.interface()->serviceOwner("org.aeriallock.Companion1").value();
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
+        const auto oldOwner = bus.interface()->serviceOwner("org.aeriallock.Aerial1").value();
         caller.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", {"fetch", "--limit", "1", "--wait", "--json"});
         QVERIFY(caller.waitForStarted(5000));
         const auto cache = environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1";
@@ -852,7 +852,7 @@ private slots:
         // real owner while it sleeps, then require a durable-result resnapshot.
         QCOMPARE(::kill(pid_t(caller.processId()), SIGSTOP), 0);
         process.terminate(); QVERIFY(process.waitForFinished(5000));
-        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         server.modes.remove("/clip.mp4");
         if (differentProfile) {
             const auto bundle = directory.path() + "/different-bundle";
@@ -863,8 +863,8 @@ private slots:
             process.setProcessEnvironment(changed);
         }
         process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
-        QVERIFY(bus.interface()->serviceOwner("org.aeriallock.Companion1").value() != oldOwner);
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
+        QVERIFY(bus.interface()->serviceOwner("org.aeriallock.Aerial1").value() != oldOwner);
         QTRY_COMPARE_WITH_TIMEOUT(ContentSnapshot(cache).entries().size(), 1, 20000);
         QCOMPARE(::kill(pid_t(caller.processId()), SIGCONT), 0);
         QTRY_COMPARE_WITH_TIMEOUT(caller.state(), QProcess::NotRunning, 10000);
@@ -895,10 +895,10 @@ private slots:
         QVERIFY(config.replace("config.json", QJsonDocument(QJsonObject{{"sources", QJsonArray{selectedSource}},
             {"cache", QJsonObject{{"maxBytes", 1000000}}}, {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson()));
         QProcess process; process.setProcessEnvironment(environment);
-        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial", {}); QVERIFY(process.waitForStarted(5000));
         struct Retire { QProcess &p; ~Retire() { if (p.state() != QProcess::NotRunning) { p.terminate(); if (!p.waitForFinished(5000)) { p.kill(); p.waitForFinished(5000); } } } } retire{process};
         auto bus = QDBusConnection::sessionBus();
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         auto result = cli(environment, {"config", "show", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("private-token"));
         result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0); QVERIFY(!result.out.contains("private-token"));
         QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "-1"}).code, 1);
@@ -946,9 +946,9 @@ private slots:
         QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "0"}).code, 0);
         QCOMPARE(cli(environment, {"fetch", "--wait"}).code, 1);
         process.terminate(); QVERIFY(process.waitForFinished(5000));
-        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
-        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion", {}); QVERIFY(process.waitForStarted(5000));
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
+        process.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial", {}); QVERIFY(process.waitForStarted(5000));
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0);
         QVERIFY(QJsonDocument::fromJson(result.out).object().value("ManagedBytes").toInteger() > 0);
         QVERIFY(!process.readAllStandardError().contains("private-token"));
@@ -980,11 +980,11 @@ private slots:
         QVERIFY(config.replace("config.json", QJsonDocument(QJsonObject{{"sources", sources},
             {"cache", QJsonObject{{"maxBytes", 1000000}}}, {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", false}}}}}}).toJson()));
         QProcess process; process.setProcessEnvironment(environment);
-        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial-companion";
+        const auto binary = QStringLiteral(AERIAL_TEST_SOURCE) + "/companion/aerial";
         process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
         struct Retire { QProcess &process; ~Retire() { if (process.state() != QProcess::NotRunning) { process.terminate(); if (!process.waitForFinished(5000)) { process.kill(); process.waitForFinished(5000); } } } } retire{process};
         auto bus = QDBusConnection::sessionBus();
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         auto result = cli(environment, {"status", "--json"}); QCOMPARE(result.code, 0);
         QVERIFY2(result.error.isEmpty(), result.error.constData());
         const auto initial = QJsonDocument::fromJson(result.out).object();
@@ -1020,9 +1020,9 @@ private slots:
         QCOMPARE(status.value("ReadyClips").toInt(), 2); QVERIFY(status.value("ManagedBytes").toInteger() > media.size() * 2);
         // A new service exports terminal objects from the durable job store.
         process.terminate(); QVERIFY(process.waitForFinished(5000));
-        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(!bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         process.start(binary, {}); QVERIFY(process.waitForStarted(5000));
-        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value());
+        QTRY_VERIFY(bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value());
         result = cli(environment, {"jobs", "--json"}); QCOMPARE(result.code, 0);
         bool retained = false;
         for (const auto &row : QJsonDocument::fromJson(result.out).array()) {

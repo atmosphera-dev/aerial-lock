@@ -38,11 +38,11 @@ int main(int argc, char **argv)
     struct Retire { QProcess &process; ~Retire() { process.terminate(); if (!process.waitForFinished(5000)) { process.kill(); process.waitForFinished(5000); } } } retire{service};
     auto bus = QDBusConnection::sessionBus();
     QElapsedTimer deadline; deadline.start();
-    while (!bus.interface()->isServiceRegistered("org.aeriallock.Companion1").value() && deadline.elapsed() < 5000) {
+    while (!bus.interface()->isServiceRegistered("org.aeriallock.Aerial1").value() && deadline.elapsed() < 5000) {
         if (service.state() == QProcess::NotRunning) qFatal("service failed to start: %s", service.readAllStandardError().constData());
         QTest::qWait(10);
     }
-    CompanionClient client("org.aeriallock.Companion1", "/org/aeriallock/Companion1", bus);
+    CompanionClient client("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1", bus);
     auto first = client.GetSettings(); first.waitForFinished();
     if (first.isError()) qFatal("GetSettings: %s", qPrintable(first.error().message()));
     const auto revision = first.argumentAt<2>();
@@ -59,8 +59,8 @@ int main(int argc, char **argv)
     if (paused.isError()) qFatal("SetPaused failed");
     after = client.GetSettings(); after.waitForFinished();
     if (QJsonDocument::fromJson(after.argumentAt<1>().toUtf8()).object().value("acquisition").toObject().value("automatic").toObject().value("enabled").toBool()) qFatal("pause did not persist");
-    auto props = QDBusMessage::createMethodCall("org.aeriallock.Companion1", "/org/aeriallock/Companion1", "org.freedesktop.DBus.Properties", "GetAll");
-    props << QString("org.aeriallock.Companion1");
+    auto props = QDBusMessage::createMethodCall("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1", "org.freedesktop.DBus.Properties", "GetAll");
+    props << QString("org.aeriallock.Aerial1");
     QDBusReply<QVariantMap> values = bus.call(props);
     if (!values.isValid() || values.value().value("MaxBytes").metaType().id() != QMetaType::ULongLong
         || values.value().value("MaxBytes").toULongLong() != 10000000000ULL) qFatal("byte properties are not uint64");
@@ -76,8 +76,8 @@ int main(int argc, char **argv)
     auto refreshed = client.Refresh({}); refreshed.waitForFinished();
     if (refreshed.isError() || refreshed.value().path() == "/") qFatal("refresh job not accepted");
     const auto object = refreshed.value();
-    QDBusMessage jobGet = QDBusMessage::createMethodCall("org.aeriallock.Companion1", object.path(), "org.freedesktop.DBus.Properties", "GetAll");
-    jobGet << QString("org.aeriallock.Companion1.Job1");
+    QDBusMessage jobGet = QDBusMessage::createMethodCall("org.aeriallock.Aerial1", object.path(), "org.freedesktop.DBus.Properties", "GetAll");
+    jobGet << QString("org.aeriallock.Aerial1.Job1");
     QDBusReply<QVariantMap> job;
     deadline.restart();
     do { QTest::qWait(10); job = bus.call(jobGet); } while (job.isValid() && job.value().value("Cancellable").toBool() && deadline.elapsed() < 5000);
@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     if (jobs.isError() || !jobs.value().contains(object)) qFatal("terminal job not listed");
     auto playback = client.ReportPlayback("different", "unused"); playback.waitForFinished();
     if (!playback.isError() || !playback.error().name().endsWith(".ProfileMismatch")) qFatal("playback profile not isolated");
-    auto noReply = QDBusMessage::createMethodCall("org.aeriallock.Companion1", "/org/aeriallock/Companion1", "org.aeriallock.Companion1", "EnsureContent");
+    auto noReply = QDBusMessage::createMethodCall("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1", "org.aeriallock.Aerial1", "EnsureContent");
     noReply << QVariantMap{{"profile", client.profile()}};
     if (!bus.send(noReply)) qFatal("no-reply ensure send failed");
     // Refresh after the existence-only display preference transaction.

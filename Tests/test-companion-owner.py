@@ -28,8 +28,8 @@ with tempfile.TemporaryDirectory(prefix="companion-owner-") as temporary:
     services = root / "services"
     services.mkdir()
     marker = root / "unexpected-activation"
-    (services / "org.aeriallock.Companion1.service").write_text(
-        "[D-BUS Service]\nName=org.aeriallock.Companion1\nExec=/usr/bin/touch " + str(marker) + "\n")
+    (services / "org.aeriallock.Aerial1.service").write_text(
+        "[D-BUS Service]\nName=org.aeriallock.Aerial1\nExec=/usr/bin/touch " + str(marker) + "\n")
 
     def bus(label):
         config = root / (label + ".conf")

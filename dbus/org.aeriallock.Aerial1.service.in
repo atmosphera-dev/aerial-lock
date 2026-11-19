@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.aeriallock.Aerial1
+Exec=@BINDIR@/aerial
+SystemdService=aerial.service

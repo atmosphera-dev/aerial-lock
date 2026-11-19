@@ -15,7 +15,7 @@ void JobObject::update(const QJsonObject &value)
     const bool finished = value.contains("finishedAt") && !record.contains("finishedAt");
     record = value;
     auto signal = QDBusMessage::createSignal(path, "org.freedesktop.DBus.Properties", "PropertiesChanged");
-    signal << QString("org.aeriallock.Companion1.Job1") << QVariantMap{
+    signal << QString("org.aeriallock.Aerial1.Job1") << QVariantMap{
         {"State", state()}, {"Kind", kind()}, {"SourceId", sourceId()}, {"AssetId", assetId()}, {"AssetKey", assetKey()},
         {"ReceivedBytes", QVariant::fromValue(received())}, {"TotalBytes", QVariant::fromValue(total())},
         {"TotalKnown", totalKnown()}, {"ReadyClips", ready()}, {"ErrorCode", errorCode()},

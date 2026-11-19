@@ -25,7 +25,7 @@ def run(argv, **kwargs):
 
 
 def manager():
-    return run(["systemctl", "--user", "show", "aerial-companion.service", "-p", "ActiveState", "-p", "MainPID",
+    return run(["systemctl", "--user", "show", "aerial.service", "-p", "ActiveState", "-p", "MainPID",
                 "-p", "InvocationID"]).stdout
 
 
@@ -160,7 +160,7 @@ def main():
             installed = Path("/") / relative
             assert digest(installed) == entry["sha256"] and installed.lstat().st_mode == entry["mode"], relative
         run(["systemctl", "--user", "daemon-reload"])
-        run(["systemctl", "--user", "start", "aerial-companion.service"])
+        run(["systemctl", "--user", "start", "aerial.service"])
         started = True
         active = manager()
         assert "ActiveState=active" in active and "MainPID=0\n" not in active
@@ -188,7 +188,7 @@ def main():
         raise
     finally:
         if started:
-            run(["systemctl", "--user", "stop", "aerial-companion.service"])
+            run(["systemctl", "--user", "stop", "aerial.service"])
         publish(output / "result.json", json.dumps(result, indent=2))
     print("COMPANION_PACKAGE_PASS " + str(output))
 

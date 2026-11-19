@@ -29,7 +29,7 @@ the optional signal-unlock examples below use `pkill` (`procps-ng` on Arch).
 With an empty
 `sources` list the player is never started and the screen stays
 `backgroundColor`; with sources it shows `backgroundColor` until the first
-frame decodes. The headless `aerial-companion` content service also requires
+frame decodes. The headless `aerial` content service also requires
 Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
 `aerialctl` and the compatible `aerial-lock-fetch` command use that service;
 they do not require curl, Python or tar. Python remains test tooling.
@@ -42,9 +42,9 @@ development files, PAM headers, wayland-client and wayland-protocols (including
 to build from a clone. Arch's `qdbusxml2cpp` is supplied by `qt6-base`.
 
 With the default `PREFIX=/usr`, installation includes `aerial-lock`,
-`aerial-lock-supervisor`, `aerial-unlock`, `aerialctl`, `aerial-lock-fetch` and
+`aerial-lock-supervisor`, `aerial-unlock`, `aerial`, `aerialctl`, `aerial-lock-fetch` and
 `aerial-idle` in `/usr/bin`, the shared guarded runner, `aerial-lock-auth`,
-`aerial-lock-emergency`, `aerial-companion` and its isolated media probe under
+`aerial-lock-emergency` and the isolated media probe under
 `/usr/libexec/aerial-lock`, its
 private plugin under `/usr/lib/aerial-lock/qt-plugins`, the QML/config/theme
 bundle under `/usr/share/aerial-lock`, and `/etc/pam.d/aerial-lock`. It also
@@ -68,7 +68,7 @@ consume network traffic.
 To start now, choose either:
 
 ```sh
-systemctl --user start aerial-companion
+systemctl --user start aerial
 aerialctl fetch --limit 1 --wait
 ```
 
@@ -101,7 +101,7 @@ aerialctl config set cache.maxBytes 10000000000
 Manual `aerialctl fetch` always attempts work despite automatic pause, metering,
 connection, power or automatic-quality settings. It still honors configured
 sources, hard source resolution bands, cache/disk limits, TLS and media validation;
-offline transport can fail. `systemctl --user mask aerial-companion.service`
+offline transport can fail. `systemctl --user mask aerial.service`
 prevents service startup/activation; unlike pause, it also prevents manual fetch.
 
 ### Apple footage and credits
