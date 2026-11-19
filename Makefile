@@ -16,6 +16,7 @@ DEBUG_VERBOSE ?= 0
 # Qt's protected data symbols require PIC, including LTO's link-time codegen.
 # Keep every object and final link of the Qt consumers on the same model.
 QT_PIC_FLAGS := -fPIC
+NATIVE_DEPFLAGS := -MMD -MP
 
 WAYLAND_PROTOCOLS ?= /usr/share/wayland-protocols
 SESSION_LOCK_XML := $(WAYLAND_PROTOCOLS)/staging/ext-session-lock/ext-session-lock-v1.xml
@@ -47,6 +48,12 @@ INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial companion/aerial-media-probe cli/aerialctl
 
+# Let the compiler own the complete transitive header graph. Private flags do
+# not leak into shared code-generation/config prerequisites or link commands.
+NATIVE_OBJS := $(sort $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS) $(AUTH_OBJS) $(EMERGENCY_OBJS) $(COMPANION_OBJS) $(PROBE_OBJS) $(CLI_OBJS) $(INPUT_OBJS))
+$(NATIVE_OBJS): private override CPPFLAGS += $(NATIVE_DEPFLAGS)
+-include $(wildcard $(OBJDIR)/*.d)
+
 # Make cannot see variable changes in a command line. One content-stable
 # prerequisite records the effective native configuration, so an incremental
 # install cannot reuse objects compiled for a different prefix or flag set.
@@ -58,6 +65,7 @@ CFLAGS=$(CFLAGS)
 CXXFLAGS=$(CXXFLAGS)
 LDFLAGS=$(LDFLAGS)
 QT_PIC_FLAGS=$(QT_PIC_FLAGS)
+NATIVE_DEPFLAGS=$(NATIVE_DEPFLAGS)
 DATADIR=$(DATADIR)
 BINDIR=$(BINDIR)
 LIBEXECDIR=$(LIBEXECDIR)

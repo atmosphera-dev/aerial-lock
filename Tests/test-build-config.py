@@ -124,6 +124,15 @@ def paths(fixture, runtime):
     listener.close()
     make(b)
     assert after == [p.stat().st_mtime_ns for p in objects], "unchanged configuration rebuilt native objects"
+    # Registration embeds LocalConfig/ConfigDocument's layout; it must rebuild
+    # for a transitive header edit, including one not named in its manual rule.
+    registration = tree / "build/surface-input.o"
+    before_registration = registration.stat().st_mtime_ns
+    header = tree / "common/config-document.h"
+    header.touch()
+    make(b)
+    assert registration.stat().st_mtime_ns > before_registration, "transitive config layout left stale QML registration"
+    assert "common/config-document.h" in (tree / "build/surface-input.d").read_text()
 
 
 def dev(fixture, runtime):
