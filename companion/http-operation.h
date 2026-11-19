@@ -13,9 +13,11 @@ struct HttpResult {
     QUrl url;
     HttpHeaders headers;
     QString error;
+    bool conditionallyRequested = false;
 };
 struct HttpRequest {
     QUrl url;
+    QUrl validatorUrl;
     HttpHeaders headers;
     bool head = false;
     // Metadata has a total deadline. Media disables only that lifetime bound;

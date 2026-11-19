@@ -45,6 +45,7 @@ private:
     HttpResult lastResponse;
     QString failure;
     QByteArray validator;
+    QUrl effectiveUrl;
     qint64 offset = 0, expected = -1, resumeOffset = 0;
     int file = -1;
     int hashInput = -1;

@@ -54,12 +54,13 @@ void Transfer::start()
     if (file < 0 || fstat(file, &st)) { finish("StorageError"); return; }
     offset = st.st_size;
     validator = saved.value("validator").toString().toLatin1();
+    effectiveUrl = QUrl(saved.value("effectiveUrl").toString());
     expected = saved.value("total").toInteger(-1);
     if (saved.value("key") != rep.key || saved.value("url") != rep.url.toString(QUrl::FullyEncoded)
-        || saved.value("received").toInteger(-1) != offset || validator.isEmpty()
+        || saved.value("received").toInteger(-1) != offset || validator.isEmpty() || !SourceResolver::remoteUrl(effectiveUrl)
         || (expected >= 0 && offset > expected) || (rep.bytes >= 0 && expected != rep.bytes)) {
         if (ftruncate(file, 0) || lseek(file, 0, SEEK_SET) < 0) { finish("StorageError"); return; }
-        offset = 0; expected = rep.bytes; validator.clear();
+        offset = 0; expected = rep.bytes; validator.clear(); effectiveUrl = QUrl{};
     }
     resumeOffset = offset;
     if (!rep.checksum.isEmpty() && offset > 0) {
@@ -86,7 +87,7 @@ void Transfer::hashPartial()
 
 void Transfer::request()
 {
-    HttpRequest query; query.url = rep.url; query.totalTimeoutMs = 0;
+    HttpRequest query; query.url = rep.url; query.totalTimeoutMs = 0; query.validatorUrl = effectiveUrl;
     if (resumeOffset > 0) {
         query.headers["Range"] = "bytes=" + QByteArray::number(resumeOffset) + '-';
         query.headers["If-Range"] = validator;
@@ -115,6 +116,8 @@ void Transfer::request()
 
 QString Transfer::headers(const HttpResult &response)
 {
+    if (resumeOffset > 0 && (response.status == 206 || response.status == 416)
+        && (response.url != effectiveUrl || !response.conditionallyRequested)) return "InvalidRange";
     if (response.status == 416 && resumeOffset > 0) {
         const QRegularExpression pattern("^bytes \\*/([0-9]+)$");
         const auto match = pattern.match(QString::fromLatin1(response.headers.value("content-range")));
@@ -143,6 +146,7 @@ QString Transfer::headers(const HttpResult &response)
         expected = rep.bytes >= 0 ? rep.bytes : declared;
         validator = newValidator;
     }
+    effectiveUrl = response.url;
     if (!persist()) return "CacheFull";
     if (expected >= 0 && !cache.reserve(expected - offset)) return "CacheFull";
     emit progress();
@@ -168,7 +172,7 @@ bool Transfer::persist()
     if (file < 0) return false;
     if (fsync(file)) return false;
     return cache.writeMetadata("partials/" + rep.key + ".json", {{"version", 1}, {"key", rep.key},
-        {"url", rep.url.toString(QUrl::FullyEncoded)}, {"validator", QString::fromLatin1(validator)},
+        {"url", rep.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", effectiveUrl.toString(QUrl::FullyEncoded)}, {"validator", QString::fromLatin1(validator)},
         {"received", offset}, {"total", expected}});
 }
 

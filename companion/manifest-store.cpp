@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <algorithm>
 
 namespace Aerial {
 namespace {
@@ -53,17 +54,18 @@ QList<Representation> ManifestStore::cached(const QJsonObject &source) const
 void ManifestStore::refresh(const QJsonObject &value)
 {
     if (operation) return;
-    source = value; links = 0; failure.clear(); items.clear();
+    source = value; links = 0; retried304 = false; failure.clear(); items.clear();
     prior = cache.metadata(path(source));
     if (prior.value("signature") != signature(source)) prior = {};
     fetch(SourceResolver::manifestUrl(source));
 }
 
-void ManifestStore::fetch(const QUrl &url)
+void ManifestStore::fetch(const QUrl &url, bool unconditional)
 {
     body.clear();
     HttpRequest query; query.url = url;
-    if (prior.value("url") == url.toString(QUrl::FullyEncoded)) {
+    if (!unconditional) {
+        query.validatorUrl = QUrl(prior.value("url").toString());
         const auto etag = prior.value("etag").toString().toLatin1(), modified = prior.value("modified").toString().toLatin1();
         if (!etag.isEmpty()) query.headers["If-None-Match"] = etag;
         else if (!modified.isEmpty()) query.headers["If-Modified-Since"] = modified;
@@ -84,6 +86,10 @@ void ManifestStore::fetch(const QUrl &url)
         lastResponse = operation->result(); operation->deleteLater(); operation = nullptr;
         if (!lastResponse.error.isEmpty()) { settle(lastResponse.error); return; }
         if (lastResponse.status == 304) {
+            if (!lastResponse.conditionallyRequested || lastResponse.url != QUrl(prior.value("url").toString())) {
+                if (retried304) { settle("InvalidManifest"); return; }
+                retried304 = true; fetch(lastResponse.url, true); return;
+            }
             items = cached(source);
             settle(items.isEmpty() ? "InvalidManifest" : QString()); return;
         }
@@ -108,32 +114,53 @@ void ManifestStore::fetch(const QUrl &url)
 void ManifestStore::cancel() { if (operation) operation->cancel(); }
 void ManifestStore::settle(const QString &error) { failure = error; emit finished(); }
 
-RepresentationSizer::RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent)
-    : QObject(parent), transport(transport), appleRoot(std::move(appleRoot)) {}
-RepresentationSizer::~RepresentationSizer() { if (operation) { disconnect(operation, nullptr, this, nullptr); delete operation; } }
+RepresentationSizer::RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent,
+                                         int deadlineMs, int maximumConcurrent)
+    : QObject(parent), transport(transport), appleRoot(std::move(appleRoot)),
+      deadlineMs(std::max(1, deadlineMs)), maximumConcurrent(std::max(1, maximumConcurrent))
+{
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, this, &RepresentationSizer::settle);
+}
+RepresentationSizer::~RepresentationSizer()
+{
+    for (auto *operation : operations) { disconnect(operation, nullptr, this, nullptr); delete operation; }
+}
 
 void RepresentationSizer::start(QList<Representation> values)
 {
-    if (operation) return;
-    cancelled = false; index = 0; items = std::move(values); next();
+    if (started) return;
+    started = true; index = 0; items = std::move(values);
+    deadline.start(deadlineMs); next();
 }
 void RepresentationSizer::cancel()
 {
-    cancelled = true;
-    if (operation) operation->cancel();
+    settle();
+}
+void RepresentationSizer::settle()
+{
+    if (settled) return;
+    settled = true; deadline.stop();
+    const auto active = operations; operations.clear();
+    for (auto *operation : active) { disconnect(operation, nullptr, this, nullptr); delete operation; }
+    SourceResolver::smallestFirst(items);
+    emit finished();
 }
 void RepresentationSizer::next()
 {
-    while (index < items.size() && items[index].bytes >= 0) ++index;
-    if (cancelled || index == items.size()) { SourceResolver::smallestFirst(items); emit finished(); return; }
-    request(false);
+    if (settled) return;
+    while (index < items.size() && operations.size() < maximumConcurrent) {
+        const auto item = index++;
+        if (items[item].bytes < 0) request(item, false);
+    }
+    if (index == items.size() && operations.isEmpty()) settle();
 }
-void RepresentationSizer::request(bool range)
+void RepresentationSizer::request(qsizetype item, bool range)
 {
-    HttpRequest query; query.url = items[index].url; query.head = !range;
+    HttpRequest query; query.url = items[item].url; query.head = !range;
     if (range) query.headers["Range"] = "bytes=0-0";
-    operation = new HttpOperation(transport, query, appleRoot,
-        [this, range](const HttpResult &response) -> QString {
+    auto *operation = new HttpOperation(transport, query, appleRoot,
+        [this, item, range](const HttpResult &response) -> QString {
             if (response.status == 200 || response.status == 206) {
                 bool ok = false;
                 auto length = response.headers.value("content-length").toLongLong(&ok);
@@ -141,14 +168,15 @@ void RepresentationSizer::request(bool range)
                     const auto match = QRegularExpression("^bytes 0-0/([0-9]+)$").match(QString::fromLatin1(response.headers.value("content-range")));
                     length = match.hasMatch() ? match.captured(1).toLongLong(&ok) : -1;
                 }
-                if (ok && length > 0) items[index].bytes = length;
+                if (ok && length > 0) items[item].bytes = length;
             }
             return range ? QString("HeadersOnly") : QString();
         }, [](const QByteArray &) { return QString("HeadersOnly"); }, this);
-    connect(operation, &HttpOperation::finished, this, [this, range] {
-        operation->deleteLater(); operation = nullptr;
-        if (!cancelled && !range && items[index].bytes < 0) { request(true); return; }
-        ++index; next();
+    operations.insert(item, operation);
+    connect(operation, &HttpOperation::finished, this, [this, item, range, operation] {
+        operations.remove(item); operation->deleteLater();
+        if (!range && items[item].bytes < 0) { request(item, true); return; }
+        next();
     });
     operation->start();
 }

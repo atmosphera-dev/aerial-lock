@@ -99,7 +99,7 @@ public:
                     requests.append(*buffer);
                     const auto target = buffer->split(' ').value(1);
                     const auto mode = modes.value(target, this->mode);
-                    if (mode == "hold" && !buffer->startsWith("HEAD ")) return;
+                    if (mode == "hold-all" || (mode == "hold" && !buffer->startsWith("HEAD "))) return;
                     if (mode == "drip") {
                         socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 8\r\n\r\n");
                         auto *timer = new QTimer(socket);
@@ -113,6 +113,7 @@ public:
                     QByteArray status = "200 OK", body = bodies.value(target, media), extra = "ETag: \"fixture-one\"\r\n";
                     if (mode == "retry") { status = "429 Too Many Requests"; body.clear(); extra += "Retry-After: 120\r\n"; }
                     if (mode == "conditional" && buffer->contains("If-None-Match:")) { status = "304 Not Modified"; body.clear(); }
+                    if (mode == "unsolicited-304-once") { status = "304 Not Modified"; body.clear(); modes[target] = "full"; }
                     if (target == "/redirect") {
                         status = "302 Found"; body.clear(); extra = "Location: /clip\r\n";
                     } else if (redirects.contains(target)) {
@@ -349,7 +350,7 @@ private slots:
             QVERIFY(cache.reserve(bytes.size())); QVERIFY(cache.append(file, bytes)); QCOMPARE(fsync(file), 0); close(file);
             cache.releaseReservation();
             QVERIFY(cache.writeMetadata("partials/" + representation.key + ".json", {{"version", 1}, {"key", representation.key},
-                {"url", representation.url.toString(QUrl::FullyEncoded)}, {"validator", "\"fixture-one\""},
+                {"url", representation.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", representation.url.toString(QUrl::FullyEncoded)}, {"validator", "\"fixture-one\""},
                 {"received", bytes.size()}, {"total", media.size()}}));
             Transfer transfer(cache, network, representation, probe, {}, [] { return 123; });
             QSignalSpy done(&transfer, &Transfer::finished); transfer.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
@@ -435,14 +436,88 @@ private slots:
         QCOMPARE(cache.metadata("partials/" + representation.key + ".json").value("url").toString(), representation.url.toString(QUrl::FullyEncoded));
         server.requests.clear(); server.redirects["/origin"] = "/current-location";
         server.modes["/expired-location"] = "missing"; server.modes["/current-location"] = "206";
+        const auto marker = server.media.indexOf("Lavf");
+        QVERIFY(marker >= 0 && marker < media.size() / 2);
+        server.media[marker] = 'Z'; // Same ETag/length, different representation prefix.
         Transfer resumed(cache, network, representation, probe, {}, [] { return 124; });
         QSignalSpy done(&resumed, &Transfer::finished); resumed.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
         QVERIFY2(resumed.error().isEmpty(), qPrintable(resumed.error()));
         QCOMPARE(server.requests.size(), 2);
         QVERIFY(server.requests.first().startsWith("GET /origin "));
         QVERIFY(server.requests.last().startsWith("GET /current-location "));
+        QVERIFY(!server.requests.first().contains("Range:"));
+        QVERIFY(!server.requests.last().contains("Range:"));
+        QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), server.media);
+    }
+    void resumeThroughStableRedirect()
+    {
+        QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
+        HttpFixture server; server.media = media; QNetworkAccessManager network;
+        server.redirects["/origin"] = "/same"; server.modes["/same"] = "interrupted";
+        const auto representation = rep(server.url("/origin"));
+        {
+            Transfer first(cache, network, representation, probe, {}, [] { return 123; });
+            QSignalSpy done(&first, &Transfer::finished); first.start(); QTRY_COMPARE(done.size(), 1);
+            QCOMPARE(first.received(), media.size() / 2);
+        }
+        server.redirects.remove("/origin"); server.modes["/origin"] = "retry";
+        {
+            Transfer throttled(cache, network, representation, probe, {}, [] { return 124; });
+            QSignalSpy done(&throttled, &Transfer::finished); throttled.start(); QTRY_COMPARE(done.size(), 1);
+            QCOMPARE(throttled.error(), "HttpError");
+            QCOMPARE(cache.metadata("partials/" + representation.key + ".json").value("received").toInteger(), media.size() / 2);
+            QCOMPARE(cache.files().read("partials/" + representation.key + ".part", 1000000), media.left(media.size() / 2));
+        }
+        server.redirects["/origin"] = "/same"; server.modes.remove("/origin");
+        server.requests.clear(); server.modes["/same"] = "206";
+        Transfer next(cache, network, representation, probe, {}, [] { return 124; });
+        QSignalSpy done(&next, &Transfer::finished); next.start(); QTRY_COMPARE(done.size(), 1);
+        QVERIFY2(next.error().isEmpty(), qPrintable(next.error()));
+        QVERIFY(!server.requests.first().contains("Range:"));
         QVERIFY(server.requests.last().contains("If-Range: \"fixture-one\""));
         QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
+    }
+    void manifestValidatorsAreResourceScoped()
+    {
+        QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
+        HttpFixture server; QNetworkAccessManager network;
+        const auto configured = source(server);
+        server.bodies["/fixture.json"] = manifest({"old"});
+        ManifestStore store(cache, network, {}); QSignalSpy done(&store, &ManifestStore::finished);
+        store.refresh(configured); QTRY_COMPARE(done.size(), 1); QVERIFY(store.error().isEmpty());
+        server.redirects["/fixture.json"] = "/new.json";
+        server.bodies["/new.json"] = manifest({"new"}); server.modes["/new.json"] = "conditional";
+        server.requests.clear(); store.refresh(configured); QTRY_COMPARE(done.size(), 2);
+        QVERIFY(store.error().isEmpty()); QCOMPARE(store.result().first().assetId, "new");
+        QVERIFY(!server.requests.last().contains("If-None-Match:"));
+        server.requests.clear(); store.refresh(configured); QTRY_COMPARE(done.size(), 3);
+        QVERIFY(store.error().isEmpty()); QCOMPARE(store.result().first().assetId, "new");
+        QVERIFY(server.requests.last().contains("If-None-Match:"));
+        QVERIFY(!server.requests.first().contains("If-None-Match:"));
+        server.redirects["/fixture.json"] = "/unsolicited.json";
+        server.bodies["/unsolicited.json"] = manifest({"fresh"}); server.modes["/unsolicited.json"] = "unsolicited-304-once";
+        server.requests.clear(); store.refresh(configured); QTRY_COMPARE(done.size(), 4);
+        QVERIFY(store.error().isEmpty()); QCOMPARE(store.result().first().assetId, "fresh");
+        QCOMPARE(server.requests.size(), 3);
+        QVERIFY(!server.requests.last().contains("If-None-Match:"));
+    }
+    void sizingPassDeadlineAndConcurrency()
+    {
+        HttpFixture server; QNetworkAccessManager network;
+        server.bodies["/fast"] = QByteArray(1234, 'x');
+        QList<Representation> items;
+        for (int i = 0; i < 100; ++i) {
+            auto value = rep(server.url(i ? "/slow" + QString::number(i) : "/fast")); value.bytes = -1;
+            if (i) server.modes[value.url.path().toUtf8()] = "hold-all";
+            items.append(value);
+        }
+        RepresentationSizer sizer(network, {}, nullptr, 200, 3);
+        QSignalSpy done(&sizer, &RepresentationSizer::finished); sizer.start(items);
+        QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 2000);
+        QCOMPARE(sizer.result().size(), 100); QCOMPARE(sizer.result()[0].bytes, 1234);
+        QCOMPARE(server.requests.size(), 4); // One fast completion plus three pending.
+        const auto result = sizer.result();
+        QCOMPARE(std::count_if(result.begin(), result.end(), [](const Representation &value) { return value.bytes >= 0; }), 1);
     }
     void queueRefreshAfterPermanentUrlFailure()
     {
@@ -625,7 +700,7 @@ private slots:
         const auto file = cache.openPartial(representation.key, true); QVERIFY(file >= 0);
         QVERIFY(cache.reserve(bytes.size())); QVERIFY(cache.append(file, bytes)); close(file); cache.releaseReservation();
         QVERIFY(cache.writeMetadata("partials/" + representation.key + ".json", {{"version", 1}, {"key", representation.key},
-            {"url", representation.url.toString(QUrl::FullyEncoded)}, {"validator", "\"fixture-one\""}, {"received", bytes.size()}, {"total", bytes.size()}}));
+            {"url", representation.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", representation.url.toString(QUrl::FullyEncoded)}, {"validator", "\"fixture-one\""}, {"received", bytes.size()}, {"total", bytes.size()}}));
         Transfer transfer(cache, network, representation, probe, {}, [] { return 123; });
         QSignalSpy finished(&transfer, &Transfer::finished); transfer.start();
         QTimer::singleShot(0, &transfer, [&] { transfer.cancel(); });

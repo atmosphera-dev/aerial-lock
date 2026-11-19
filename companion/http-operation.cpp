@@ -11,6 +11,7 @@ HttpOperation::HttpOperation(QNetworkAccessManager &transport, HttpRequest reque
     : QObject(parent), transport(transport), original(std::move(request)), appleRoot(appleRoot),
       onHeaders(std::move(headers)), onChunk(std::move(chunk)), current(original.url)
 {
+    if (original.validatorUrl.isEmpty()) original.validatorUrl = original.url;
     deadline.setSingleShot(true);
     connect(&deadline, &QTimer::timeout, this, [this] { cancel("Timeout"); });
 }
@@ -47,7 +48,14 @@ void HttpOperation::request(bool appleTrust)
     query.setRawHeader("Accept-Encoding", "identity");
     query.setRawHeader("User-Agent", "aerial-lock-companion/1");
     query.setTransferTimeout(original.inactivityTimeoutMs);
-    for (auto it = original.headers.cbegin(); it != original.headers.cend(); ++it) query.setRawHeader(it.key(), it.value());
+    for (auto it = original.headers.cbegin(); it != original.headers.cend(); ++it) {
+        const auto name = it.key().toLower();
+        const bool conditional = name == "if-range" || name == "if-none-match" || name == "if-modified-since";
+        const bool resumeRange = name == "range" && original.headers.contains("If-Range");
+        if ((conditional || resumeRange) && current != original.validatorUrl) continue;
+        query.setRawHeader(it.key(), it.value());
+        if (conditional) response.conditionallyRequested = true;
+    }
     if (appleTrust) {
         auto ssl = QSslConfiguration::defaultConfiguration();
         ssl.addCaCertificates(QSslCertificate::fromData(appleRoot));

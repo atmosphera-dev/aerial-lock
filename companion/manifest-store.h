@@ -19,7 +19,7 @@ public:
 signals:
     void finished();
 private:
-    void fetch(const QUrl &url);
+    void fetch(const QUrl &url, bool unconditional = false);
     void settle(const QString &error);
     CacheStore &cache;
     QNetworkAccessManager &transport;
@@ -30,14 +30,16 @@ private:
     QString failure;
     HttpResult lastResponse;
     int links = 0;
+    bool retried304 = false;
 };
 
-// Discover every candidate length before selecting "smallest". The range
-// fallback cancels at headers, even if the peer ignores Range and sends 200.
+// Bounded parallel sizing retains discovered lengths when the pass deadline
+// expires. Unresolved candidates remain unknown, ordered after known lengths.
 class RepresentationSizer : public QObject {
     Q_OBJECT
 public:
-    RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent = nullptr);
+    RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent = nullptr,
+                        int deadlineMs = 30000, int maximumConcurrent = 4);
     ~RepresentationSizer();
     void start(QList<Representation> items);
     void cancel();
@@ -46,12 +48,15 @@ signals:
     void finished();
 private:
     void next();
-    void request(bool range);
+    void request(qsizetype item, bool range);
+    void settle();
     QNetworkAccessManager &transport;
     QByteArray appleRoot;
     QList<Representation> items;
     qsizetype index = 0;
-    QPointer<HttpOperation> operation;
-    bool cancelled = false;
+    QMap<qsizetype, HttpOperation *> operations;
+    QTimer deadline;
+    int deadlineMs, maximumConcurrent;
+    bool started = false, settled = false;
 };
 }
