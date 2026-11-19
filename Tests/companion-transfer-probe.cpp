@@ -2,6 +2,7 @@
 #include "../companion/manifest-store.h"
 #include "../companion/transfer-queue.h"
 #include "../companion/policy-monitor.h"
+#include "../companion/service.h"
 #include "../common/content-snapshot.h"
 #include "fsync-fixture.h"
 #include <QCoreApplication>
@@ -14,6 +15,7 @@
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QSocketNotifier>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -84,6 +86,7 @@ public:
     QMap<QByteArray, QString> modes;
     QMap<QByteArray, QByteArray> redirects;
     QString mode = "full";
+    QPointer<QTcpSocket> controlled;
     HttpFixture()
     {
         if (!listen(QHostAddress::LocalHost)) qFatal("fixture bind failed");
@@ -147,6 +150,12 @@ public:
                     if (mode == "hold-partial" && !head) {
                         socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
                             + QByteArray::number(declared) + "\r\n" + extra + "\r\n" + body.left(body.size() / 2));
+                        return;
+                    }
+                    if (mode == "controlled" && !head) {
+                        controlled = socket;
+                        socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
+                            + QByteArray::number(declared) + "\r\n" + extra + "\r\n");
                         return;
                     }
                     if (mode == "chunked") {
@@ -981,13 +990,31 @@ private slots:
     {
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.modes["/fixture.json"] = "hold-all";
-        const auto paths = queueConfig(directory.path(), {source(server)});
+        auto paths = queueConfig(directory.path(), {source(server)});
+        const auto oldConfig = paths.config;
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("AERIAL_LOCK_SHELL", QStringLiteral(AERIAL_TEST_SOURCE));
+        for (const auto &key : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            environment.insert(key, directory.path() + "/" + key);
+        paths = {QStringLiteral(AERIAL_TEST_SOURCE), environment.value("XDG_CONFIG_HOME") + "/aerial-lock/config.json",
+            environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1", environment.value("XDG_STATE_HOME") + "/aerial-lock",
+            environment.value("XDG_RUNTIME_DIR") + "/aerial-lock"};
+        QVERIFY(QDir().mkpath(QFileInfo(paths.config).absolutePath())); QVERIFY(QFile::rename(oldConfig, paths.config));
         ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
         const qint64 now = 1000000;
         PlannerState state(paths.state, [=] { return now; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [=] { return now; }); queue.start();
-        const auto id = queue.acquire(); QVERIFY(!id.isEmpty());
+        auto bus = QDBusConnection::sessionBus();
+        CompanionService service(config, bus); service.bind(&state, &cache, &queue, nullptr); QVERIFY(service.start());
+        const auto cleanup = qScopeGuard([&] { bus.unregisterService("org.aeriallock.Aerial1"); bus.unregisterObject("/org/aeriallock/Aerial1", QDBusConnection::UnregisterTree); });
+        QString id;
+        connect(&queue, &TransferQueue::jobAdded, this, [&](const QString &accepted) { id = accepted; });
+        QProcess waiter; waiter.setProcessEnvironment(environment);
+        waiter.start(QStringLiteral(AERIAL_TEST_SOURCE) + "/cli/aerialctl", {"fetch", "--wait", "--json"});
+        QVERIFY(waiter.waitForStarted(5000)); QTRY_VERIFY(!id.isEmpty());
         QTRY_COMPARE(server.requests.size(), 1);
+        const auto jobPath = "/org/aeriallock/Aerial1/jobs/j" + id;
+        QVERIFY(bus.objectRegisteredAt(jobPath));
         // Simulate loss of this accepted record through the state's real
         // receipt-expiry boundary, without reaching into queue internals.
         QVERIFY(state.saveJob(id, {{"finishedAt", 1}}));
@@ -1002,6 +1029,9 @@ private slots:
         QVERIFY(queue.cancel(id));
         QCOMPARE(queue.status(), "error"); QCOMPARE(queue.deferReason(), "StorageError");
         QVERIFY(!queue.jobs().contains(id));
+        QVERIFY(!bus.objectRegisteredAt(jobPath));
+        QTRY_COMPARE_WITH_TIMEOUT(waiter.state(), QProcess::NotRunning, 5000);
+        QCOMPARE(waiter.exitStatus(), QProcess::NormalExit); QCOMPARE(waiter.exitCode(), 1);
         QTest::qWait(50);
         QCOMPARE(server.requests.size(), 1);
     }
@@ -1474,6 +1504,148 @@ private slots:
         const auto next = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, next), 10000);
         QCOMPARE(queue.job(next).value("state"), "succeeded");
         for (const auto &request : server.requests) QVERIFY(!request.startsWith("GET /large.mp4 "));
+    }
+    void queueRotationExits_data()
+    {
+        QTest::addColumn<QString>("exit");
+        for (const auto &exit : {"published", "partial", "metadata-fit", "no-fit", "permanent", "transient",
+                 "cancelled", "cancelled-state-fault", "policy", "unconfigured", "protected", "restart"})
+            QTest::newRow(exit) << QString(exit);
+    }
+    void queueRotationExits()
+    {
+        QFETCH(QString, exit);
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"old-one", "old-two"});
+        server.bodies["/old-one.mp4"] = media + QByteArray(300000, 'x');
+        server.bodies["/old-two.mp4"] = media + QByteArray(300000, 'x');
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); QNetworkAccessManager network;
+        qint64 now = 100000;
+        PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
+        QString victim, bound;
+        CacheStore cache(paths.cache, std::nullopt, [&](const QString &step) {
+            if (step == "removed" && victim.isEmpty()) {
+                victim = state.rotation().value("victim").toString();
+                bound = state.rotation().value("replacement").toString();
+            }
+        });
+        auto queue = std::make_unique<TransferQueue>(config, cache, state, network, probe, QByteArray{}, [&now] { return now; });
+        queue->start();
+        const auto seed = queue->acquire(); QTRY_VERIFY_WITH_TIMEOUT(ended(*queue, seed), 10000);
+        QCOMPARE(cache.entries().size(), 2);
+        auto entries = QJsonDocument::fromJson(manifest({"old-one", "old-two"})).object().value("assets").toArray();
+        server.bodies["/first.mp4"] = media + QByteArray(exit == "no-fit" ? 900000 : 40000, 'x');
+        server.bodies["/second.mp4"] = media + QByteArray(exit == "no-fit" ? 950000 : 60000, 'x');
+        entries.append(QJsonObject{{"id", "first"}, {"url-1080-H264", "first.mp4"},
+            {"sizes", QJsonObject{{"url-1080-H264", server.bodies["/first.mp4"].size()}}},
+            {"pointsOfInterest", QJsonObject{{"0", exit == "metadata-fit" ? QString(180000, 'm') : QString("first")}}}});
+        entries.append(QJsonObject{{"id", "second"}, {"url-1080-H264", "second.mp4"},
+            {"sizes", QJsonObject{{"url-1080-H264", server.bodies["/second.mp4"].size()}}}});
+        server.bodies["/fixture.json"] = QJsonDocument(QJsonObject{{"assets", entries}}).toJson();
+        const auto parsed = SourceResolver::parse(source(server), server.url("/fixture.json"), server.bodies["/fixture.json"]);
+        QString first, second;
+        for (const auto &rep : parsed.representations) {
+            if (rep.assetId == "first") first = rep.key;
+            if (rep.assetId == "second") second = rep.key;
+        }
+        QVERIFY(!first.isEmpty() && !second.isEmpty());
+        if (exit == "partial") {
+            // Admit the new catalogue first: startup reconciliation deliberately
+            // removes partials absent from every durable configured manifest.
+            const auto refresh = queue->refresh(); QTRY_VERIFY(ended(*queue, refresh));
+            server.media = server.bodies["/first.mp4"]; server.modes["/first.mp4"] = "206";
+            const int file = cache.openPartial(first, true); QVERIFY(file >= 0);
+            QVERIFY(cache.reserve(20000)); QVERIFY(cache.append(file, server.media.left(20000)));
+            close(file); cache.releaseReservation();
+            QVERIFY(cache.writeMetadata("partials/" + first + ".json", {{"version", 1}, {"key", first},
+                {"url", server.url("/first.mp4").toString(QUrl::FullyEncoded)},
+                {"effectiveUrl", server.url("/first.mp4").toString(QUrl::FullyEncoded)},
+                {"validator", "\"fixture-one\""}, {"received", 20000}, {"total", server.media.size()}}));
+        }
+        const bool held = exit.startsWith("cancelled") || exit == "policy" || exit == "unconfigured" || exit == "restart";
+        if (held) server.modes["/first.mp4"] = "hold-partial";
+        if (exit == "permanent") server.modes["/first.mp4"] = "missing";
+        if (exit == "transient") server.modes["/first.mp4"] = "retry";
+        std::unique_ptr<ContentSnapshot> reader;
+        if (exit == "protected") { reader = std::make_unique<ContentSnapshot>(paths.cache); QVERIFY(reader->valid()); }
+        const auto cap = cache.usage().bytes + (exit == "partial" ? 0 : server.bodies["/fixture.json"].size()) + 20000;
+        QString automatic;
+        bool stateFault = false;
+        SyncFault fault([&](int fd) {
+            return stateFault && QFile::symLinkTarget("/proc/self/fd/" + QString::number(fd)).startsWith(paths.state + '/');
+        });
+        connect(queue.get(), &TransferQueue::jobAdded, this, [&](const QString &id) {
+            if (queue->job(id).value("kind") == "automatic") automatic = id;
+        });
+        now += 7 * 86400;
+        QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", qint64(cap)}}},
+            {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", true}}}}}}).ok());
+        QTRY_VERIFY(!automatic.isEmpty());
+        if (held) {
+            QTRY_VERIFY_WITH_TIMEOUT(!victim.isEmpty() && queue->job(automatic).value("received").toInteger() > 0, 10000);
+            QCOMPARE(bound, first);
+            if (exit.startsWith("cancelled")) {
+                stateFault = exit == "cancelled-state-fault";
+                QVERIFY(queue->cancel(automatic));
+                if (stateFault) {
+                    QTRY_COMPARE(queue->deferReason(), "StorageError");
+                    QVERIFY(!ended(*queue, automatic)); QVERIFY(!state.rotation().isEmpty());
+                    QCOMPARE(cache.usage().reserved, quint64(0)); stateFault = false;
+                }
+            }
+            else if (exit == "policy") queue->setPolicyReason("Metered");
+            else if (exit == "unconfigured") {
+                QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{}}}).ok());
+            } else {
+                queue.reset();
+                server.modes["/first.mp4"] = "full";
+                queue = std::make_unique<TransferQueue>(config, cache, state, network, probe, QByteArray{}, [&now] { return now; });
+                queue->start();
+            }
+        }
+        if (exit == "policy") {
+            QTRY_COMPARE(queue->status(), "deferred");
+            QCOMPARE(state.rotation().value("replacement").toString(), first);
+            QCOMPARE(cache.usage().reserved, quint64(0));
+            server.modes["/first.mp4"] = "full"; queue->setPolicyReason({});
+            QTRY_VERIFY_WITH_TIMEOUT(cache.contains(first) && state.rotation().isEmpty(), 10000);
+        } else {
+            QTRY_VERIFY_WITH_TIMEOUT(ended(*queue, automatic), 15000);
+            if (exit == "transient") {
+                QCOMPARE(state.rotation().value("replacement").toString(), first);
+                QCOMPARE(state.lastRotation(), qint64(100000));
+                QVERIFY(!state.eligible(first)); QCOMPARE(cache.usage().reserved, quint64(0));
+                server.modes["/first.mp4"] = "full"; now += 121; queue->evaluate();
+                QTRY_VERIFY_WITH_TIMEOUT(cache.contains(first) && state.rotation().isEmpty(), 10000);
+            } else {
+                QVERIFY2(state.rotation().isEmpty(), qPrintable(exit));
+                if (exit == "no-fit" || exit == "protected") {
+                    QVERIFY(victim.isEmpty()); QCOMPARE(cache.entries().size(), 2);
+                    QCOMPARE(state.lastRotation(), qint64(100000));
+                } else {
+                    QVERIFY(!victim.isEmpty()); QVERIFY(state.retired(victim)); QVERIFY(!cache.contains(victim));
+                    if (exit == "metadata-fit" || exit == "permanent") QVERIFY(cache.contains(second));
+                    else if (!exit.startsWith("cancelled") && exit != "unconfigured") QVERIFY(cache.contains(first));
+                    if (exit == "metadata-fit") QCOMPARE(bound, second);
+                    if (exit == "permanent") QVERIFY(!state.eligible(first));
+                    if (exit == "partial") {
+                        bool resumed = false;
+                        for (const auto &request : server.requests)
+                            if (request.startsWith("GET /first.mp4 ") && request.contains("Range: bytes=20000-")) resumed = true;
+                        QVERIFY(resumed);
+                    }
+                }
+            }
+        }
+        QCOMPARE(cache.usage().reserved, quint64(0));
+        QVERIFY(cache.usage().safe); QVERIFY(cache.usage().bytes <= quint64(cap));
+        reader.reset();
+        // No live operation owns the queue after any exit. A subsequent request
+        // must complete, even when its result is NoRemoteSources/CacheFull.
+        const auto next = queue->acquire({}, 1); QVERIFY(!next.isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(ended(*queue, next), 10000);
+        ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid()); QVERIFY(!snapshot.entries().isEmpty());
     }
     void queueRotationCadenceAndPins()
     {

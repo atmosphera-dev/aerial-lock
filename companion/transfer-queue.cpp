@@ -123,6 +123,9 @@ void TransferQueue::evaluate()
     const auto wakeup = qScopeGuard([this] { armCheck(); emit changed(); });
     if (!transfer && !cache.valid() && !cache.recover()) { publishState("error", "StorageError"); return; }
     if (!state.valid() || !state.initializeRotation()) { publishState("error", "StorageError"); return; }
+    if (!transfer && state.permanentlyFailed(state.rotation().value("replacement").toString()) && !abandonRotation()) {
+        publishState("error", "StorageError"); return;
+    }
     const auto settings = config.document().effective;
     const auto limits = settings.value("cache").toObject();
     cache.configure(limits.value("maxBytes").toInteger(), limits.value("minFreeBytes").toInteger());
@@ -207,7 +210,7 @@ void TransferQueue::retryPersistence()
                 // not recursively try to create a failure receipt in a full
                 // state file; release this in-memory owner instead.
                 persistenceTimer.stop();
-                active.clear(); ++decision;
+                releaseActive();
                 publishState("error", "StorageError"); armCheck();
                 return;
             }
@@ -230,6 +233,13 @@ void TransferQueue::publishState(const QString &value, const QString &defer)
     phase = value; reason = defer; emit changed();
 }
 
+void TransferQueue::releaseActive()
+{
+    const auto id = active;
+    active.clear(); current = {}; ++decision;
+    if (!id.isEmpty()) emit jobChanged(id);
+}
+
 void TransferQueue::pump()
 {
     if (transfer || manifest || sizer) return;
@@ -237,7 +247,7 @@ void TransferQueue::pump()
     if (!active.isEmpty()) {
         if (!invalidated) return;
         current["state"] = "queued";
-        save([this] { pending.prepend(active); active.clear(); schedule(); });
+        save([this] { pending.prepend(active); releaseActive(); schedule(); });
         return;
     }
     invalidated = false;
@@ -248,7 +258,7 @@ void TransferQueue::pump()
         return;
     }
     active = pending.takeFirst(); ++decision; current = state.jobs().value(active).toObject();
-    if (terminal(current)) { active.clear(); schedule(); return; }
+    if (current.isEmpty() || terminal(current)) { releaseActive(); schedule(); return; }
     current["state"] = "planning"; current["received"] = 0; current["totalKnown"] = false;
     save([this] { plan(); });
 }
@@ -363,15 +373,24 @@ void TransferQueue::sizeCandidates()
     sizer->start(candidates);
 }
 
-bool TransferQueue::finalizeRotation()
+QString TransferQueue::finalizeRotation()
+{
+    const auto rotation = state.rotation();
+    if (rotation.isEmpty()) return {};
+    const auto victim = rotation.value("victim").toString(), replacement = rotation.value("replacement").toString();
+    if (!cache.contains(replacement)) return {};
+    if (cache.contains(victim) && !cache.evict(victim)) return cache.valid() ? "PlaybackProtected" : "StorageError";
+    if (!state.finishRotation()) return "StorageError";
+    emit contentChanged(); return {};
+}
+
+bool TransferQueue::abandonRotation()
 {
     const auto rotation = state.rotation();
     if (rotation.isEmpty()) return true;
-    const auto victim = rotation.value("victim").toString(), replacement = rotation.value("replacement").toString();
-    if (!cache.contains(replacement)) return true;
-    if (cache.contains(victim) && !cache.evict(victim)) return false;
-    if (!state.finishRotation()) return false;
-    emit contentChanged(); return true;
+    // Retire an already-removed victim and release its binding in one durable
+    // state update. Failed pre-eviction attempts must not consume the cadence.
+    return cache.contains(rotation.value("victim").toString()) ? state.clearRotation() : state.finishRotation();
 }
 
 int TransferQueue::readyCount() const
@@ -395,9 +414,8 @@ void TransferQueue::nextTransfer()
     if (invalidated) { schedule(); return; }
     if (current.value("kind") == "automatic" && !automaticReason().isEmpty()) { finish(automaticReason()); return; }
     const auto settings = config.document().effective;
-    if (!finalizeRotation()) { finish("PlaybackProtected"); return; }
-    auto plan = AcquisitionPlanner::evaluate(settings, catalogue, cache.entries(), state, clock(),
-        current.value("kind") == "manual", ids(current), topics);
+    const auto rotationError = finalizeRotation();
+    if (!rotationError.isEmpty()) { finish(rotationError); return; }
     const auto limit = current.value("limit").toInt();
     auto pendingRotation = state.rotation();
     if (!pendingRotation.isEmpty()) {
@@ -405,20 +423,23 @@ void TransferQueue::nextTransfer()
         const bool configured = std::any_of(eligible.begin(), eligible.end(), [&](const Representation &rep) {
             return rep.key == pendingRotation.value("replacement").toString();
         });
-        if (!configured) {
-            if (!cache.contains(pendingRotation.value("victim").toString())) state.rotated(pendingRotation.value("victim").toString());
-            if (!state.clearRotation()) { finish("StorageError"); return; }
+        if (!configured || state.permanentlyFailed(pendingRotation.value("replacement").toString())) {
+            if (!abandonRotation()) { finish("StorageError"); return; }
             pendingRotation = {};
         }
     }
+    // Releasing a binding may retire a removed victim. Plan only after those
+    // durable facts are updated, so the victim is not immediately re-fetched.
+    auto plan = AcquisitionPlanner::evaluate(settings, catalogue, cache.entries(), state, clock(),
+        current.value("kind") == "manual", ids(current), topics);
     plan.candidates.erase(std::remove_if(plan.candidates.begin(), plan.candidates.end(), [&](const Representation &rep) {
         return attempted.contains(rep.key) || (limit > 0 && available.value(rep.sourceId) >= limit)
             || (!pendingRotation.isEmpty() && rep.key != pendingRotation.value("replacement").toString());
     }), plan.candidates.end());
     if (plan.candidates.isEmpty()) { finish(readyCount() ? QString() : plan.deferReason.isEmpty() ? "NoEligibleAssets" : plan.deferReason); return; }
     const bool automatic = current.value("kind") == "automatic";
-    // Select the smallest fitting eligible candidate, not the first catalogue
-    // row. Publication overhead is computed by the cache from its actual index.
+    // Preserve planner priority while using the cache's complete acquisition
+    // budget, including partials and publication metadata.
     auto candidate = std::find_if(plan.candidates.begin(), plan.candidates.end(), [this](const Representation &rep) {
         return rep.bytes < 0 || cache.canAcquire(rep);
     });
@@ -439,17 +460,18 @@ void TransferQueue::nextTransfer()
     QString victim = pendingRotation.value("victim").toString();
     if (victim.isEmpty() && automatic) victim = plan.rotationVictim;
     if (candidate == plan.candidates.end() && !victim.isEmpty() && cache.entries().size() > 1) {
-        // Bind one replacement before reclaiming its victim. Topic/retirement
-        // priority can put a larger non-fitting item first; do not journal that
-        // item and then fetch a different fitting one after the eviction.
-        candidate = std::min_element(plan.candidates.begin(), plan.candidates.end(), [](const Representation &a, const Representation &b) {
-            if ((a.bytes >= 0) != (b.bytes >= 0)) return a.bytes >= 0;
-            return a.bytes >= 0 && a.bytes < b.bytes;
+        candidate = std::find_if(plan.candidates.begin(), plan.candidates.end(), [&](const Representation &rep) {
+            return cache.canAcquire(rep, victim);
         });
-        if (!state.beginRotation(victim, candidate->key)) { finish("StorageError"); return; }
-        if (!cache.evict(victim)) { finish("PlaybackProtected"); return; }
-        emit contentChanged();
-        if (candidate->bytes >= 0 && !cache.canAcquire(*candidate)) { finish("CacheFull"); return; }
+        if (candidate != plan.candidates.end()) {
+            if (!state.beginRotation(victim, candidate->key)) { finish("StorageError"); return; }
+            if (!cache.evict(victim)) {
+                if (!abandonRotation()) { finish("StorageError"); return; }
+                finish(cache.valid() ? "PlaybackProtected" : "StorageError"); return;
+            }
+            emit contentChanged();
+            if (!cache.canAcquire(*candidate)) { finish("CacheFull"); return; }
+        }
     }
     if (candidate == plan.candidates.end()) { finish("CacheFull"); return; }
     const auto rep = *candidate;
@@ -480,7 +502,10 @@ void TransferQueue::startTransfer(const Representation &rep)
         if (failure.isEmpty()) {
             state.clearFailure(rep.key); state.reintroduced(rep.key); ++available[rep.sourceId]; emit contentChanged();
         } else if (failure != "CacheFull" && failure != "Cancelled") {
-            state.failed(rep.key, failure, http.status, http.headers.value("retry-after"));
+            if (!state.failed(rep.key, failure, http.status, http.headers.value("retry-after"))) { finish("StorageError"); return; }
+            if (state.permanentlyFailed(rep.key) && state.rotation().value("replacement") == rep.key && !abandonRotation()) {
+                finish("StorageError"); return;
+            }
             auto errors = current.value("errors").toObject(); errors[rep.sourceId] = failure; current["errors"] = errors;
         }
         save([this, failure] {
@@ -497,12 +522,20 @@ void TransferQueue::startTransfer(const Representation &rep)
 
 void TransferQueue::finish(const QString &error)
 {
+    if ((error == "Cancelled" || error == "CacheFull" || error == "InvalidConfig" || error == "NoRemoteSources")
+        && !abandonRotation()) {
+        // Cleanup precedes a terminal receipt. Until the binding is durable,
+        // observers see recovering rather than a completed job holding state.
+        afterPersistence = [this, error] { finish(error); };
+        publishState("error", "StorageError"); persistenceTimer.start(1000);
+        return;
+    }
     const bool deferred = error == "Paused" || error == "NoAllowedResolution" || error == policyReason || error == "PlaybackProtected" || error == "Backoff";
     current["ready"] = readyCount(); current["errorCode"] = error;
     current["state"] = error.isEmpty() ? "succeeded" : error == "Cancelled" ? "cancelled" : deferred ? "deferred" : "failed";
     current["finishedAt"] = clock();
     save([this, error, deferred] {
-        active.clear(); ++decision;
+        releaseActive();
         armCheck();
         publishState(error.isEmpty() ? "idle" : deferred ? "deferred" : "error", error);
         schedule();

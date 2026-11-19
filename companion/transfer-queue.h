@@ -55,7 +55,9 @@ private:
     void publishState(const QString &phase, const QString &reason = {});
     QList<Representation> selected() const;
     int readyCount() const;
-    bool finalizeRotation();
+    QString finalizeRotation();
+    bool abandonRotation();
+    void releaseActive();
     ConfigRepository &config;
     CacheStore &cache;
     PlannerState &state;

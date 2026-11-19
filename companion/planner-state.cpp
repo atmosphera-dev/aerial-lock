@@ -66,6 +66,10 @@ qint64 PlannerState::nextAttempt(const QString &key) const
 }
 
 bool PlannerState::eligible(const QString &key) const { return ready && contentKey(key) && nextAttempt(key) <= clock(); }
+bool PlannerState::permanentlyFailed(const QString &key) const
+{
+    return document.value("retry").toObject().value(key).toObject().value("permanent").toBool();
+}
 
 bool PlannerState::failed(const QString &key, const QString &error, int httpStatus, const QByteArray &retryAfter)
 {

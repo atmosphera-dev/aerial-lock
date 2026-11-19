@@ -24,7 +24,7 @@ public:
     bool reserve(quint64 remaining);
     void releaseReservation() { remaining = 0; }
     bool canWrite(quint64 bytes, bool useReservation = false) const;
-    bool canAcquire(const Representation &representation) const;
+    bool canAcquire(const Representation &representation, const QString &evict = {}) const;
     bool writeMetadata(const QString &relative, const QJsonObject &object);
     QJsonObject metadata(const QString &relative) const;
     bool contains(const QString &key) const;
@@ -40,6 +40,7 @@ public:
     bool persistIndex(bool reclamation = false);
     const OwnedDirectory &files() const { return directory; }
 private:
+    bool canWrite(quint64 bytes, bool useReservation, const CacheUsage &usage, quint64 available) const;
     bool removeFile(const QString &relative);
     bool recoverTransaction();
     bool prepareTransaction(const QString &operation, const QJsonObject &entry, bool reclamation = false);

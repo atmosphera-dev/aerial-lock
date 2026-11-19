@@ -19,6 +19,14 @@ bool matches(const struct stat &st, const QJsonObject &entry)
         && st.st_mtim.tv_sec == identity.value("seconds").toInteger(-1)
         && st.st_mtim.tv_nsec == identity.value("nanoseconds").toInteger(-1);
 }
+QJsonObject mediaEntry(const Representation &rep, const QJsonObject &probe, qint64 bytes,
+                      const QJsonObject &identity, qint64 now)
+{
+    return {{"key", rep.key}, {"sourceId", rep.sourceId}, {"assetId", rep.assetId},
+        {"path", "objects/" + rep.key + ".media"}, {"bytes", bytes}, {"height", rep.height}, {"variant", rep.variant},
+        {"metadata", rep.metadata}, {"probe", probe}, {"completedAt", now}, {"identity", identity}};
+}
+QByteArray encoded(const QJsonObject &object) { return QJsonDocument(object).toJson(QJsonDocument::Compact); }
 }
 
 CacheStore::CacheStore(const QString &root, std::optional<quint64> initialMaximum,
@@ -170,12 +178,15 @@ CacheUsage CacheStore::usage() const
 
 bool CacheStore::canWrite(quint64 bytes, bool useReservation) const
 {
+    return canWrite(bytes, useReservation, usage(), directory.available());
+}
+
+bool CacheStore::canWrite(quint64 bytes, bool useReservation, const CacheUsage &used, quint64 available) const
+{
     if (!owned || !cap || !pending.isEmpty()) return false;
-    const auto used = usage();
     const auto promised = useReservation ? std::max(remaining, bytes) : remaining;
     if (!used.safe || used.bytes > cap || promised > cap - used.bytes) return false;
     if (!useReservation && bytes > cap - used.bytes - promised) return false;
-    const auto available = directory.available();
     return available >= freeReserve && bytes <= available - freeReserve;
 }
 
@@ -188,20 +199,77 @@ bool CacheStore::reserve(quint64 bytes)
     return true;
 }
 
-bool CacheStore::canAcquire(const Representation &rep) const
+bool CacheStore::canAcquire(const Representation &rep, const QString &evict) const
 {
-    if (rep.bytes < 0) return canWrite(1);
+    // Unknown-length downloads can use ordinary streamed enforcement, but are
+    // not evidence that deleting a verified clip will make a replacement fit.
+    if (rep.bytes < 0) return evict.isEmpty() && canWrite(1);
+    auto used = usage();
+    auto available = directory.available();
+    auto inventory = completed;
+    if (!evict.isEmpty()) {
+        if (!owned || !used.safe || !pending.isEmpty() || rep.key == evict) return false;
+        qsizetype victim = -1;
+        for (qsizetype i = 0; i < inventory.size(); ++i)
+            if (inventory[i].toObject().value("key") == evict) victim = i;
+        if (victim < 0) return false;
+        const auto entry = inventory[victim].toObject();
+        const auto usable = [this](const QJsonValue &value) {
+            return !configuredSources || configuredSources->contains(value.toObject().value("sourceId").toString());
+        };
+        if (usable(entry) && std::count_if(inventory.begin(), inventory.end(), usable) <= 1) return false;
+        struct stat file{};
+        if (!directory.identity(entry.value("path").toString(), file) || !matches(file, entry)) return false;
+        quint64 removed = file.st_size;
+        inventory.removeAt(victim);
+        // prune replaces the commit/pointer, creates one generation and removes
+        // all old generations under its exclusive playback lock. Project those
+        // exact bytes, retaining every partial/manifest/unknown managed file.
+        for (const auto &path : directory.files()) {
+            const bool generation = path.startsWith("generations/") && contentKey(path.mid(12, 64))
+                && path == "generations/" + path.mid(12, 64) + ".json";
+            if (!generation && path != "committed.json" && path != "current.json") continue;
+            if (!directory.identity(path, file) || file.st_size < 0 || quint64(file.st_size) > used.bytes - std::min(used.bytes, removed)) return false;
+            removed += file.st_size;
+        }
+        const QJsonObject index{{"version", 1}, {"entries", inventory}};
+        const auto bytes = encoded(index);
+        const auto hash = contentDigest(bytes);
+        const quint64 added = bytes.size() + encoded({{"version", 1}, {"generation", hash}, {"index", index}}).size()
+            + encoded({{"version", 1}, {"generation", hash}}).size();
+        if (removed > used.bytes || added > std::numeric_limits<quint64>::max() - (used.bytes - removed)) return false;
+        used.bytes = used.bytes - removed + added;
+        // Disk-free projection never wraps, even on a saturated filesystem API.
+        available = available > std::numeric_limits<quint64>::max() - removed ? std::numeric_limits<quint64>::max() : available + removed;
+        if (available < added) return false;
+        available -= added;
+    }
     struct stat partial{};
-    const auto received = directory.identity("partials/" + rep.key + ".part", partial) ? quint64(partial.st_size) : 0;
-    // Include the next immutable generation plus the bounded probe response,
-    // pointer and both copies of atomic resume metadata. These are publication
-    // headroom, not a second content quota. Received partial bytes count once.
-    const auto index = QJsonDocument(QJsonObject{{"version", 1}, {"entries", completed}}).toJson(QJsonDocument::Compact);
-    const auto metadata = QJsonDocument(rep.metadata).toJson(QJsonDocument::Compact);
-    const quint64 overhead = 2 * index.size() + metadata.size() + 8192
-        + 2 * (rep.url.toEncoded().size() + rep.sourceId.toUtf8().size() + rep.assetId.toUtf8().size() + 2048);
+    const auto saved = metadata("partials/" + rep.key + ".json");
+    quint64 received = 0;
+    const auto checkpoint = saved.value("received").toInteger(-1);
+    if (directory.identity("partials/" + rep.key + ".part", partial) && checkpoint >= 0 && checkpoint <= partial.st_size
+        && saved.value("key") == rep.key && saved.value("url") == rep.url.toString(QUrl::FullyEncoded)
+        && saved.value("total").toInteger(-1) == rep.bytes && !saved.value("validator").toString().isEmpty()
+        && SourceResolver::remoteUrl(QUrl(saved.value("effectiveUrl").toString()))) received = quint64(checkpoint);
+    // Use the same entry encoding as publication, with bounded probe/identity
+    // headroom. Metadata exists in the transaction, generation and new commit,
+    // not just once. Existing resume files remain counted in actual usage.
+    const auto maximum = std::numeric_limits<qint64>::max();
+    const auto entry = mediaEntry(rep, {{"initialFrameDecoded", true}, {"budget", QString(4096, 'x')}}, rep.bytes,
+        {{"inode", maximum}, {"seconds", maximum}, {"nanoseconds", maximum}}, maximum);
+    inventory.append(entry);
+    const QJsonObject index{{"version", 1}, {"entries", inventory}};
+    const auto bytes = encoded(index);
+    if (bytes.size() > 8 * 1024 * 1024) return false;
+    const auto hash = contentDigest(bytes);
+    const quint64 overhead = encoded({{"version", 1}, {"operation", "publish"}, {"entry", entry}}).size()
+        + bytes.size() + encoded({{"version", 1}, {"generation", hash}, {"index", index}}).size()
+        + encoded({{"version", 1}, {"generation", hash}}).size()
+        + 2 * (2 * rep.url.toEncoded().size() + 2048);
     const auto remainingBytes = quint64(rep.bytes) - std::min(quint64(rep.bytes), received);
-    return remainingBytes <= std::numeric_limits<quint64>::max() - overhead && canWrite(remainingBytes + overhead);
+    return remainingBytes <= std::numeric_limits<quint64>::max() - overhead
+        && canWrite(remainingBytes + overhead, false, used, available);
 }
 
 bool CacheStore::writeMetadata(const QString &relative, const QJsonObject &object)
@@ -309,9 +377,7 @@ bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, q
     if (!directory.identity(part, st) || st.st_size <= 0) return false;
     QJsonObject identity{{"inode", qint64(st.st_ino)},
         {"seconds", qint64(st.st_mtim.tv_sec)}, {"nanoseconds", qint64(st.st_mtim.tv_nsec)}};
-    const QJsonObject entry{{"key", rep.key}, {"sourceId", rep.sourceId}, {"assetId", rep.assetId},
-        {"path", object}, {"bytes", qint64(st.st_size)}, {"height", rep.height}, {"variant", rep.variant},
-        {"metadata", rep.metadata}, {"probe", probe}, {"completedAt", now}, {"identity", identity}};
+    const auto entry = mediaEntry(rep, probe, st.st_size, identity, now);
     if (!prepareTransaction("publish", entry)) return false;
     if (!directory.rename(part, object)) {
         if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;

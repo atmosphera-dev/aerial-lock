@@ -176,15 +176,38 @@ target_link_options(companion-disk-probe PRIVATE "-Wl,--wrap=write")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/native/local-content.h" -o "${CMAKE_CURRENT_BINARY_DIR}/local-content.moc"
     DEPENDS "${AERIAL_LOCK_SOURCE}/native/local-content.h")
-foreach(stem IN ITEMS http-operation local-probe transfer manifest-store transfer-queue policy-monitor)
+foreach(stem IN ITEMS http-operation local-probe transfer manifest-store transfer-queue policy-monitor service job-object)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
         COMMAND Qt6::moc "${AERIAL_LOCK_SOURCE}/companion/${stem}.h" -o "${CMAKE_CURRENT_BINARY_DIR}/${stem}.moc"
         DEPENDS "${AERIAL_LOCK_SOURCE}/companion/${stem}.h")
+endforeach()
+foreach(kind IN ITEMS companion job)
+    if(kind STREQUAL "companion")
+        set(api Aerial1)
+        set(owner CompanionService)
+        set(header service)
+    else()
+        set(api Aerial1.Job1)
+        set(owner JobObject)
+        set(header job-object)
+    endif()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${kind}_adaptor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/${kind}_adaptor.h"
+        COMMAND "${QDBUSXML2CPP}" -m -a "${CMAKE_CURRENT_BINARY_DIR}/${kind}_adaptor" -l "Aerial::${owner}"
+            -i "companion/${header}.h" "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.${api}.xml"
+        DEPENDS "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.${api}.xml")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_${kind}_adaptor.cpp"
+        COMMAND Qt6::moc "${CMAKE_CURRENT_BINARY_DIR}/${kind}_adaptor.h" -o "${CMAKE_CURRENT_BINARY_DIR}/moc_${kind}_adaptor.cpp"
+        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${kind}_adaptor.h")
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/moc_${kind}_adaptor.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
 endforeach()
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc"
     COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-transfer-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc"
     DEPENDS companion-transfer-probe.cpp)
 add_executable(companion-transfer-probe companion-transfer-probe.cpp
+    "${AERIAL_LOCK_SOURCE}/companion/service.cpp" "${CMAKE_CURRENT_BINARY_DIR}/service.moc"
+    "${AERIAL_LOCK_SOURCE}/companion/job-object.cpp" "${CMAKE_CURRENT_BINARY_DIR}/job-object.moc"
+    "${CMAKE_CURRENT_BINARY_DIR}/companion_adaptor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_adaptor.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/job_adaptor.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_job_adaptor.cpp"
     "${AERIAL_LOCK_SOURCE}/common/owned-directory.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
     "${AERIAL_LOCK_SOURCE}/companion/cache-store.cpp" "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp"
     "${AERIAL_LOCK_SOURCE}/companion/http-operation.cpp" "${AERIAL_LOCK_SOURCE}/companion/local-probe.cpp"
@@ -197,7 +220,7 @@ add_executable(companion-transfer-probe companion-transfer-probe.cpp
     "${AERIAL_LOCK_SOURCE}/common/config-document.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/local-probe.moc" "${CMAKE_CURRENT_BINARY_DIR}/transfer.moc"
     "${CMAKE_CURRENT_BINARY_DIR}/companion-transfer-probe.moc")
-target_include_directories(companion-transfer-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(companion-transfer-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${AERIAL_LOCK_SOURCE}")
 target_compile_definitions(companion-transfer-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-transfer-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Network Qt6::Test PkgConfig::ARCHIVE)
 # Discover every Qt slot, but give it one suite owner. Running the unfiltered

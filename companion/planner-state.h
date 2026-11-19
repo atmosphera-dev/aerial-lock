@@ -18,6 +18,7 @@ public:
     static constexpr qint64 maximumBytes = 8 * 1024 * 1024;
     bool capacityExceeded() const { return oversized; }
     bool eligible(const QString &key) const;
+    bool permanentlyFailed(const QString &key) const;
     qint64 nextAttempt(const QString &key) const;
     bool failed(const QString &key, const QString &error, int httpStatus = 0,
                 const QByteArray &retryAfter = {});
