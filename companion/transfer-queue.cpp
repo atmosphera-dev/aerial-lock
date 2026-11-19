@@ -202,6 +202,15 @@ void TransferQueue::retryPersistence()
             // The last durable job reserved this exact terminal escape path.
             current = state.jobs().value(active).toObject();
             afterPersistence = {};
+            if (current.isEmpty()) {
+                // No accepted record means no reserved terminal headroom. Do
+                // not recursively try to create a failure receipt in a full
+                // state file; release this in-memory owner instead.
+                persistenceTimer.stop();
+                active.clear(); ++decision;
+                publishState("error", "StorageError"); armCheck();
+                return;
+            }
             finish("StorageError");
             return;
         }
@@ -430,11 +439,17 @@ void TransferQueue::nextTransfer()
     QString victim = pendingRotation.value("victim").toString();
     if (victim.isEmpty() && automatic) victim = plan.rotationVictim;
     if (candidate == plan.candidates.end() && !victim.isEmpty() && cache.entries().size() > 1) {
-        const auto &rep = plan.candidates.first();
-        if (!state.beginRotation(victim, rep.key)) { finish("StorageError"); return; }
+        // Bind one replacement before reclaiming its victim. Topic/retirement
+        // priority can put a larger non-fitting item first; do not journal that
+        // item and then fetch a different fitting one after the eviction.
+        candidate = std::min_element(plan.candidates.begin(), plan.candidates.end(), [](const Representation &a, const Representation &b) {
+            if ((a.bytes >= 0) != (b.bytes >= 0)) return a.bytes >= 0;
+            return a.bytes >= 0 && a.bytes < b.bytes;
+        });
+        if (!state.beginRotation(victim, candidate->key)) { finish("StorageError"); return; }
         if (!cache.evict(victim)) { finish("PlaybackProtected"); return; }
         emit contentChanged();
-        candidate = std::find_if(plan.candidates.begin(), plan.candidates.end(), [this](const Representation &item) { return item.bytes < 0 || cache.canAcquire(item); });
+        if (candidate->bytes >= 0 && !cache.canAcquire(*candidate)) { finish("CacheFull"); return; }
     }
     if (candidate == plan.candidates.end()) { finish("CacheFull"); return; }
     const auto rep = *candidate;

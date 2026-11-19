@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix="idle-config-") as directory:
         env = dict(os.environ, XDG_CONFIG_HOME=str(root / "absent"), AERIAL_LOCK_SHELL=str(bundle),
                    QT_FORCE_STDERR_LOGGING="1", LC_ALL="C.UTF-8")
         result = subprocess.run([str(binary), "--print-config"], env=env, capture_output=True, text=True, timeout=10)
-        assert (result.returncode == 0) == valid, (name, result.stdout, result.stderr)
+        assert result.returncode == (0 if valid else 1), (name, result.returncode, result.stdout, result.stderr)
         if valid:
             assert json.loads(result.stdout) == d["idle"], (name, result.stdout)
         if name == "bad-content":

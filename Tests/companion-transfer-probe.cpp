@@ -474,6 +474,8 @@ private slots:
         QSignalSpy done(&next, &Transfer::finished); next.start(); QTRY_COMPARE(done.size(), 1);
         QVERIFY2(next.error().isEmpty(), qPrintable(next.error()));
         QVERIFY(!server.requests.first().contains("Range:"));
+        QVERIFY(server.requests.last().startsWith("GET /same "));
+        QVERIFY(server.requests.last().contains("\r\nRange: bytes=" + QByteArray::number(media.size() / 2) + "-\r\n"));
         QVERIFY(server.requests.last().contains("If-Range: \"fixture-one\""));
         QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
     }
@@ -501,23 +503,36 @@ private slots:
         QCOMPARE(server.requests.size(), 3);
         QVERIFY(!server.requests.last().contains("If-None-Match:"));
     }
-    void sizingPassDeadlineAndConcurrency()
+    void sizingPassConcurrency()
     {
         HttpFixture server; QNetworkAccessManager network;
-        server.bodies["/fast"] = QByteArray(1234, 'x');
+        server.mode = "hold-all";
         QList<Representation> items;
         for (int i = 0; i < 100; ++i) {
-            auto value = rep(server.url(i ? "/slow" + QString::number(i) : "/fast")); value.bytes = -1;
-            if (i) server.modes[value.url.path().toUtf8()] = "hold-all";
+            auto value = rep(server.url("/held" + QString::number(i))); value.bytes = -1;
+            items.append(value);
+        }
+        RepresentationSizer sizer(network, {}, nullptr, 30000, 3);
+        QSignalSpy done(&sizer, &RepresentationSizer::finished); sizer.start(items);
+        QTRY_COMPARE(server.requests.size(), 3);
+        QTest::qWait(100);
+        QCOMPARE(server.requests.size(), 3); QCOMPARE(done.size(), 0);
+        sizer.cancel(); QCOMPARE(done.size(), 1);
+    }
+    void sizingPassDeadline()
+    {
+        HttpFixture server; server.mode = "hold-all"; QNetworkAccessManager network;
+        QList<Representation> items;
+        for (int i = 0; i < 100; ++i) {
+            auto value = rep(server.url("/stalled" + QString::number(i))); value.bytes = -1;
             items.append(value);
         }
         RepresentationSizer sizer(network, {}, nullptr, 200, 3);
         QSignalSpy done(&sizer, &RepresentationSizer::finished); sizer.start(items);
-        QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 2000);
-        QCOMPARE(sizer.result().size(), 100); QCOMPARE(sizer.result()[0].bytes, 1234);
-        QCOMPARE(server.requests.size(), 4); // One fast completion plus three pending.
+        QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 5000);
         const auto result = sizer.result();
-        QCOMPARE(std::count_if(result.begin(), result.end(), [](const Representation &value) { return value.bytes >= 0; }), 1);
+        QCOMPARE(result.size(), 100);
+        QCOMPARE(std::count_if(result.begin(), result.end(), [](const Representation &value) { return value.bytes >= 0; }), 0);
     }
     void queueRefreshAfterPermanentUrlFailure()
     {
@@ -944,6 +959,34 @@ private slots:
         QCOMPARE(reopened.jobs().value(id).toObject().value("state"), "failed");
         QCOMPARE(reopened.jobs().value(id).toObject().value("errorCode"), "StorageError");
     }
+    void queueMissingDurableRecordStopsCapacityRetry()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.modes["/fixture.json"] = "hold-all";
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        const qint64 now = 1000000;
+        PlannerState state(paths.state, [=] { return now; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [=] { return now; }); queue.start();
+        const auto id = queue.acquire(); QVERIFY(!id.isEmpty());
+        QTRY_COMPARE(server.requests.size(), 1);
+        // Simulate loss of this accepted record through the state's real
+        // receipt-expiry boundary, without reaching into queue internals.
+        QVERIFY(state.saveJob(id, {{"finishedAt", 1}}));
+        const auto paddingKey = contentDigest("padding");
+        QJsonObject padding{{"finishedAt", now}, {"padding", ""}};
+        QVERIFY(state.saveJob(paddingKey, padding));
+        QVERIFY(!state.jobs().contains(id));
+        QFile stored(paths.state + "/planner-v1.json"); QVERIFY(stored.open(QIODevice::ReadOnly));
+        const auto size = stored.size(); stored.close();
+        padding["padding"] = QString(PlannerState::maximumBytes - size, 'x');
+        QVERIFY(state.saveJob(paddingKey, padding));
+        QVERIFY(queue.cancel(id));
+        QCOMPARE(queue.status(), "error"); QCOMPARE(queue.deferReason(), "StorageError");
+        QVERIFY(!queue.jobs().contains(id));
+        QTest::qWait(50);
+        QCOMPARE(server.requests.size(), 1);
+    }
     void policySampleFailurePreservesObservation()
     {
         PolicyPeer peer;
@@ -997,6 +1040,8 @@ private slots:
         peer.data[secondDevice]["Metered"] = uint(2); peer.hold.clear();
         peer.bus.send(peer.held.takeFirst().createReply(QVariantList{peer.data[secondDevice]}));
         QTRY_VERIFY(monitor.ready());
+        QTRY_COMPARE(monitor.observations().value("metering"), "unmetered");
+        QTRY_VERIFY(monitor.deferReason(config.document().effective).isEmpty());
         QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"automatic", QJsonObject{
             {"connectionTypes", QJsonObject{{"wifi", false}}}}}}}}).ok());
         QCOMPARE(monitor.deferReason(config.document().effective), "ConnectionTypeDisallowed");
@@ -1372,6 +1417,46 @@ private slots:
         QVERIFY(server.requests.last().contains("Range: bytes=" + QByteArray::number(media.size() / 2) + '-'));
         QCOMPARE(cache.files().read("objects/" + key + ".media", 1000000), media);
     }
+    void queueRotationRecordsFetchedReplacement()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"old-one", "old-two"});
+        server.bodies["/old-one.mp4"] = media + QByteArray(200000, 'x');
+        server.bodies["/old-two.mp4"] = media + QByteArray(200000, 'x');
+        const auto paths = queueConfig(directory.path(), {source(server)});
+        ConfigRepository config(paths); QNetworkAccessManager network;
+        qint64 now = 100000;
+        PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
+        QString recorded;
+        CacheStore cache(paths.cache, std::nullopt, [&](const QString &step) {
+            if (step == "removed" && recorded.isEmpty()) recorded = state.rotation().value("replacement").toString();
+        });
+        TransferQueue queue(config, cache, state, network, probe, {}, [&now] { return now; }); queue.start();
+        const auto seed = queue.acquire(); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, seed), 10000);
+        QCOMPARE(cache.entries().size(), 2);
+        server.bodies["/large.mp4"] = media + QByteArray(600000, 'x');
+        server.bodies["/small.mp4"] = media + QByteArray(40000, 'x');
+        server.bodies["/fixture.json"] = QJsonDocument(QJsonObject{{"assets", QJsonArray{
+            QJsonObject{{"id", "large"}, {"scene", "featured"}, {"url-1080-H264", "large.mp4"}},
+            QJsonObject{{"id", "small"}, {"url-1080-H264", "small.mp4"}}}}}).toJson();
+        const auto catalogue = SourceResolver::parse(source(server), server.url("/fixture.json"), server.bodies["/fixture.json"]).representations;
+        QString smallKey;
+        for (const auto &rep : catalogue) if (rep.assetId == "small") smallKey = rep.key;
+        QVERIFY(!smallKey.isEmpty());
+        const auto cap = cache.usage().bytes + 20000;
+        queue.ensure({"featured"}); // The too-large candidate has higher topic priority.
+        now += 7 * 86400;
+        QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", qint64(cap)}}},
+            {"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", true}}}}}}).ok());
+        QTRY_VERIFY_WITH_TIMEOUT(!recorded.isEmpty(), 10000);
+        QCOMPARE(recorded, smallKey);
+        QTRY_VERIFY_WITH_TIMEOUT(cache.contains(smallKey), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(state.rotation().isEmpty(), 10000);
+        ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid()); QCOMPARE(snapshot.entries().size(), 2);
+        const auto next = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, next), 10000);
+        QCOMPARE(queue.job(next).value("state"), "succeeded");
+        for (const auto &request : server.requests) QVERIFY(!request.startsWith("GET /large.mp4 "));
+    }
     void queueRotationCadenceAndPins()
     {
         QTemporaryDir directory; HttpFixture server; server.media = media;
@@ -1423,6 +1508,15 @@ int main(int argc, char **argv)
                 if (!manager.isEmpty()) peer.update(peer.manager, manager);
                 if (patch.contains("Type")) peer.update(peer.primary, {{"Type", patch.value("Type").toString()}});
                 if (patch.contains("DeviceMetered")) peer.update(peer.device, {{"Metered", uint(patch.value("DeviceMetered").toInt())}});
+                if (patch.contains("DefaultVpn")) {
+                    auto active = QList<QDBusObjectPath>{QDBusObjectPath(peer.primary)};
+                    if (patch.value("DefaultVpn").toBool()) {
+                        peer.update(peer.vpn, {{"Type", "vpn"}, {"Vpn", true}, {"Default", true}, {"State", uint(2)},
+                            {"Devices", QVariant::fromValue(QList<QDBusObjectPath>{})}});
+                        active.append(QDBusObjectPath(peer.vpn));
+                    }
+                    peer.update(peer.manager, {{"ActiveConnections", QVariant::fromValue(active)}});
+                }
                 if (patch.contains("OnBattery")) {
                     if (patch.value("OnBattery").isNull()) peer.update(peer.power, {}, {"OnBattery"});
                     else peer.update(peer.power, {{"OnBattery", patch.value("OnBattery").toBool()}});
