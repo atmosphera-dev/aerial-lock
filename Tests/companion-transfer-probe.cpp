@@ -488,6 +488,38 @@ private slots:
         QVERIFY(server.requests.last().contains("If-Range: \"fixture-one\""));
         QCOMPARE(cache.files().read("objects/" + representation.key + ".media", 1000000), media);
     }
+    void liveCheckpointThresholds_data()
+    {
+        QTest::addColumn<bool>("age");
+        QTest::newRow("bytes") << false;
+        QTest::newRow("age") << true;
+    }
+    void liveCheckpointThresholds()
+    {
+        QFETCH(bool, age);
+        QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(32000000, 0);
+        HttpFixture server; server.media = QByteArray(16000000, 'x'); server.mode = "controlled";
+        QNetworkAccessManager transport;
+        auto representation = rep(server.url()); representation.bytes = server.media.size();
+        Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; });
+        QSignalSpy done(&transfer, &Transfer::finished); transfer.start();
+        const auto metadata = [&] { return cache.metadata("partials/" + representation.key + ".json").value("received").toInteger(-1); };
+        QTRY_COMPARE(metadata(), qint64(0)); QVERIFY(server.controlled);
+        server.controlled->write(QByteArray(65536, 'x'));
+        QTRY_COMPARE(transfer.received(), qint64(65536));
+        QCOMPARE(metadata(), qint64(0)); QCOMPARE(done.size(), 0);
+        if (age) QTest::qWait(2100);
+        const auto next = age ? 65536 : 8 * 1024 * 1024 - 65536;
+        server.controlled->write(QByteArray(next, 'x'));
+        QTRY_COMPARE_WITH_TIMEOUT(transfer.received(), qint64(65536 + next), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(metadata() > 0, 5000);
+        // Threshold may land within the final socket batch. It must precede
+        // terminal persistence and cover at least the threshold-triggering byte.
+        QVERIFY(metadata() >= (age ? qint64(65537) : qint64(8 * 1024 * 1024)));
+        QCOMPARE(done.size(), 0);
+        transfer.cancel(); QTRY_COMPARE(done.size(), 1);
+        QCOMPARE(cache.usage().reserved, quint64(0));
+    }
     void resumeUsesDurablePrefixAfterTail()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
