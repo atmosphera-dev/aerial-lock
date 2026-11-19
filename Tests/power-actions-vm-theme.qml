@@ -13,6 +13,7 @@ FocusScope {
     property int sequence: 0
     property bool observing: true
     readonly property var loadedTheme: theme.item
+    readonly property int authWriterToken: loadedTheme ? loadedTheme.authWriterToken : -1
     function focusInput() { if (loadedTheme) loadedTheme.focusInput() }
     Component.onCompleted: console.log("POWER_VM_THEME_CREATED")
     Component.onDestruction: console.log("POWER_VM_THEME_DESTROYED")

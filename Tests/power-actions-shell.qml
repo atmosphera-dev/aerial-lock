@@ -79,7 +79,7 @@ ShellRoot {
                     writer = lock.context.auth.input.registerWriter()
                     lock.context.auth.input.claimWriter(writer)
                     lock.context.auth.input.applyEdit(writer, lock.context.auth.input.revision, "queued-synthetic", 16, 16)
-                    lock.tryUnlock()
+                    lock.context.auth.submit()
                     require(pam.starts === 1 && lock.unlockInProgress, "in-flight-auth")
                     lock.context.auth.input.applyEdit(writer, lock.context.auth.input.revision, "retained-draft", 4, 9)
                     lock.context.power.requestReboot()
@@ -88,7 +88,7 @@ ShellRoot {
                     require(lock.acceptedResponse === null && pam.responses === 0, "queued-response-retired")
                     require(lock.context.auth.input.text === "retained-draft", "editable-draft-retained")
                     require(lock.context.auth.input.selectionStart === 4 && lock.context.auth.input.selectionEnd === 9, "selection-retained")
-                    lock.tryUnlock(); lock.context.auth.submit()
+                    lock.context.auth.submit(); lock.context.auth.submit()
                     require(pam.starts === 1 && pam.responses === 0, "confirmation-blocks-submit")
                     lock.context.power.cancel()
                     require(count("RebootWithFlags") === 0, "cancel-no-dispatch")
@@ -139,7 +139,7 @@ ShellRoot {
                             "dispatch-rejection-restores-input-before-detail")
                     require(lock.locked && unlocks === 0 && releases === 0 && pam.starts === 1,
                             "dispatch-rejection-does-not-authenticate-or-release")
-                    lock.tryUnlock()
+                    lock.context.auth.submit()
                     require(pam.starts === 2 && lock.unlockInProgress, "independent-auth-allowed-while-detail-held")
                     lock.context.power.requestReboot()
                     require(power.confirmationRequired && !lock.unlockInProgress && unlocks === 0 && releases === 0,

@@ -15,6 +15,7 @@ Item {
     id: root
 
     required property LockContext context
+    readonly property int authWriterToken: authField.writerToken
 
     readonly property var panel: context.panel
     readonly property var colors: context.colors

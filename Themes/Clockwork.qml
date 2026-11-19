@@ -28,6 +28,7 @@ FocusScope {
     id: root
 
     required property LockContext context
+    readonly property int authWriterToken: field.writerToken
     property Item backdrop: null
 
     focus: true

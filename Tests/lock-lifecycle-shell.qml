@@ -136,34 +136,35 @@ ShellRoot {
                 } else {
                     check(false, "editor rejection callback exists")
                 }
-                lock.tryUnlock() // empty initial response: expose prompt, never queue an answer
+                draft("")
+                lock.context.auth.submit() // empty initial response: expose prompt, never queue an answer
                 check(endpoint.starts === 1 && endpoint.responses === 0, "empty initial starts without queued answer")
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "synchronous empty request visibly prompting")
                 check(lock.statusMessage.length > 0, "empty PAM message uses translated fallback")
                 endpoint.abort()
                 draft("synthetic-prefix")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(endpoint.responses === 1 && endpoint.lastResponse === "synthetic-prefix", "queued answer existed before synchronous first prompt")
                 check(lock.acceptedResponse === null, "queued answer removed before respond")
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "synchronous next prompt not overwritten in queued respond")
                 check(lock.context.auth.input.text === "", "accepted draft consumed exactly once")
-                lock.tryUnlock() // active empty answer is meaningful
+                lock.context.auth.submit() // active empty answer is meaningful
                 check(endpoint.responses === 2 && endpoint.lastResponse === "", "active empty answer sent unchanged")
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "direct respond prompt not overwritten")
                 endpoint.respondMode = "complete"
                 draft("synthetic-completion")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authSuccess && !lock.unlockInProgress, "synchronous direct completion not overwritten")
                 check(lock.context.auth.input.text === "", "completed consumed draft cannot reappear")
                 endpoint.abort()
                 endpoint.startMode = "inline"
                 draft("synthetic-queued-completion")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authSuccess && !lock.unlockInProgress, "synchronous queued-respond completion not overwritten")
                 check(lock.acceptedResponse === null && lock.context.auth.input.text === "", "queued completion consumes only accepted draft")
                 endpoint.startMode = "async"
                 endpoint.respondMode = "prompt"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "async start awaits explicit prompt")
                 phase = 1
                 sequence.restart()
@@ -172,33 +173,33 @@ ShellRoot {
                 endpoint.abort()
                 endpoint.startMode = "reject"
                 draft("synthetic-rejected-start")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "failed start cleanup settles once")
                 check(lock.context.auth.input.text === "", "rejected accepted draft does not resurrect")
                 endpoint.startMode = "error"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline start error not overwritten")
                 endpoint.abort()
                 endpoint.startMode = "complete"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authSuccess && !lock.unlockInProgress, "inline start completion not overwritten")
                 endpoint.abort()
                 endpoint.startMode = "inline"
                 endpoint.respondMode = "error"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 draft("synthetic-direct-error")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline direct respond error not overwritten")
                 check(lock.context.auth.input.text === "", "direct error accepted draft remains consumed")
                 endpoint.abort()
                 draft("synthetic-queued-error")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline queued respond error not overwritten")
                 endpoint.abort()
                 endpoint.respondMode = "async-prompt"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 draft("synthetic-async-direct")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "async direct respond awaits explicit prompt")
                 phase = 2
                 sequence.restart()
@@ -206,7 +207,7 @@ ShellRoot {
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "async direct respond request visibly prompting")
                 endpoint.abort()
                 draft("synthetic-async-queued")
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress && lock.acceptedResponse === null, "async queued respond awaits explicit prompt without duplicate answer")
                 phase = 3
                 sequence.restart()
@@ -233,7 +234,7 @@ ShellRoot {
                 check(endpoint.active && !lock.attemptCancelled, "prompt awaiting the user is not aborted")
                 endpoint.abort()
                 endpoint.startMode = "silent"
-                lock.tryUnlock()
+                lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "silent PAM call in flight")
                 phase = 5
                 watchdogWait.restart()

@@ -13,10 +13,10 @@ QtObject {
     id: root
 
     // The only unlock path a theme ever calls; Lock.qml connects it to
-    // the same function the built-in panel used (tryUnlock). Zero
-    // arguments (d43): the response comes from auth.input, the shared
-    // draft — a widget never supplies a password.
-    signal submitRequested()
+    // the same function the built-in panel used (tryUnlock). The public
+    // submit callback remains zero-argument; only authority identity crosses
+    // this signal, never a password supplied by a widget.
+    signal submitRequested(int writer, int generation)
     // Debug dismiss — Lock.qml no-ops it unless debugAllowDismiss.
     signal dismissRequested()
 
@@ -76,7 +76,11 @@ QtObject {
             id: inputObj
         }
 
-        function submit() { root.submitRequested() }
+        function submit() {
+            var request = inputObj.prepareSubmission()
+            if (request !== null)
+                root.submitRequested(request.writer, request.generation)
+        }
         function dismiss() { root.dismissRequested() }
     }
 

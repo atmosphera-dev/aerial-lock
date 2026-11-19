@@ -8,10 +8,11 @@ FocusScope {
     required property Services.LockContext context
     readonly property var preferredTopics: []
     property int writerToken: -1
+    readonly property int authWriterToken: writerToken
     readonly property string draft: context.auth.input.text
 
     function claim() {
-        return context.auth.input.claimHandoff(writerToken)
+        return context.auth.input.claimHandoff(writerToken, context.auth.input.handoffGeneration)
     }
     function focusInput() {}
 

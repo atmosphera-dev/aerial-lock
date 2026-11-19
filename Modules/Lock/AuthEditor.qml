@@ -39,6 +39,7 @@ Item {
     property int maxResponseSize: 0
     // Sinks are not candidates for elective theme replacement.
     property bool themeEditor: true
+    readonly property int writerToken: _token
     signal submitRequested()
 
     // Character presentation (decorations — frame, fill, border, radius,
@@ -101,12 +102,12 @@ Item {
         // A key used to finish a composition must not also submit to PAM.
         if (field.inputMethodComposing || root.input.compositionActive)
             return
-        // Synchronously publish the current edit (last-key guarantee), then
-        // request submission of the shared draft. The core does not clear
-        // itself: the controller's consume clears every mirror.
-        // A panel button may be pressed while another surface owns editing.
-        // Flush the actual owner, not an inactive panel mirror.
-        root.input.focusFlushRequested()
+        // A native focus object must not submit somebody else's draft.
+        // An unfocused panel button may still submit the active surface sink.
+        if (field.activeFocus && !root._active)
+            return
+        // The context's submission transaction snapshots authority and flushes
+        // the actual writer (possibly another surface), not this panel mirror.
         if (!root.inputBusy && !root.input.compositionActive)
             root.submitRequested()
     }
@@ -209,7 +210,7 @@ Item {
         var model = root.input
         if (model.handoffState !== "awaitingClaim")
             return
-        model.claimHandoff(_token)
+        model.claimHandoff(_token, model.handoffGeneration)
     }
 
     function _becameActive() {

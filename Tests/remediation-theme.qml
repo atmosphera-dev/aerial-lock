@@ -7,6 +7,7 @@ import "../Modules/Lock" as LockModule
 FocusScope {
     id: root
     required property LockContext context
+    readonly property int authWriterToken: field.writerToken
     property Item backdrop: null
     readonly property var preferredTopics: []
     property int captures: 0

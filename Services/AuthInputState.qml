@@ -61,14 +61,17 @@ QtObject {
     property var _writers: ({})
     property var _windowActiveWriters: ({})
     property bool _handoffHadFocus: false
+    property bool _flushingFocus: false
     property int generation: 0
     // "" (idle) | "releasing" (outgoing editor flushes when safe) |
     // "awaitingClaim" (incoming editor may claim)
     property string handoffState: ""
+    property int handoffTarget: -1
+    property int handoffGeneration: 0
 
     property int _nextToken: 1
 
-    signal handoffCompleted()
+    signal handoffCompleted(int writer, int handoffGeneration)
     signal handoffAborted()
     signal focusFlushRequested()
     signal focusTransferRequested(int writer)
@@ -136,13 +139,15 @@ QtObject {
     }
 
     function canFocus(token) {
+        if (!writerEligible(token))
+            return false
         var crossWindow = _windowActiveWriters[token] === true
                 && _windowActiveWriters[activeWriter] === false
         return !compositionActive || activeWriter === token || crossWindow
     }
 
     function transferFocus(token) {
-        if (!_writers.hasOwnProperty(token))
+        if (!writerEligible(token))
             return false
         focusedWriter = token
         _pendingFocusWriter = token
@@ -152,7 +157,15 @@ QtObject {
         if (activeWriter === token)
             return true
         focusTransferRequested(activeWriter)
-        focusFlushRequested()
+        flushFocus()
+        // Callbacks may replace the theme or deliver a newer focus grant.
+        // Never resurrect a retired editor after its outgoing flush returns.
+        if (!writerEligible(token) || focusedWriter !== token)
+            return false
+        if (!canFocus(token)) {
+            _pendingFocusWriter = token
+            return false
+        }
         compositionActive = false
         gestureActive = false
         activeWriter = token
@@ -262,12 +275,24 @@ QtObject {
 
     // ---- Handoff lifecycle ----
 
+    // Registration is not election. Sinks follow compositor focus; a theme
+    // writer is eligible only after selection by the initial claim or the
+    // host's explicitly nominated handoff. Hidden fallbacks cannot steal it.
+    function writerEligible(token) {
+        return _writers.hasOwnProperty(token)
+                && (_writers[token] === false || themeWriter === token)
+    }
+
     // The host requests elective replacement (candidate prepared).
-    function requestHandoff() {
-        if (handoffState !== "")
-            return
+    function requestHandoff(target) {
+        if (handoffState !== "" || _writers[target] !== true || target === themeWriter)
+            return false
+        handoffTarget = target
+        handoffGeneration++
+        generation++ // even a later-aborted nomination invalidates old submit intents
         _handoffHadFocus = themeWriter !== -1 && (activeWriter === themeWriter || focusedWriter === themeWriter)
         handoffState = themeWriter === -1 ? "awaitingClaim" : "releasing"
+        return true
     }
 
     // The active core releases after its final synchronous flush, only when
@@ -290,8 +315,9 @@ QtObject {
     }
 
     // The incoming editor claims during a handoff (before it is visible).
-    function claimHandoff(token) {
-        if (handoffState !== "awaitingClaim" || _writers[token] !== true)
+    function claimHandoff(token, serial) {
+        if (handoffState !== "awaitingClaim" || _writers[token] !== true
+                || token !== handoffTarget || serial !== handoffGeneration)
             return false
         themeWriter = token
         if (activeWriter === -1)
@@ -301,7 +327,7 @@ QtObject {
             focusedWriter = token
         handoffState = ""
         generation++
-        handoffCompleted()
+        handoffCompleted(token, serial)
         return true
     }
 
@@ -312,10 +338,47 @@ QtObject {
         if (handoffState === "")
             return
         handoffState = ""
+        handoffTarget = -1
+        generation++
         handoffAborted()
     }
 
     // ---- Controller operations (Lock.qml; never widget-lifetime-driven) ----
+
+    function submissionValid(writer, serial) {
+        return writerEligible(writer) && activeWriter === writer && generation === serial
+                && handoffState === "" && !compositionActive
+    }
+
+    // A native flush may itself move focus. Its nested transfer uses the
+    // in-flight flush rather than recursively asking that same editor again.
+    function flushFocus() {
+        if (_flushingFocus)
+            return
+        _flushingFocus = true
+        try {
+            focusFlushRequested()
+        } finally {
+            _flushingFocus = false
+        }
+    }
+
+    // No response crosses a widget callback. Capture the authority before
+    // flushing; a synchronous handoff/focus change invalidates the request.
+    function prepareSubmission() {
+        var writer = activeWriter
+        var serial = generation
+        if (!submissionValid(writer, serial))
+            return null
+        flushFocus()
+        return submissionValid(writer, serial) ? ({ writer: writer, generation: serial }) : null
+    }
+
+    function consumeSubmission(writer, serial) {
+        if (!submissionValid(writer, serial))
+            return null
+        return ({ text: consume() })
+    }
 
     // Accepted submission: snapshot the draft once and clear every mirror.
     // Response-scoped tunings begin a new epoch: the next empty editable

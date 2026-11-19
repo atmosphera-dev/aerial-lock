@@ -62,12 +62,12 @@ ShellRoot {
             var writer = input.registerWriter()
             input.claimWriter(writer)
             // Empty initial submission exposes a PAM prompt first.
-            lock.tryUnlock()
+            lock.context.auth.submit()
             input.applyEdit(writer, input.revision, "wrong-secret-7e83", 17, 17)
-            lock.tryUnlock()
+            lock.context.auth.submit()
             endpoint.result = AuthContext.Success
             input.applyEdit(writer, input.revision, "right-secret-91ab", 17, 17)
-            lock.tryUnlock()
+            lock.context.auth.submit()
             input.unregisterWriter(writer)
             console.log("LOCK_STATE_EXERCISED")
             Qt.quit()

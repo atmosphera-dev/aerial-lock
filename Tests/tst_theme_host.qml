@@ -36,6 +36,40 @@ Item {
     }
 
     TestCase {
+        name: "ThemeHostZeroOutput"
+        when: windowShown
+
+        function test_candidate_is_the_nominated_writer_without_initial_surface() {
+            failOnWarning(/.*/)
+            const ctx = contextComponent.createObject(root) as Services.LockContext
+            const host = hostComponent.createObject(root, { context: ctx }) as LockModule.ThemeHost
+            try {
+                const lifecycle = findChild(host, "themeLifecycle")
+                const loader = findChild(host, "themeCandidateLoader")
+                lifecycle.phase = "candidate"
+                host.allowLoading = true
+                loader.setSource(Qt.resolvedUrl("fixtures/HandoffAuthTheme.qml"), { context: ctx })
+                tryCompare(host, "settled", true)
+                verify(!host.usingFallback)
+                compare(ctx.auth.input.themeWriter, loader.item.authWriterToken,
+                        "only the prepared candidate may own the theme draft")
+                host.attachTo(root, null)
+                host.visible = true
+                const field = findChild(loader.item, "candidateAuthField")
+                field.focusField()
+                tryCompare(field, "hasActiveFocus", true)
+                keyClick(Qt.Key_A)
+                compare(ctx.auth.input.text, "a")
+            } finally {
+                host.destroy()
+                wait(0)
+                ctx.destroy()
+                wait(0)
+            }
+        }
+    }
+
+    TestCase {
         name: "ThemeHostClaimGrace"
         when: windowShown
 
@@ -203,7 +237,8 @@ Item {
         function test_unrelated_handoff_does_not_arm_host_grace() {
             // No candidate has prepared and this host owns no handoff.
             verify(model.releaseWriter(writer))
-            model.requestHandoff()
+            var unrelated = model.registerWriter()
+            model.requestHandoff(unrelated)
             compare(model.handoffState, "awaitingClaim")
             wait(1300)
             verify(!host.settled)

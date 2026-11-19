@@ -243,6 +243,30 @@ conversation. It also requires the Lock's context to remain live until the
 release call returns, and warning-free release/exit for each notification mode;
 the unconfirmed cases still require the backstop's operational warning.
 
+`auth-handoff-vm.py` exercises the staged production supervisor/runner on the
+owned guest's actual two-output niri DRM session, using the normal pam_unix
+fixture and workspace-local TMPDIR-only wtype. Run both daemon modes:
+
+```sh
+python3 Tests/auth-handoff-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --ime none
+# Start the guest's native Wayland fcitx5 daemon, then:
+python3 Tests/auth-handoff-vm.py --root "$ROOT" --vm-record "$VM_RECORD" --ime fcitx5
+```
+
+It covers zero-output startup/return/flap, wrong-then-right, immediate/waited
+entry, focused-output removal while typing, zero outputs and flapping mid-draft,
+and a theme file edit while locked (live reload remains disabled). Password
+halves must join into the exact correct password and authenticate on the first
+correct submission, with no extra PAM prompt, retry or external release. Each
+case observes compositor release, natural supervisor exit and desktop input.
+A failed case remains failed even if explicit supervisor Release cleans it up.
+The observer wraps the actual Macintosh theme and waits for its nominated editor
+to regain native window/input focus after remapping. An output-on IPC reply alone
+does not mean the lock window can receive keys. A parked observation precedes
+return, and no credential contents or lengths enter those readiness markers.
+Portable model/ThemeHost tests additionally reject competing/stale nominations
+and submissions whose writer generation changed during or after flushing.
+
 One layout serves these tests and the VM drivers below: a workspace `$ROOT`
 with the tree under test at `$ROOT/src/aerial-lock` and the test build at
 `$ROOT/build/debug/aerial-tests`.

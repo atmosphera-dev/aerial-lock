@@ -7,6 +7,7 @@ import "../Modules/Lock" as LockModule
 FocusScope {
     id: root
     required property LockContext context
+    readonly property int authWriterToken: field.writerToken
     property bool observing: true
     function focusInput() { field.focusField() }
     Component.onCompleted: console.log("SURFACE_THEME_CREATED")

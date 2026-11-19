@@ -62,7 +62,7 @@ ShellRoot {
         secure: fixture.lock !== null && fixture.lock.secure
         onReleaseRequested: {
             fixture.check(fixture.lock !== null && fixture.lock.secure, "real lock confirmed")
-            fixture.lock.tryUnlock() // leave a synthetic PAM call in flight
+            fixture.lock.context.auth.submit() // leave a synthetic PAM call in flight
             fixture.check(endpoint.active && fixture.lock.unlockInProgress, "PAM active before release")
             fixture.lock.release()
             // Idempotence before deferred Loader destruction.

@@ -227,9 +227,9 @@ Item {
             model.setActivity(writer, true, false)
             // Replace the inactive theme editor, then display its fallback
             // on the same active window as the still-composing sink.
-            model.requestHandoff()
             var fallback = findChild(host, "authField")
             verify(fallback !== null)
+            model.requestHandoff(fallback.writerToken)
             compare(model.themeWriter, fallback._token)
             host.visible = true
             host.windowActive = true
@@ -325,12 +325,12 @@ Item {
             model.setActivity(old, false, true)
             candidate = candidateComponent.createObject(root, {context: context})
             if (data.themeFirst)
-                model.requestHandoff()
+                model.requestHandoff(candidate.writerToken)
             surfaces.sink.visible = true
             activate(surfaces.sink, surfaces.panel)
             keyClick(Qt.Key_B)
             if (!data.themeFirst)
-                model.requestHandoff()
+                model.requestHandoff(candidate.writerToken)
             tryCompare(model, "themeWriter", candidate._token)
             tryCompare(model, "activeWriter", surfaces.sink._token)
             tryCompare(model, "text", "ab")
@@ -353,7 +353,7 @@ Item {
             var model = context.auth.input
             var writer = model.activeWriter
             candidate = candidateComponent.createObject(root, {context: context})
-            model.requestHandoff()
+            model.requestHandoff(candidate.writerToken)
             compare(model.themeWriter, candidate._token)
             compare(model.activeWriter, writer)
             compare(model.text, "a")

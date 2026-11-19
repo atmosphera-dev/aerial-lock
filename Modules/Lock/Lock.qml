@@ -888,7 +888,7 @@ Scope {
         }
     }
 
-    function tryUnlock() {
+    function tryUnlock(writer, generation) {
         if (lockContext.power.interactionActive)
             return
         logger.d("Lock", "tryUnlock: unlockInProgress=" + unlockInProgress +
@@ -899,7 +899,10 @@ Scope {
 
         // Snapshot and consume the shared draft exactly once; the consume
         // invalidates stale view publications (all mirrors clear).
-        var draft = lockContext.auth.input.consume()
+        var submission = lockContext.auth.input.consumeSubmission(writer, generation)
+        if (submission === null)
+            return
+        var draft = submission.text
 
         if (root.pamEndpoint.responseRequired) {
             logger.d("Lock", "tryUnlock: calling pam.respond")

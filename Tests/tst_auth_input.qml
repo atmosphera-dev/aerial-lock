@@ -89,6 +89,7 @@ Item {
             var outgoing = model.registerWriter(true)
             var replacement = model.registerWriter(true)
             var incoming = model.registerWriter(false)
+            verify(model.claimWriter(outgoing))
             model.setWindowActive(outgoing, true)
             model.setWindowActive(replacement, true)
             model.setWindowActive(incoming, false)
@@ -119,6 +120,7 @@ Item {
             var sink = model.registerWriter(false)
             var panel = model.registerWriter(true)
             var next = model.registerWriter(false)
+            verify(model.claimWriter(panel))
             verify(model.transferFocus(sink))
             var generation = model.generation
             model.setActivity(sink, true, false)
@@ -142,6 +144,7 @@ Item {
         function test_pending_focus_waits_through_commit_with_new_preedit() {
             var sink = model.registerWriter(false)
             var panel = model.registerWriter(true)
+            verify(model.claimWriter(panel))
             verify(model.transferFocus(sink))
             model.setActivity(sink, true, false)
             verify(!model.transferFocus(panel))
@@ -321,7 +324,7 @@ Item {
             model.applyEdit(a, model.revision, "draft", 5, 5)
             var gen = model.generation
 
-            model.requestHandoff()
+            model.requestHandoff(b)
             compare(model.handoffState, "releasing")
             // The outgoing editor flushes (already coherent here) and releases.
             verify(model.releaseWriter(a))
@@ -332,7 +335,7 @@ Item {
             verify(!model.applyEdit(a, model.revision, "stale", 5, 5))
             compare(model.text, "draft")
             // The incoming editor claims mid-handoff.
-            verify(model.claimHandoff(b))
+            verify(model.claimHandoff(b, model.handoffGeneration))
             compare(model.activeWriter, b)
             compare(model.handoffState, "")
             compare(spyDone.count, 1)
@@ -345,7 +348,8 @@ Item {
             var a = model.registerWriter()
             model.claimWriter(a)
             model.applyEdit(a, model.revision, "keepme", 6, 6)
-            model.requestHandoff()
+            var b = model.registerWriter()
+            model.requestHandoff(b)
             verify(model.releaseWriter(a))
             model.abortHandoff()
             compare(model.handoffState, "")
@@ -357,10 +361,10 @@ Item {
 
         function test_requestHandoff_without_active_writer() {
             compare(model.activeWriter, -1)
-            model.requestHandoff()
-            compare(model.handoffState, "awaitingClaim")
             var b = model.registerWriter()
-            verify(model.claimHandoff(b))
+            model.requestHandoff(b)
+            compare(model.handoffState, "awaitingClaim")
+            verify(model.claimHandoff(b, model.handoffGeneration))
             compare(model.activeWriter, b)
         }
 
@@ -376,6 +380,90 @@ Item {
             verify(model.compositionActive, "inactive writer cannot report activity")
             model.setActivity(a, false, false)
             verify(model.handoffReady)
+        }
+
+        function test_handoff_rejects_competing_and_stale_claims() {
+            var fallback = model.registerWriter()
+            var candidate = model.registerWriter()
+            verify(model.requestHandoff(candidate))
+            var serial = model.handoffGeneration
+            verify(!model.claimHandoff(fallback, serial), "an unclaimed fallback is not the nominee")
+            verify(!model.claimHandoff(candidate, serial - 1), "old transaction cannot claim")
+            verify(model.claimHandoff(candidate, serial))
+            verify(!model.transferFocus(fallback), "unselected theme cannot steal native authority")
+            verify(!model.canFocus(fallback))
+            verify(!model.claimWriter(fallback))
+            compare(model.activeWriter, candidate)
+            verify(model.requestHandoff(fallback))
+            model.releaseWriter(candidate)
+            verify(!model.claimHandoff(fallback, serial), "same nominee in a newer handoff needs its new serial")
+            verify(model.claimHandoff(fallback, model.handoffGeneration))
+            verify(!model.claimHandoff(candidate, serial), "late completed callback cannot restore an old writer")
+        }
+
+        function test_submission_is_bound_to_writer_generation() {
+            var writer = model.registerWriter()
+            var sink = model.registerWriter(false)
+            verify(model.claimWriter(writer))
+            verify(model.applyEdit(writer, model.revision, "synthetic", 9, 9))
+            var request = model.prepareSubmission()
+            verify(request !== null)
+            verify(model.transferFocus(sink))
+            verify(model.transferFocus(writer))
+            compare(model.consumeSubmission(request.writer, request.generation), null)
+            compare(model.text, "synthetic", "stale intent must not clear or submit a draft")
+            request = model.prepareSubmission()
+            compare(model.consumeSubmission(request.writer, request.generation).text, "synthetic")
+            compare(model.text, "")
+        }
+
+        function test_submission_rejects_reentrant_focus_transfer() {
+            var writer = model.registerWriter()
+            var sink = model.registerWriter(false)
+            verify(model.claimWriter(writer))
+            model.applyEdit(writer, model.revision, "preserved", 9, 9)
+            var move = function () { model.transferFocus(sink) }
+            model.focusFlushRequested.connect(move)
+            compare(model.prepareSubmission(), null)
+            model.focusFlushRequested.disconnect(move)
+            compare(model.text, "preserved")
+            model.setActivity(sink, true, false)
+            compare(model.prepareSubmission(), null, "live composition is not a submitted empty response")
+        }
+
+        function test_focus_flush_cannot_restore_a_replaced_theme() {
+            var outgoing = model.registerWriter()
+            var candidate = model.registerWriter()
+            var sink = model.registerWriter(false)
+            verify(model.claimWriter(outgoing))
+            model.applyEdit(outgoing, model.revision, "preserved", 9, 9)
+            verify(model.transferFocus(sink))
+            var replace = function () {
+                verify(model.requestHandoff(candidate))
+                verify(model.releaseWriter(outgoing))
+                verify(model.claimHandoff(candidate, model.handoffGeneration))
+            }
+            model.focusFlushRequested.connect(replace)
+            verify(!model.transferFocus(outgoing))
+            model.focusFlushRequested.disconnect(replace)
+            compare(model.themeWriter, candidate)
+            compare(model.activeWriter, sink)
+            compare(model.text, "preserved")
+        }
+
+        function test_aborted_handoff_invalidates_sink_submission() {
+            var theme = model.registerWriter()
+            var candidate = model.registerWriter()
+            var sink = model.registerWriter(false)
+            verify(model.claimWriter(theme))
+            verify(model.transferFocus(sink))
+            model.applyEdit(sink, model.revision, "preserved", 9, 9)
+            var request = model.prepareSubmission()
+            verify(model.requestHandoff(candidate))
+            model.abortHandoff()
+            compare(model.activeWriter, sink)
+            compare(model.consumeSubmission(request.writer, request.generation), null)
+            compare(model.text, "preserved")
         }
     }
 
@@ -531,7 +619,7 @@ Item {
 
             var b = mkfield({ "visible": false })
             verify(model.activeWriter !== b._token)
-            model.requestHandoff()
+            model.requestHandoff(b.writerToken)
             tryVerify(function () { return model.activeWriter === b._token },
                       1000, "incoming editor did not claim the handoff")
             compare(model.text, "abcdef")
@@ -681,7 +769,7 @@ Item {
             keyClick(Qt.Key_E)
             compare(model.text, "pre")
             var b = mkfield({ "visible": false })
-            model.requestHandoff()
+            model.requestHandoff(b.writerToken)
             tryVerify(function () { return model.activeWriter === b._token }, 1000)
             b.visible = true
             focused(b)
@@ -789,7 +877,7 @@ Item {
             // A promoted theme offering different tunings cannot change the
             // effective profile halfway through the epoch.
             var b = mkfield({ "visible": false, "initialSpacePolicy": model.policyPreserve })
-            model.requestHandoff()
+            model.requestHandoff(b.writerToken)
             tryVerify(function () { return model.activeWriter === b._token }, 1000)
             compare(model.effectivePolicy, model.policyIgnoreLeading)
             b.visible = true

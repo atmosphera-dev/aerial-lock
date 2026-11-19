@@ -141,7 +141,7 @@ Item {
 
     function setBusy(busy) { rig.context.auth.inProgress = busy }
     function setMaxResp(n) { rig.context.auth.maxResponseSize = n }
-    function requestHandoff() { rig.context.auth.input.requestHandoff() }
+    function requestHandoff() { rig.context.auth.input.requestHandoff(rig.fieldB.writerToken) }
     function promoteB() {
         rig.fieldB.visible = true
         rig.fieldB.focusField()

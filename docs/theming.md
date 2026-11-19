@@ -62,6 +62,7 @@ import "root:/Modules/Lock" as LockModule
 FocusScope {
     id: root
     required property LockContext context
+    readonly property int authWriterToken: field.writerToken
     property Item backdrop: null      // optional — scenery, see below
 
     // Optional: playlist topic preference (whole words, OR semantics)
@@ -94,6 +95,11 @@ FocusScope {
 
 - **`context`** (required) is injected at creation time — available before
   your bindings and `Component.onCompleted` run.
+- **`authWriterToken`** (required): expose the editor's public `writerToken`.
+  The host nominates this exact editor before promotion. Registration alone
+  never permits a hidden fallback or another candidate to claim the handoff.
+  A theme without a valid token stays on the trusted fallback; add the property
+  above when updating an older custom theme. Do not search child Items for it.
 - **`backdrop`** (optional): declare it and the host binds the
   surface-local scenery item (the video background) into it — for
   FrostedText-style sampling. It may be `null` (no video); handle that.
@@ -194,6 +200,17 @@ focus and window activation changes as well as IME events: a composing flag on
 an unfocused editor is not a live composition. The pending
 editor takes over after the natural commit has published. This is separate from
 the elective theme handoff.
+
+Expose its registered token as the theme root's `authWriterToken`. The model's
+`requestHandoff(token)` nominates it and advances `handoffGeneration`;
+`claimHandoff(token, handoffGeneration)` accepts only that nominated transaction.
+An outgoing, competing or stale-generation claim cannot promote a theme.
+Window focus may select a registered surface sink or the selected theme editor,
+never an unselected theme writer. Keep using `context.auth.submit()` without a
+password argument: it snapshots and flushes that writer and the controller
+consumes only the same writer generation. A focus/handoff change in between
+rejects submission without clearing the draft. File watching remains disabled;
+editing a theme mid-lock is not a supported replacement path.
 
 ### Initial-space tunings
 

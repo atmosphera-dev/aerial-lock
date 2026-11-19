@@ -5,6 +5,10 @@ Notable user-facing changes are recorded here, following
 
 ## [Unreleased]
 
+### Fixed
+
+- After the monitor turned off and came back while locked, the typed password could be submitted empty, showing "Password:" instead of unlocking.
+
 ### Changed
 
 - On niri the password panel now appears on the default monitor; the optional qt6-niriqml dependency is gone.

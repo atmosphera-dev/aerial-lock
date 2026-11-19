@@ -71,6 +71,8 @@ Item {
         // A candidate prepared successfully and is waiting for the shared
         // draft's handoff to complete before promotion.
         property bool handoffPending: false
+        property int nominatedWriter: -1
+        property int handoffGeneration: -1
     }
 
     function validThemeFilename(name) {
@@ -114,13 +116,15 @@ Item {
     }
 
     // The candidate's editor claimed the shared draft: promote.
-    function promote() {
-        if (internal.settled || !internal.handoffPending)
+    function promote(writer, serial) {
+        if (internal.settled || !internal.handoffPending
+                || writer !== internal.nominatedWriter || serial !== internal.handoffGeneration
+                || root.context.auth.input.themeWriter !== writer)
             return
         internal.handoffPending = false
         handoffClaimGrace.stop()
         const item = candidate.themeItem
-        if (!item) {
+        if (!item || root.readWriter(item) !== writer) {
             failSelected("theme vanished during handoff")
             return
         }
@@ -173,6 +177,15 @@ Item {
                 root.logger.w("ThemeHost", "preferredTopics[" + i + "] is not a string; dropped")
         }
         return result
+    }
+
+    // Like the optional focus hook, nomination is a structural theme-root
+    // contract rather than a dependency on a particular bundled QML type.
+    function readWriter(theme: var): int {
+        if (!theme || !theme.hasOwnProperty("authWriterToken"))
+            return -1
+        var token = theme.authWriterToken
+        return typeof token === "number" && token === Math.floor(token) ? token : -1
     }
 
     // Separate one-shot probes: switching a FileView's path in its own
@@ -250,8 +263,8 @@ Item {
             if (internal.handoffPending && context.auth.input.handoffState === "awaitingClaim")
                 handoffClaimGrace.restart()
         }
-        function onHandoffCompleted() {
-            root.promote()
+        function onHandoffCompleted(writer, handoffGeneration) {
+            root.promote(writer, handoffGeneration)
         }
     }
 
@@ -287,12 +300,22 @@ Item {
             try {
                 prepared = true
                 internal.topics = root.readTopics(item)
+                // Read the component's public nomination, never its children.
+                // A missing/invalid contract keeps the trusted fallback.
+                var writer = root.readWriter(item)
+                if (typeof writer !== "number" || writer < 0) {
+                    root.failSelected("theme has no authWriterToken")
+                    return
+                }
                 // Preparation succeeded: the loading deadline stops here.
                 // Waiting for the user to finish an in-flight composition
                 // during the handoff is not a loading timeout.
                 deadline.stop()
                 internal.handoffPending = true
-                root.context.auth.input.requestHandoff()
+                internal.nominatedWriter = writer
+                internal.handoffGeneration = root.context.auth.input.handoffGeneration + 1
+                if (!root.context.auth.input.requestHandoff(writer))
+                    root.failSelected("theme writer nomination failed")
             } catch (error) {
                 root.failSelected("theme contract: " + error)
             }
