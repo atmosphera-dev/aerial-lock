@@ -25,14 +25,19 @@ static QByteArray read(const QString &path)
 // Qt documents this seam at QNetworkRequest::setPeerVerifyName.
 class LoopbackTransport : public QNetworkAccessManager {
 public:
-    QJsonArray requests;
-    int port = 0;
+    QJsonArray &requests;
+    int port, attempt;
+    LoopbackTransport(QJsonArray &requests, int port, int attempt, QObject *parent)
+        : QNetworkAccessManager(parent), requests(requests), port(port), attempt(attempt)
+    {
+        setProxy(QNetworkProxy::NoProxy);
+    }
 protected:
     QNetworkReply *createRequest(Operation operation, const QNetworkRequest &request, QIODevice *data) override
     {
         const auto host = request.url().host();
         if (host != "sylvan.apple.com" && host != "custom.test") qFatal("HTTP fixture refused an unmapped peer");
-        requests.append(QJsonObject{{"host", host}, {"path", request.url().path()},
+        requests.append(QJsonObject{{"host", host}, {"path", request.url().path()}, {"attempt", attempt},
             {"caCount", request.sslConfiguration().caCertificates().size()}});
         auto routed = request;
         auto url = request.url(); url.setHost("127.0.0.1"); url.setPort(port);
@@ -51,16 +56,18 @@ int main(int argc, char **argv)
     ssl.addCaCertificates(QSslCertificate::fromData(read(fixture.value("normalRoot").toString())));
     QSslConfiguration::setDefaultConfiguration(ssl);
     const auto root = read(fixture.value("fallbackRoot").toString());
-    LoopbackTransport transport;
-    QJsonArray tlsErrors;
-    QObject::connect(&transport, &QNetworkAccessManager::sslErrors, &transport,
-        [&tlsErrors](QNetworkReply *, const QList<QSslError> &errors) {
-            QJsonArray attempt;
-            for (const auto &error : errors) attempt.append(int(error.error()));
-            tlsErrors.append(attempt);
-        });
-    transport.setProxy(QNetworkProxy::NoProxy);
-    transport.port = fixture.value("port").toInt();
+    QJsonArray requests, tlsErrors;
+    int attempts = 0;
+    HttpTransport transport([&](QObject *parent) {
+        auto *manager = new LoopbackTransport(requests, fixture.value("port").toInt(), ++attempts, parent);
+        QObject::connect(manager, &QNetworkAccessManager::sslErrors, manager,
+            [&tlsErrors](QNetworkReply *, const QList<QSslError> &errors) {
+                QJsonArray attempt;
+                for (const auto &error : errors) attempt.append(int(error.error()));
+                tlsErrors.append(attempt);
+            });
+        return manager;
+    });
     HttpRequest request; request.url = QUrl(fixture.value("url").toString());
     QByteArray body;
     HttpOperation operation(transport, request, root, {}, [&body](const QByteArray &chunk) {
@@ -74,7 +81,7 @@ int main(int argc, char **argv)
     operation.start(); loop.exec();
     const auto result = operation.result();
     const QJsonObject output{{"error", result.error}, {"status", result.status}, {"body", QString::fromLatin1(body)},
-        {"requests", transport.requests}, {"tlsErrors", tlsErrors},
+        {"requests", requests}, {"tlsErrors", tlsErrors},
         {"defaultTrustUnchanged", QSslConfiguration::defaultConfiguration() == ssl}};
     const auto bytes = QJsonDocument(output).toJson(QJsonDocument::Compact);
     fwrite(bytes.constData(), 1, size_t(bytes.size()), stdout);

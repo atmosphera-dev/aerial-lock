@@ -15,7 +15,7 @@ namespace Aerial {
 class Transfer : public QObject {
     Q_OBJECT
 public:
-    Transfer(CacheStore &cache, QNetworkAccessManager &transport, Representation representation,
+    Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
              QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent = nullptr);
     ~Transfer();
     void start();
@@ -36,7 +36,7 @@ private:
     void probe();
     void finish(const QString &error);
     CacheStore &cache;
-    QNetworkAccessManager &transport;
+    HttpTransport &transport;
     Representation rep;
     QString probeExecutable;
     QByteArray appleRoot;

@@ -73,6 +73,7 @@ with tempfile.TemporaryDirectory(prefix="companion-tls-") as directory:
             assert value["error"] == expected, (name, value, reply.stderr)
             assert value["defaultTrustUnchanged"], (name, value)
             assert [row["host"] for row in value["requests"]] == hosts, (name, value)
+            assert [row["attempt"] for row in value["requests"]] == list(range(1, len(hosts) + 1)), (name, value)
             counts = [row["caCount"] for row in value["requests"]]
             assert all(count == counts[0] + (1 if index in fallback_attempts else 0)
                        for index, count in enumerate(counts)), (name, counts)

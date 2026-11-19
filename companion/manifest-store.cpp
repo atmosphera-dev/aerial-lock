@@ -21,7 +21,7 @@ QJsonObject serialize(const Representation &rep)
 }
 }
 
-ManifestStore::ManifestStore(CacheStore &cache, QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent)
+ManifestStore::ManifestStore(CacheStore &cache, HttpTransport &transport, QByteArray appleRoot, QObject *parent)
     : QObject(parent), cache(cache), transport(transport), appleRoot(std::move(appleRoot)) {}
 
 ManifestStore::~ManifestStore() { if (operation) { disconnect(operation, nullptr, this, nullptr); delete operation; } }
@@ -114,7 +114,7 @@ void ManifestStore::fetch(const QUrl &url, bool unconditional)
 void ManifestStore::cancel() { if (operation) operation->cancel(); }
 void ManifestStore::settle(const QString &error) { failure = error; emit finished(); }
 
-RepresentationSizer::RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent,
+RepresentationSizer::RepresentationSizer(HttpTransport &transport, QByteArray appleRoot, QObject *parent,
                                          int deadlineMs, int maximumConcurrent)
     : QObject(parent), transport(transport), appleRoot(std::move(appleRoot)),
       deadlineMs(std::max(1, deadlineMs)), maximumConcurrent(std::max(1, maximumConcurrent))

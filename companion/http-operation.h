@@ -7,6 +7,20 @@
 #include <functional>
 
 namespace Aerial {
+// A fresh manager per wire attempt owns the connection pool and its trust.
+// Injection creates managers, never shares a mutable TLS pool across requests.
+class HttpTransport {
+public:
+    using Factory = std::function<QNetworkAccessManager *(QObject *)>;
+    explicit HttpTransport(Factory factory = {}) : factory(std::move(factory)) {}
+    QNetworkAccessManager *create(QObject *parent) const
+    {
+        return factory ? factory(parent) : new QNetworkAccessManager(parent);
+    }
+private:
+    Factory factory;
+};
+
 using HttpHeaders = QMap<QByteArray, QByteArray>;
 struct HttpResult {
     int status = 0;
@@ -33,7 +47,7 @@ class HttpOperation : public QObject {
 public:
     using HeaderConsumer = std::function<QString(const HttpResult &)>;
     using ChunkConsumer = std::function<QString(const QByteArray &)>;
-    HttpOperation(QNetworkAccessManager &transport, HttpRequest request, const QByteArray &appleRoot,
+    HttpOperation(HttpTransport &transport, HttpRequest request, const QByteArray &appleRoot,
                   HeaderConsumer headers, ChunkConsumer chunk, QObject *parent = nullptr);
     ~HttpOperation();
     void start();
@@ -46,12 +60,13 @@ private:
     void metadata();
     void drain();
     void complete(const QString &error = {});
-    QNetworkAccessManager &transport;
+    HttpTransport &transport;
     HttpRequest original;
     QByteArray appleRoot;
     HeaderConsumer onHeaders;
     ChunkConsumer onChunk;
     QPointer<QNetworkReply> reply;
+    QPointer<QNetworkAccessManager> attempt;
     QTimer deadline;
     HttpResult response;
     QUrl current;

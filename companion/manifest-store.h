@@ -7,7 +7,7 @@ namespace Aerial {
 class ManifestStore : public QObject {
     Q_OBJECT
 public:
-    ManifestStore(CacheStore &cache, QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent = nullptr);
+    ManifestStore(CacheStore &cache, HttpTransport &transport, QByteArray appleRoot, QObject *parent = nullptr);
     ~ManifestStore();
     QList<Representation> cached(const QJsonObject &source) const;
     void refresh(const QJsonObject &source);
@@ -22,7 +22,7 @@ private:
     void fetch(const QUrl &url, bool unconditional = false);
     void settle(const QString &error);
     CacheStore &cache;
-    QNetworkAccessManager &transport;
+    HttpTransport &transport;
     QByteArray appleRoot, body;
     QJsonObject source, prior;
     QPointer<HttpOperation> operation;
@@ -38,7 +38,7 @@ private:
 class RepresentationSizer : public QObject {
     Q_OBJECT
 public:
-    RepresentationSizer(QNetworkAccessManager &transport, QByteArray appleRoot, QObject *parent = nullptr,
+    RepresentationSizer(HttpTransport &transport, QByteArray appleRoot, QObject *parent = nullptr,
                         int deadlineMs = 30000, int maximumConcurrent = 4);
     ~RepresentationSizer();
     void start(QList<Representation> items);
@@ -50,7 +50,7 @@ private:
     void next();
     void request(qsizetype item, bool range);
     void settle();
-    QNetworkAccessManager &transport;
+    HttpTransport &transport;
     QByteArray appleRoot;
     QList<Representation> items;
     qsizetype index = 0;

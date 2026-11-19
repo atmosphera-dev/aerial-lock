@@ -237,7 +237,7 @@ private slots:
     void fullAndProbe()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; QNetworkAccessManager transport;
+        HttpFixture server; server.media = media; HttpTransport transport;
         auto representation = rep(server.url()); representation.checksum = contentDigest(media).toLatin1();
         Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; });
         QSignalSpy done(&transfer, &Transfer::finished); transfer.start();
@@ -253,7 +253,7 @@ private slots:
     }
     void requestDeadlines()
     {
-        HttpFixture server; QNetworkAccessManager network;
+        HttpFixture server; HttpTransport network;
         server.mode = "drip";
         HttpRequest metadata; metadata.url = server.url(); metadata.totalTimeoutMs = 80;
         HttpOperation bounded(network, metadata, {}, {}, {});
@@ -274,7 +274,7 @@ private slots:
     }
     void credentialUrlsNeverReachTransport()
     {
-        HttpFixture server; QNetworkAccessManager network;
+        HttpFixture server; HttpTransport network;
         HttpRequest request; request.url = server.url(); request.url.setUserInfo("user:password");
         HttpOperation operation(network, request, {}, {}, {});
         QSignalSpy finished(&operation, &HttpOperation::finished); operation.start();
@@ -300,7 +300,7 @@ private slots:
         QFETCH(QString, mode);
         QTemporaryDir directory; auto cache = std::make_unique<CacheStore>(directory.path() + "/cache");
         QVERIFY(cache->valid()); cache->configure(1000000, 0);
-        HttpFixture server; server.media = media; server.mode = "interrupted"; QNetworkAccessManager transport;
+        HttpFixture server; server.media = media; server.mode = "interrupted"; HttpTransport transport;
         auto representation = rep(server.url()); representation.checksum = contentDigest(media).toLatin1();
         {
             Transfer transfer(*cache, transport, representation, probe, {}, [] { return 123; });
@@ -334,7 +334,7 @@ private slots:
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid());
         const auto baseline = cache.usage().bytes; cache.configure(baseline + 2000, 0);
         HttpFixture server; server.media = QByteArray(100000, 'x'); server.mode = "chunked";
-        QNetworkAccessManager transport; auto representation = rep(server.url()); representation.bytes = -1;
+        HttpTransport transport; auto representation = rep(server.url()); representation.bytes = -1;
         Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; });
         QSignalSpy done(&transfer, &Transfer::finished); transfer.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
         QCOMPARE(transfer.error(), "CacheFull"); QVERIFY(cache.usage().bytes <= baseline + 2000); QVERIFY(cache.entries().isEmpty());
@@ -352,7 +352,7 @@ private slots:
     {
         for (const auto complete : {false, true}) {
             QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0); QVERIFY(cache.valid());
-            HttpFixture server; server.media = media; server.mode = "416"; QNetworkAccessManager network;
+            HttpFixture server; server.media = media; server.mode = "416"; HttpTransport network;
             const auto representation = rep(server.url());
             const auto bytes = complete ? media : media.left(media.size() / 2);
             const int file = cache.openPartial(representation.key, true); QVERIFY(file >= 0);
@@ -373,7 +373,7 @@ private slots:
     void changedUrlAndLyingLength()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0); QVERIFY(cache.valid());
-        HttpFixture server; server.media = media; server.mode = "interrupted"; QNetworkAccessManager network;
+        HttpFixture server; server.media = media; server.mode = "interrupted"; HttpTransport network;
         const auto previous = rep(server.url("/old"));
         {
             Transfer transfer(cache, network, previous, probe, {}, [] { return 123; });
@@ -397,7 +397,7 @@ private slots:
     void redirectsAndCancellation()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; QNetworkAccessManager transport;
+        HttpFixture server; server.media = media; HttpTransport transport;
         Transfer transfer(cache, transport, rep(server.url("/redirect")), probe, {}, [] { return 123; });
         QSignalSpy done(&transfer, &Transfer::finished); transfer.start(); QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 20000);
         QVERIFY2(transfer.error().isEmpty(), qPrintable(transfer.error())); QCOMPARE(server.requests.size(), 2);
@@ -415,7 +415,7 @@ private slots:
     void probeCrashAndPlaylist()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; QNetworkAccessManager transport;
+        HttpFixture server; server.media = media; HttpTransport transport;
         Transfer failed(cache, transport, rep(server.url()), "/missing/probe", {}, [] { return 123; });
         QSignalSpy failedDone(&failed, &Transfer::finished); failed.start(); QTRY_COMPARE_WITH_TIMEOUT(failedDone.size(), 1, 20000);
         QCOMPARE(failed.error(), "ProbeFailed"); QVERIFY(cache.entries().isEmpty());
@@ -434,7 +434,7 @@ private slots:
     void resumeThroughChangedRedirect()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; QNetworkAccessManager network;
+        HttpFixture server; server.media = media; HttpTransport network;
         server.redirects["/origin"] = "/expired-location"; server.modes["/expired-location"] = "interrupted";
         const auto representation = rep(server.url("/origin"));
         {
@@ -461,7 +461,7 @@ private slots:
     void resumeThroughStableRedirect()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; QNetworkAccessManager network;
+        HttpFixture server; server.media = media; HttpTransport network;
         server.redirects["/origin"] = "/same"; server.modes["/same"] = "interrupted";
         const auto representation = rep(server.url("/origin"));
         {
@@ -499,7 +499,7 @@ private slots:
         QFETCH(bool, age);
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(32000000, 0);
         HttpFixture server; server.media = QByteArray(16000000, 'x'); server.mode = "controlled";
-        QNetworkAccessManager transport;
+        HttpTransport transport;
         auto representation = rep(server.url()); representation.bytes = server.media.size();
         Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; });
         QSignalSpy done(&transfer, &Transfer::finished); transfer.start();
@@ -523,7 +523,7 @@ private slots:
     void resumeUsesDurablePrefixAfterTail()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
-        HttpFixture server; server.media = media; server.mode = "206"; QNetworkAccessManager network;
+        HttpFixture server; server.media = media; server.mode = "206"; HttpTransport network;
         auto representation = rep(server.url()); representation.checksum = QCryptographicHash::hash(media, QCryptographicHash::Sha256).toHex();
         const auto prefix = media.size() / 2;
         const int file = cache.openPartial(representation.key, true); QVERIFY(file >= 0);
@@ -541,7 +541,7 @@ private slots:
     void manifestValidatorsAreResourceScoped()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(1000000, 0);
-        HttpFixture server; QNetworkAccessManager network;
+        HttpFixture server; HttpTransport network;
         const auto configured = source(server);
         server.bodies["/fixture.json"] = manifest({"old"});
         ManifestStore store(cache, network, {}); QSignalSpy done(&store, &ManifestStore::finished);
@@ -564,7 +564,7 @@ private slots:
     }
     void sizingPassConcurrency()
     {
-        HttpFixture server; QNetworkAccessManager network;
+        HttpFixture server; HttpTransport network;
         server.mode = "hold-all";
         QList<Representation> items;
         for (int i = 0; i < 100; ++i) {
@@ -580,7 +580,7 @@ private slots:
     }
     void sizingPassDeadline()
     {
-        HttpFixture server; server.mode = "hold-all"; QNetworkAccessManager network;
+        HttpFixture server; server.mode = "hold-all"; HttpTransport network;
         QList<Representation> items;
         for (int i = 0; i < 100; ++i) {
             auto value = rep(server.url("/stalled" + QString::number(i))); value.bytes = -1;
@@ -598,7 +598,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"old"}); server.modes["/old.mp4"] = "missing";
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         qint64 now = 100000;
         PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [&now] { return now; }); queue.start();
@@ -623,7 +623,7 @@ private slots:
     void manifestsAndSmallestDiscovery()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
-        HttpFixture server; QNetworkAccessManager transport;
+        HttpFixture server; HttpTransport transport;
         const QJsonObject source{{"id", "fixture"}, {"type", "community"}, {"source", server.url("/manifest.json").toString()}};
         server.bodies["/manifest.json"] = "{\"manifestUrl\":\"entries.json\"}";
         server.bodies["/entries.json"] = "{\"assets\":[{\"id\":\"large\",\"url-1080-H264\":\"large.mp4\"},{\"id\":\"small\",\"url-1080-H264\":\"small.mp4\"}]}";
@@ -652,7 +652,7 @@ private slots:
         server.bodies["/large.mp4"] = media + QByteArray(5000, 0);
         server.bodies["/small.mp4"] = media;
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         qint64 now = 100000;
         auto state = std::make_unique<PlannerState>(paths.state, [&now] { return now; }, [] { return 0; });
         auto queue = std::make_unique<TransferQueue>(config, cache, *state, network, probe, QByteArray{}, [&now] { return now; });
@@ -680,22 +680,30 @@ private slots:
     {
         // Use the ordinary shipped descriptor without rewriting it or adding a
         // user config. Only transport routing is injected; no live CDN traffic.
-        class RoutedTransport : public QNetworkAccessManager {
-        public:
+        struct Route {
             QString host;
             QUrl endpoint;
             QList<QUrl> requested;
+        } route;
+        class RoutedTransport : public QNetworkAccessManager {
+        public:
+            Route &route;
+            RoutedTransport(Route &route, QObject *parent) : QNetworkAccessManager(parent), route(route)
+            {
+                setProxy(QNetworkProxy::NoProxy);
+            }
         protected:
             QNetworkReply *createRequest(Operation operation, const QNetworkRequest &query, QIODevice *data) override
             {
-                if (query.url().host() != host) qFatal("default fixture refused an unmapped remote host");
-                requested.append(query.url());
+                if (query.url().host() != route.host) qFatal("default fixture refused an unmapped remote host");
+                route.requested.append(query.url());
                 auto routed = query;
-                auto url = query.url(); url.setScheme(endpoint.scheme()); url.setHost(endpoint.host()); url.setPort(endpoint.port());
+                auto url = query.url(); url.setScheme(route.endpoint.scheme()); url.setHost(route.endpoint.host()); url.setPort(route.endpoint.port());
                 routed.setUrl(url);
                 return QNetworkAccessManager::createRequest(operation, routed, data);
             }
-        } network;
+        };
+        HttpTransport network([&](QObject *parent) { return new RoutedTransport(route, parent); });
         QTemporaryDir directory; HttpFixture server; server.media = media;
         const ConfigPaths paths{QStringLiteral(AERIAL_TEST_SOURCE), directory.path() + "/config/config.json",
             directory.path() + "/cache", directory.path() + "/state", directory.path() + "/run"};
@@ -703,7 +711,7 @@ private slots:
         const auto sources = config.document().effective.value("sources").toArray(); QCOMPARE(sources.size(), 1);
         const auto source = sources.first().toObject(); QCOMPARE(source.value("id").toString(), "apple-tv");
         const auto url = SourceResolver::manifestUrl(source);
-        network.host = url.host(); network.endpoint = server.url(); network.setProxy(QNetworkProxy::NoProxy);
+        route.host = url.host(); route.endpoint = server.url();
         server.bodies[url.path().toLatin1()] = manifest({"large", "small"});
         const auto large = url.resolved(QUrl("large.mp4")).path().toLatin1();
         const auto small = url.resolved(QUrl("small.mp4")).path().toLatin1();
@@ -766,7 +774,7 @@ private slots:
     void resumeChecksumYieldsToCancellation()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); cache.configure(20000000, 0);
-        HttpFixture server; QNetworkAccessManager network;
+        HttpFixture server; HttpTransport network;
         auto representation = rep(server.url());
         // Four hash chunks still require yielding before HTTP can begin.
         const QByteArray bytes(4 * 65536, 'x');
@@ -787,7 +795,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"clip"}); server.modes["/clip.mp4"] = "retry";
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         qint64 now = 100000;
         auto state = std::make_unique<PlannerState>(paths.state, [&now] { return now; }, [] { return 0; });
         auto queue = std::make_unique<TransferQueue>(config, cache, *state, network, probe, QByteArray{}, [&now] { return now; }); queue->start();
@@ -812,7 +820,7 @@ private slots:
         server.bodies["/first.json"] = manifest({"a1", "a2"});
         server.bodies["/second.json"] = manifest({"b1", "b2"});
         const auto paths = queueConfig(directory.path(), {source(server, "first"), source(server, "second")});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
         const auto id = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id), 20000);
@@ -838,7 +846,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one", "two"});
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
         QString id;
@@ -874,7 +882,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one", "two"});
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
         const auto id = queue.acquire();
@@ -905,7 +913,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one", "two"});
         const auto paths = queueConfig(directory.path(), {source(server)}, true);
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         bool armed = false, failed = false;
@@ -937,7 +945,7 @@ private slots:
         server.bodies["/fixture.json"] = manifest({"one"});
         server.bodies["/replacement.json"] = manifest({"two"});
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
@@ -967,7 +975,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one", "two"});
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         QVERIFY(config.update(config.document().revision, {{"acquisition", QJsonObject{{"checkIntervalSeconds", 1}}}}).ok());
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; }); queue.start();
@@ -998,7 +1006,7 @@ private slots:
             {"id", QString(1024, 'x')}, {"url-1080-H264", "clip.mp4"},
             {"sizes", QJsonObject{{"url-1080-H264", media.size()}}}}}}}).toJson(QJsonDocument::Compact);
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", 100000000}}}}).ok());
         QString id;
         {
@@ -1032,7 +1040,7 @@ private slots:
             environment.value("XDG_CACHE_HOME") + "/aerial-lock/managed-v1", environment.value("XDG_STATE_HOME") + "/aerial-lock",
             environment.value("XDG_RUNTIME_DIR") + "/aerial-lock"};
         QVERIFY(QDir().mkpath(QFileInfo(paths.config).absolutePath())); QVERIFY(QFile::rename(oldConfig, paths.config));
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         const qint64 now = 1000000;
         PlannerState state(paths.state, [=] { return now; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [=] { return now; }); queue.start();
@@ -1133,7 +1141,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"clip"}); server.modes["/clip.mp4"] = "hold";
         const auto paths = queueConfig(directory.path(), {source(server)}, true);
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         qint64 now = 100000;
         auto state = std::make_unique<PlannerState>(paths.state, [&now] { return now; }, [] { return 0; });
         auto queue = std::make_unique<TransferQueue>(config, cache, *state, network, probe, QByteArray{}, [&now] { return now; });
@@ -1403,7 +1411,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one", "two"});
         const auto paths = queueConfig(directory.path(), {source(server)}, true);
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         QJsonObject disallowed, allowed;
         if (types.contains(kind)) {
             disallowed = {{"connectionTypes", QJsonObject{{kind, false}}}};
@@ -1471,7 +1479,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"clip"}); server.modes["/clip.mp4"] = "hold-partial";
         const auto paths = queueConfig(directory.path(), {source(server)}, true);
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
         connect(&monitor, &PolicyMonitor::changed, &queue, [&] { queue.setPolicyReason(monitor.deferReason(config.document().effective)); });
@@ -1504,7 +1512,7 @@ private slots:
         server.bodies["/old-one.mp4"] = media + QByteArray(200000, 'x');
         server.bodies["/old-two.mp4"] = media + QByteArray(200000, 'x');
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); QNetworkAccessManager network;
+        ConfigRepository config(paths); HttpTransport network;
         qint64 now = 100000;
         PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
         QString recorded;
@@ -1552,7 +1560,7 @@ private slots:
         server.bodies["/old-one.mp4"] = media + QByteArray(300000, 'x');
         server.bodies["/old-two.mp4"] = media + QByteArray(300000, 'x');
         const auto paths = queueConfig(directory.path(), {source(server)});
-        ConfigRepository config(paths); QNetworkAccessManager network;
+        ConfigRepository config(paths); HttpTransport network;
         qint64 now = 100000;
         PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
         QString victim, bound;
@@ -1684,7 +1692,7 @@ private slots:
         QTemporaryDir directory; HttpFixture server; server.media = media;
         server.bodies["/fixture.json"] = manifest({"one"});
         const auto paths = queueConfig(directory.path(), {source(server)}, true);
-        ConfigRepository config(paths); CacheStore cache(paths.cache); QNetworkAccessManager network;
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
         qint64 now = 100000;
         PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
         TransferQueue queue(config, cache, state, network, probe, {}, [&now] { return now; });
@@ -1761,7 +1769,8 @@ int main(int argc, char **argv)
             || QUrl(source.value("source").toString()).host() != "sylvan.apple.com") return 2;
         class TraceTransport : public QNetworkAccessManager {
         public:
-            QJsonArray requests;
+            QJsonArray &requests;
+            TraceTransport(QJsonArray &requests, QObject *parent) : QNetworkAccessManager(parent), requests(requests) {}
             QNetworkReply *createRequest(Operation operation, const QNetworkRequest &request, QIODevice *body) override
             {
                 requests.append(QJsonObject{{"method", operation == HeadOperation ? "HEAD" : "GET"},
@@ -1769,7 +1778,9 @@ int main(int argc, char **argv)
                     {"range", QString::fromLatin1(request.rawHeader("Range"))}});
                 return QNetworkAccessManager::createRequest(operation, request, body);
             }
-        } network;
+        };
+        QJsonArray requests;
+        HttpTransport network([&](QObject *parent) { return new TraceTransport(requests, parent); });
         CacheStore cache(paths.cache); if (!cache.valid()) return 1;
         QFile certificate(paths.bundle + "/Config/apple-root.pem");
         if (!certificate.open(QIODevice::ReadOnly)) return 1;
@@ -1786,7 +1797,7 @@ int main(int argc, char **argv)
                 {"url", rep.url.toString(QUrl::FullyEncoded)}, {"height", rep.height}, {"bytes", rep.bytes}});
             QFile output(QString::fromLocal8Bit(argv[2]));
             if (!output.open(QIODevice::WriteOnly)) { app.exit(1); return; }
-            const auto bytes = QJsonDocument(QJsonObject{{"candidates", sizes}, {"requests", network.requests}}).toJson();
+            const auto bytes = QJsonDocument(QJsonObject{{"candidates", sizes}, {"requests", requests}}).toJson();
             app.exit(output.write(bytes) == bytes.size() ? 0 : 1);
         });
         QTimer::singleShot(900000, &app, [&] { sizer.cancel(); app.exit(1); });
@@ -1802,7 +1813,7 @@ int main(int argc, char **argv)
             "-frames:v", "12", "-c:v", "libx264", "-movflags", "+faststart", "-y", mediaPath});
         if (!encoder.waitForFinished(20000) || encoder.exitCode()) return 1;
         QFile media(mediaPath); if (!media.open(QIODevice::ReadOnly)) return 1;
-        HttpFixture server; server.media = media.readAll(); QNetworkAccessManager network;
+        HttpFixture server; server.media = media.readAll(); HttpTransport network;
         CacheStore cache(root + "/cache/aerial-lock/managed-v1"); if (!cache.valid()) return 1;
         cache.configure(1000000, 0);
         Representation rep; rep.sourceId = "fixture"; rep.assetId = "opaque/asset";

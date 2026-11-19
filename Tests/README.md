@@ -770,7 +770,11 @@ normal trust first, scoped Apple fallback, hostname rejection, custom-host
 rejection, no fallback leakage over redirects, same-host revalidation, downgrade
 rejection and the redirect bound. Production requests do not reuse pooled TLS
 state, so failed normal trust cannot poison the explicit fallback attempt.
-Neither this fixture nor default-source acquisition changes system trust/DNS.
+Each wire attempt owns a fresh manager/connection pool, including redirects and
+trust retries. The fixture verifies distinct attempt identities; negative cache
+expiry does not isolate pools on Qt before 6.12. Certificates are generated for
+each test run. Neither this fixture nor default-source acquisition changes
+system trust/DNS.
 
 `inheritedDefaultAcquisition` uses the unmodified shipped descriptor and no user
 config, injects only loopback routing, then observes small-before-large payloads,

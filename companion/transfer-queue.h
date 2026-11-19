@@ -14,7 +14,7 @@ class TransferQueue : public QObject {
     Q_OBJECT
 public:
     TransferQueue(ConfigRepository &config, CacheStore &cache, PlannerState &state,
-        QNetworkAccessManager &transport, QString probe, QByteArray appleRoot,
+        HttpTransport &transport, QString probe, QByteArray appleRoot,
         std::function<qint64()> clock, QObject *parent = nullptr);
     ~TransferQueue();
     void start();
@@ -61,7 +61,7 @@ private:
     ConfigRepository &config;
     CacheStore &cache;
     PlannerState &state;
-    QNetworkAccessManager &transport;
+    HttpTransport &transport;
     QString probe;
     QByteArray appleRoot;
     std::function<qint64()> clock;

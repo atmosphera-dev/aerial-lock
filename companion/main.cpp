@@ -8,7 +8,6 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDateTime>
-#include <QNetworkAccessManager>
 #include <QRandomGenerator>
 #include <QLockFile>
 #include <QTimer>
@@ -42,7 +41,7 @@ int main(int argc, char **argv)
     if (!owner.tryLock(0)) { qWarning("companion profile already owned"); return 1; }
     Aerial::CompanionService service(config, QDBusConnection::sessionBus());
     if (!service.start()) { qWarning("companion bus ownership failed"); return 1; }
-    QNetworkAccessManager transport;
+    Aerial::HttpTransport transport;
     const auto clock = [] { return QDateTime::currentSecsSinceEpoch(); };
     std::unique_ptr<Aerial::PlannerState> state;
     std::unique_ptr<Aerial::CacheStore> cache;

@@ -28,7 +28,7 @@ qint64 length(const QByteArray &bytes)
 }
 }
 
-Transfer::Transfer(CacheStore &cache, QNetworkAccessManager &transport, Representation representation,
+Transfer::Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
                    QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent)
     : QObject(parent), cache(cache), transport(transport), rep(std::move(representation)),
       probeExecutable(std::move(probeExecutable)), appleRoot(std::move(appleRoot)), clock(std::move(clock)) {}

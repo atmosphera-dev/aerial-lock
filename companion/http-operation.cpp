@@ -6,7 +6,7 @@
 #include <QSslConfiguration>
 
 namespace Aerial {
-HttpOperation::HttpOperation(QNetworkAccessManager &transport, HttpRequest request, const QByteArray &appleRoot,
+HttpOperation::HttpOperation(HttpTransport &transport, HttpRequest request, const QByteArray &appleRoot,
                              HeaderConsumer headers, ChunkConsumer chunk, QObject *parent)
     : QObject(parent), transport(transport), original(std::move(request)), appleRoot(appleRoot),
       onHeaders(std::move(headers)), onChunk(std::move(chunk)), current(original.url)
@@ -41,10 +41,6 @@ void HttpOperation::request(bool appleTrust)
     query.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
     query.setAttribute(QNetworkRequest::AuthenticationReuseAttribute, QNetworkRequest::Manual);
     query.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
-    // Qt's connection pool retains the first request's SSL configuration,
-    // including after a failed handshake. Each hop/retry must use its own
-    // normal or Apple-only trust, never pooled trust from a previous request.
-    query.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, -1);
     query.setRawHeader("Accept-Encoding", "identity");
     query.setRawHeader("User-Agent", "aerial-lock-companion/1");
     query.setTransferTimeout(original.inactivityTimeoutMs);
@@ -61,7 +57,12 @@ void HttpOperation::request(bool appleTrust)
         ssl.addCaCertificates(QSslCertificate::fromData(appleRoot));
         query.setSslConfiguration(ssl);
     }
-    reply = original.head ? transport.head(query) : transport.get(query);
+    // Qt < 6.12 interprets a negative cache expiry as the default timeout,
+    // not isolation. A manager-owned pool must never cross trust attempts.
+    // Defer retirement until the prior reply's signal stack has unwound.
+    if (attempt) attempt->deleteLater();
+    attempt = transport.create(this);
+    reply = original.head ? attempt->head(query) : attempt->get(query);
     reply->setReadBufferSize(65536);
     connect(reply, &QNetworkReply::metaDataChanged, this, &HttpOperation::metadata);
     connect(reply, &QNetworkReply::readyRead, this, &HttpOperation::drain);

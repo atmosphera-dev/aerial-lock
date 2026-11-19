@@ -25,7 +25,7 @@ QStringList ids(const QJsonObject &job)
 }
 
 TransferQueue::TransferQueue(ConfigRepository &config, CacheStore &cache, PlannerState &state,
-    QNetworkAccessManager &transport, QString probe, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent)
+    HttpTransport &transport, QString probe, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent)
     : QObject(parent), config(config), cache(cache), state(state), transport(transport),
       probe(std::move(probe)), appleRoot(std::move(appleRoot)), clock(std::move(clock))
 {
