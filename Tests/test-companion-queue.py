@@ -70,13 +70,17 @@ with tempfile.TemporaryDirectory(prefix="companion-queue-") as temporary:
     source = {"type": "community", "id": "fixture", "name": "Fixture",
               "source": f"http://127.0.0.1:{server.server_port}/manifest.json", "maxResolution": 1080}
     processes = []
+    # This CTest owns a private session bus without NM/UPower peers. Use it for
+    # optional observations too, so neither first start nor restart reads the
+    # execution machine's real metering, connectivity or power state.
+    fixture_env = dict(os.environ, DBUS_SYSTEM_BUS_ADDRESS=os.environ["DBUS_SESSION_BUS_ADDRESS"])
 
     def start(label, sources, maximum):
         profile = root / label
         config = profile / "config/aerial-lock/config.json"
         config.parent.mkdir(parents=True)
         publish(config, json.dumps({"sources": sources, "cache": {"maxBytes": maximum}}))
-        env = dict(os.environ, AERIAL_LOCK_SHELL=sys.argv[2])
+        env = dict(fixture_env, AERIAL_LOCK_SHELL=sys.argv[2])
         for kind in ("CONFIG", "CACHE", "STATE", "RUNTIME"):
             path = profile / kind.lower()
             path.mkdir(exist_ok=True)
@@ -118,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix="companion-queue-") as temporary:
         stop(process)
         # A new process reconciles the durable cache and never re-downloads a
         # representation solely because its previous process is gone.
-        env = dict(os.environ, AERIAL_LOCK_SHELL=sys.argv[2], XDG_CONFIG_HOME=str(profile / "config"),
+        env = dict(fixture_env, AERIAL_LOCK_SHELL=sys.argv[2], XDG_CONFIG_HOME=str(profile / "config"),
                    XDG_CACHE_HOME=str(profile / "cache"), XDG_STATE_HOME=str(profile / "state"), XDG_RUNTIME_DIR=str(profile / "runtime"))
         previous = len(read(jobs)["jobs"])
         with (profile / "restart.log").open("wb") as log:

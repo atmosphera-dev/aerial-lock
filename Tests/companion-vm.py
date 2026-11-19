@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 from fixture_files import publish
 from owned_instance import OwnedInstance, digest, session_identity
+from companion_install import private_executables, installed_private_executable
 
 
 def command(argv, **kwargs):
@@ -79,8 +80,9 @@ def prepare(args):
         if path.resolve(strict=True) != path or path.stat().st_uid != os.getuid():
             raise RuntimeError("unowned/symlink workspace path")
     stage = paths["stage"] / "usr"
-    required = [stage / "lib/aerial-lock" / name for name in
-                ("aerial-lock-run", "aerial-lock-auth", "aerial-lock-emergency")]
+    private = private_executables(paths["stage"])
+    required = [private / name for name in
+                ("aerial-lock-run", "aerial-lock-auth", "aerial-lock-emergency", "aerial-media-probe")]
     required += [stage / "bin/aerial"]
     required += [stage / "lib/aerial-lock/qt-plugins/generic" / name for name in
                  ("libAerialLockConnectionGuard.so", "libAerialLockSurfaceInput.so")]
@@ -92,7 +94,7 @@ def prepare(args):
     for path in paths["stage"].rglob("*"):
         if path.is_file():
             binaries[str(path)] = digest(path)
-    # Native helper paths are compiled /usr/lib/aerial-lock, not DESTDIR. They
+    # Native helper paths are compiled for the install layout, not DESTDIR. They
     # must match the staged payload, as must the bundle consumed at runtime.
     installed = {}
     for path in paths["stage"].rglob("*"):
@@ -180,7 +182,7 @@ def installed_session(args, case="cold-load"):
             for path, expected in self.owned.record["installed_hashes"].items():
                 if digest(path) != expected:
                     raise RuntimeError("installed payload changed before cold load: " + path)
-            runner = self.owned.check_binary(self.stage / "lib/aerial-lock/aerial-lock-run")
+            runner = self.owned.check_binary(private_executables(self.owned.paths["stage"]) / "aerial-lock-run")
             plugin_root = self.stage / "lib/aerial-lock/qt-plugins"
             for name in ("libAerialLockConnectionGuard.so", "libAerialLockSurfaceInput.so"):
                 self.owned.check_binary(plugin_root / "generic" / name)
@@ -249,8 +251,9 @@ def playback(args):
     try:
         session.start()
         fixture = session.output / "content"
+        installed_probe = installed_private_executable(session.owned, "aerial-media-probe")
         command([str(session.root / "build/debug/aerial-tests/companion-transfer-probe"), "--export", str(fixture),
-                 "/usr/lib/aerial-lock/aerial-media-probe"])
+                 str(installed_probe)])
         config = fixture / "config/aerial-lock/config.json"
         document = json.loads(config.read_text())
         document["acquisition"] = {"automatic": {"enabled": False}}

@@ -7,6 +7,7 @@ import threading
 
 from companion_locker import Companion, launch_episode, read_json, run, wait
 from fixture_files import publish
+from companion_install import installed_private_executable
 
 
 def fallback(args, installed_session):
@@ -18,7 +19,7 @@ def fallback(args, installed_session):
         session.start()
         exported = session.output / "export"
         run([str(session.root / "build/debug/aerial-tests/companion-transfer-probe"), "--export", str(exported),
-             "/usr/lib/aerial-lock/aerial-media-probe"], session.env)
+             str(installed_private_executable(session.owned, "aerial-media-probe"))], session.env)
         media = (exported / "fixture.mp4").read_bytes()
         bodies = {"/other.mp4": media, "/last.mp4": media + bytes(1024)}
         bodies["/manifest.json"] = json.dumps({"assets": [
