@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import time
 from types import SimpleNamespace
@@ -124,6 +125,17 @@ def validate_image(plan, root, image_sha256):
     if manifest.get('image_sha256') != image_sha256 or manifest.get('lock_sha256') != digest(lock) \
             or digest(lock) != plan['image_lock_sha256'] or manifest.get('tools') != plan['image_tools']:
         raise ValueError('image provenance differs from frozen tools/lock/bytes')
+
+
+def collect_image(image, results):
+    """Retain preparation failures without uploading images, keys or seeds."""
+    target = Path(results) / 'image-build'
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ('provision.log', 'provision-observation.json', 'failure.json', 'instance.json',
+                 'qemu.log', 'serial.log', 'ssh-errors.log', 'image-manifest.json', 'resolved-lock.json'):
+        source = Path(image) / name
+        if source.is_file() and not source.is_symlink():
+            shutil.copyfile(source, target / name)
 
 
 def result(plan, slice_id, directory, output):
@@ -307,6 +319,8 @@ def main():
     for name in ('plan', 'slice', 'source', 'config', 'image', 'sha256', 'results'): run.add_argument('--' + name, required=True)
     record = commands.add_parser('result')
     for name in ('plan', 'slice', 'results'): record.add_argument('--' + name, required=True)
+    collect = commands.add_parser('collect-image')
+    for name in ('image', 'results'): collect.add_argument('--' + name, required=True)
     join = commands.add_parser('merge')
     for name in ('plan', 'inputs', 'output'): join.add_argument('--' + name, required=True)
     join.add_argument('--matrix-status', default='success')
@@ -314,6 +328,9 @@ def main():
     for name in ('workspace', 'source', 'config', 'image', 'checksums'): reproduce.add_argument('--' + name, required=True)
     reproduce.add_argument('--revision', default='local-dirty')
     args = parser.parse_args()
+    if args.command == 'collect-image':
+        collect_image(args.image, args.results)
+        return 0
     if args.command == 'plan':
         value = freeze(args.source, args.revision, args.run, args.attempt)
         write(args.output, value)

@@ -117,6 +117,7 @@ jobs:
           SLICE_ID: ${{ matrix.slice }}
         run: |
           mkdir -p .ci-vm/results
+          python3 Tests/vm/acceptance.py collect-image --image .ci-vm/image --results .ci-vm/results
           python3 Tests/vm/acceptance.py result --plan .ci-vm/plan.json --slice "$SLICE_ID" --results .ci-vm/results
       - name: Upload only compact diagnostics
         if: always()

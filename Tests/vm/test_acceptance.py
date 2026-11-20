@@ -177,6 +177,20 @@ class Contract(unittest.TestCase):
         root.mkdir()
         self.assertEqual(a.result(self.plan, 'niri-smoke', root, root / 'slice.json')['status'], 'FAIL')
 
+    def test_image_failure_collection_keeps_diagnostics_not_private_storage(self):
+        image = self.root / 'image'
+        image.mkdir()
+        for name in ('provision.log', 'failure.json', 'serial.log', 'aerial-ci-arch-x86_64.qcow2', 'seed.iso', 'id_ed25519'):
+            (image / name).write_text('fixture')
+        (image / 'qemu.log').symlink_to(image / 'id_ed25519')
+        a.collect_image(image, self.output)
+        self.assertEqual({path.name for path in (self.output / 'image-build').iterdir()},
+                         {'provision.log', 'failure.json', 'serial.log'})
+
+    def test_absent_image_still_allows_combined_failure_collection(self):
+        a.collect_image(self.root / 'missing-image', self.output)
+        self.assertTrue((self.output / 'image-build').is_dir())
+
     def test_niri_recovery_rejects_desktop_frame_exposure(self):
         value = outcome('niri', 'emergency-recovery', 'main-crash')
         value['sampled_frames']['samples_with_desktop_marker'] = 2
