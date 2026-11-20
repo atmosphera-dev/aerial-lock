@@ -33,6 +33,7 @@ public:
     bool reconcile(const QSet<QString> &catalogue, const QSet<QString> &complete);
     QJsonObject jobs() const { return document.value("jobs").toObject(); }
     bool saveJob(const QString &key, const QJsonObject &job);
+    qint64 lastCheck() const { return document.value("lastCheck").toInteger(); }
     QJsonObject rotation() const { return document.value("rotation").toObject(); }
     bool beginRotation(const QString &victim, const QString &replacement);
     bool finishRotation();

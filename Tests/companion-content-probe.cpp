@@ -608,6 +608,24 @@ private slots:
         QVERIFY(QFileInfo::exists(linked)); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), "personal bytes");
     }
 
+    void plannerReceiptRetention()
+    {
+        QTemporaryDir root; qint64 now = 100000;
+        const auto old = representation("old-job").key, active = representation("active-job").key, fresh = representation("fresh-job").key;
+        {
+            PlannerState state(root.path(), [&] { return now; }, [] { return 0; });
+            QVERIFY(state.saveJob(old, {{"state", "succeeded"}, {"finishedAt", now}, {"kind", "refresh"}, {"checkedAt", now}}));
+            QVERIFY(state.saveJob(active, {{"state", "downloading"}, {"createdAt", now}, {"downloaded", 2}, {"assetTitle", "Saved title"}}));
+            now += 7 * 86400;
+        }
+        PlannerState restarted(root.path(), [&] { return now; }, [] { return 0; });
+        QCOMPARE(restarted.lastCheck(), qint64(100000)); QCOMPARE(restarted.jobs().value(active).toObject().value("downloaded").toInt(), 2);
+        QVERIFY(restarted.saveJob(fresh, {{"state", "queued"}})); QVERIFY(restarted.jobs().contains(old));
+        now += 1; QVERIFY(restarted.saveJob(fresh, {{"state", "queued"}}));
+        QVERIFY(!restarted.jobs().contains(old)); QVERIFY(restarted.jobs().contains(active));
+        QCOMPARE(restarted.lastCheck(), qint64(100000)); // history pruning does not invent a fresh check
+    }
+
     void plannerDurability()
     {
         QTemporaryDir root; QVERIFY(root.isValid());

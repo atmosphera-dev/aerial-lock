@@ -247,6 +247,18 @@ with managed, all-disabled, mixed and reenabled inventories. The installed
 and managed frames, unchanged running episodes after disablement, and solid
 all-disabled/exhausted fallback episodes, with ordinary PAM unlock each time.
 
+Presentation-contract tests cover structured parse locations, diagnostic
+permission transitions without byte/revision changes, external recovery and
+bundled descriptors independent of effective sources. Root CI permission probes
+drop only their own DAC bypass capabilities (including inheritance across their
+service child), never change accounts or file ownership. `companion-api` checks
+the actual diagnostic property signal as well as generated proxy reads.
+Queue tests retain names/counts across downloading restart and disabled-source
+invalidation, distinguish downloaded from already-ready clips, and test 404 then
+successful retry within the same clock tick. Injected-clock planner tests retain
+terminal jobs for seven days without discarding active jobs or refreshing the
+actual check timestamp on prune/history cleanup.
+
 ### Installed companion acceptance
 
 `companion-package.py` consumes a current `companion-vm.py --case prepare`

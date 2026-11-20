@@ -36,9 +36,9 @@ qint64 monotonicMilliseconds()
 
 Transfer::Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
                    QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent,
-                   std::function<qint64()> checkpointClock)
+                   std::function<qint64()> checkpointClock, QString publisherJob)
     : QObject(parent), cache(cache), transport(transport), rep(std::move(representation)),
-      probeExecutable(std::move(probeExecutable)), appleRoot(std::move(appleRoot)), clock(std::move(clock)),
+      probeExecutable(std::move(probeExecutable)), publisherJob(std::move(publisherJob)), appleRoot(std::move(appleRoot)), clock(std::move(clock)),
       checkpointClock(checkpointClock ? std::move(checkpointClock) : monotonicMilliseconds) {}
 
 Transfer::~Transfer()
@@ -205,7 +205,7 @@ void Transfer::probe()
         const auto result = worker->result();
         worker->deleteLater(); worker = nullptr;
         if (result.isEmpty()) { cache.discardPartial(rep.key); finish("ProbeFailed"); return; }
-        if (!cache.complete(rep, result, clock())) { finish("CacheFull"); return; }
+        if (!cache.complete(rep, result, clock(), publisherJob)) { finish("CacheFull"); return; }
         finish({});
     });
     worker->start(cache.openForProbe(rep.key));

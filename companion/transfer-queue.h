@@ -58,6 +58,8 @@ private:
     QString finalizeRotation();
     bool abandonRotation();
     void releaseActive();
+    void recordDownload(const QString &key);
+    void recordSourceResult(const QString &sourceId, const QString &code, int httpStatus);
     ConfigRepository &config;
     CacheStore &cache;
     PlannerState &state;

@@ -368,7 +368,17 @@ bool CacheStore::reconcile(const QSet<QString> &manifestPaths, const QSet<QStrin
     return ok;
 }
 
-bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, qint64 now)
+bool CacheStore::publishedBy(const QString &key, const QString &job) const
+{
+    if (job.isEmpty() || !contains(key)) return false;
+    for (const auto &value : completed) {
+        const auto entry = value.toObject();
+        if (entry.value("key").toString() == key) return entry.value("publisherJob").toString() == job;
+    }
+    return false;
+}
+
+bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, qint64 now, const QString &publisherJob)
 {
     if (!contentKey(rep.key) || !probe.value("initialFrameDecoded").toBool() || contains(rep.key)) return false;
     releaseReservation();
@@ -377,7 +387,8 @@ bool CacheStore::complete(const Representation &rep, const QJsonObject &probe, q
     if (!directory.identity(part, st) || st.st_size <= 0) return false;
     QJsonObject identity{{"inode", qint64(st.st_ino)},
         {"seconds", qint64(st.st_mtim.tv_sec)}, {"nanoseconds", qint64(st.st_mtim.tv_nsec)}};
-    const auto entry = mediaEntry(rep, probe, st.st_size, identity, now);
+    auto entry = mediaEntry(rep, probe, st.st_size, identity, now);
+    if (!publisherJob.isEmpty()) entry["publisherJob"] = publisherJob;
     if (!prepareTransaction("publish", entry)) return false;
     if (!directory.rename(part, object)) {
         if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;

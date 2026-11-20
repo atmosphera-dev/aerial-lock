@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QStringList>
 
 namespace Aerial {
@@ -18,6 +19,7 @@ struct ConfigDocument {
     QJsonObject user, projectedUser, effective, schema;
     QString profile, revision;
     QStringList diagnostics;
+    QJsonArray settingsDiagnostics, defaultSources;
     bool present = false, userValid = true, bundleValid = false, migrated = false;
     bool idleBundleValid = false;
     bool acquisitionAllowed() const { return bundleValid && userValid && sourcesValid; }

@@ -1,4 +1,5 @@
 #include "companion_client.h"
+#include "read-permissions.h"
 #include <QCoreApplication>
 #include <QDBusConnectionInterface>
 #include <QDBusReply>
@@ -12,9 +13,32 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <functional>
+
+class PropertyObserver : public QObject {
+    Q_OBJECT
+public:
+    QList<QVariantMap> updates;
+public slots:
+    void changed(const QString &interface, const QVariantMap &values, const QStringList &)
+    {
+        if (interface == "org.aeriallock.Aerial1") updates.append(values);
+    }
+};
+
+static bool until(const std::function<bool()> &predicate)
+{
+    QElapsedTimer deadline; deadline.start();
+    while (deadline.elapsed() < 5000) {
+        if (predicate()) return true;
+        QTest::qWait(10);
+    }
+    return false;
+}
 
 int main(int argc, char **argv)
 {
+    if (!ordinaryReadPermissions()) return 1;
     QCoreApplication app(argc, argv);
     Aerial::registerBusTypes();
     if (argc != 3) return 2;
@@ -43,6 +67,11 @@ int main(int argc, char **argv)
         QTest::qWait(10);
     }
     CompanionClient client("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1", bus);
+    PropertyObserver observer;
+    if (!bus.connect("org.aeriallock.Aerial1", "/org/aeriallock/Aerial1", "org.freedesktop.DBus.Properties", "PropertiesChanged",
+                     &observer, SLOT(changed(QString,QVariantMap,QStringList)))) qFatal("property subscription failed");
+    if (!client.settingsDiagnostics().isEmpty() || client.defaultSources().size() != 1 || client.lastCheck() != 0)
+        qFatal("initial presentation properties failed");
     auto first = client.GetSettings(); first.waitForFinished();
     if (first.isError()) qFatal("GetSettings: %s", qPrintable(first.error().message()));
     const auto revision = first.argumentAt<2>();
@@ -103,6 +132,33 @@ int main(int argc, char **argv)
     invalid = client.UpdateSettings(after.argumentAt<2>(), R"({"language":"fr"})"); invalid.waitForFinished();
     if (!invalid.isError() || !invalid.error().name().endsWith(".InvalidSetting")) qFatal("malformed config not protected");
     if (!file.open(QIODevice::ReadOnly) || file.readAll() != "{ invalid") qFatal("malformed bytes changed");
+    file.close();
+    if (client.settingsDiagnostics().size() != 1 || client.settingsDiagnostics()[0].value("code") != "MalformedJson") qFatal("diagnostic property missing");
+    if (!until([&] {
+            for (const auto &update : observer.updates) if (update.contains("SettingsDiagnostics")) return true;
+            return false;
+        })) qFatal("diagnostic PropertiesChanged missing");
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+    file.close(); after = client.GetSettings(); after.waitForFinished();
+    const auto emptyRevision = after.argumentAt<2>();
+    observer.updates.clear();
+    if (!QFile::setPermissions(path, {})) return 1;
+    if (!until([&] { return client.settingsDiagnostics().value(0).value("code") == "UnreadableFile"; })) qFatal("permission-only diagnostic not watched");
+    after = client.GetSettings(); after.waitForFinished();
+    if (after.argumentAt<2>() != emptyRevision) qFatal("permission-only transition changed the empty invalid revision");
+    if (!until([&] {
+            for (const auto &update : observer.updates) {
+                const auto diagnostics = qdbus_cast<Aerial::SourceList>(update.value("SettingsDiagnostics"));
+                if (!diagnostics.isEmpty() && diagnostics[0].value("code") == "UnreadableFile") return true;
+            }
+            return false;
+        })) qFatal("permission-only diagnostic signal missing");
+    if (!QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner)) return 1;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write("{\"sources\":[]}") != 14) return 1;
+    file.close();
+    if (!until([&] { return client.settingsDiagnostics().isEmpty(); })) qFatal("diagnostic recovery not watched");
+    if (client.defaultSources().size() != 1) qFatal("empty effective sources erased bundle descriptor");
     puts("COMPANION_API_PASS: generated client/service, uint64 properties, job objects/signals, profile isolation, no-reply ensure, revisions and malformed-file preservation");
     return 0;
 }
+#include "companion-api-probe.moc"

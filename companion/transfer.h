@@ -16,7 +16,7 @@ class Transfer : public QObject {
 public:
     Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
              QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent = nullptr,
-             std::function<qint64()> checkpointClock = {});
+             std::function<qint64()> checkpointClock = {}, QString publisherJob = {});
     ~Transfer();
     void start();
     void cancel(const QString &reason = "Cancelled");
@@ -39,6 +39,7 @@ private:
     HttpTransport &transport;
     Representation rep;
     QString probeExecutable;
+    QString publisherJob;
     QByteArray appleRoot;
     std::function<qint64()> clock;
     // Monotonic milliseconds, independent of persisted completion timestamps.

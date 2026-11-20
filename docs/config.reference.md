@@ -16,6 +16,14 @@ settings are rejected without applying valid siblings from the same transaction.
 Malformed/unreadable files are preserved and block acquisition and automatic
 writes; the locker can still use local/default presentation with no remote sources.
 
+`SettingsDiagnostics` exposes read-only codes (`UnreadableFile`, `MalformedJson`,
+`NonObject`, `InvalidField`, `InvalidSource`, `BrokenBundle`), severity and file,
+with a setting path or actual parse byte offset and 1-based line/column when
+available. It never includes JSON lines or configured URLs/tokens. Diagnostics
+update on permission changes too, even when bytes/revision are unchanged.
+Recovery is external editing/replacement; reading settings never repairs a
+broken file. Missing user configuration is valid inheritance, not an error.
+
 Your config is deep-merged onto the bundle defaults: a partial `panel` or
 `colors` object overrides only the fields it names, and omitted sibling
 fields keep their defaults. Arrays replace completely: an explicit `sources: []`
@@ -83,6 +91,10 @@ All-off and explicit `[]` both select no footage, never inherited Apple.
 Invalid `enabled` values drop hand-written entries; API edits reject the entire
 transaction. The effective view includes the boolean; omitted user fields stay
 sparse.
+
+The service's read-only `DefaultSources` property contains validated bundled
+descriptors independently of your source list. An explicit empty list does not
+erase that descriptor or silently enable it.
 Remote sources (`apple`/`community`) may also carry `minResolution` /
 `maxResolution` (`1080` or `2160`) — the hard band fetch stays within (see
 "Resolution"). An invalid band value drops the source with a warning.
@@ -231,6 +243,14 @@ or blank values are ignored with one warning per file; valid siblings still
 apply. Files are read once at startup, so edits apply on the next lock.
 
 ## Fetching remote sources
+
+Durable job `Details` includes `assetTitle`, `sourceName`, a cumulative
+`downloaded` count distinct from ready clips, and per-source `sourceResults`
+(stable code, optional HTTP status, check time and ordering sequence). A newer
+successful retry clears the source's old error. `ListSources` retains disabled
+sources, their cached counts, and active download counts. `LastCheck` records an
+actual automatic/refresh manifest attempt, not a manual fetch, prune or UI clock.
+Terminal receipts are retained for seven days; current jobs survive that window.
 
 The headless companion acquires configured remote sources automatically after
 user-manager startup. It chooses the smallest eligible known-size clip first,

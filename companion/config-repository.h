@@ -23,6 +23,7 @@ public:
     ConfigTransaction migrate();
 signals:
     void changed(const QString &revision, const QStringList &paths);
+    void diagnosticsChanged();
 private:
     ConfigTransaction transact(const QString &revision, const QJsonObject &patch, bool migration);
     bool prepareDirectory();

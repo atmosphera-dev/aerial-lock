@@ -30,11 +30,12 @@ public:
     bool writeMetadata(const QString &relative, const QJsonObject &object);
     QJsonObject metadata(const QString &relative) const;
     bool contains(const QString &key) const;
+    bool publishedBy(const QString &key, const QString &job) const;
     QJsonArray entries() const { return completed; }
     int openPartial(const QString &key, bool truncate = false) const;
     int openForProbe(const QString &key) const;
     bool append(int fd, const QByteArray &chunk);
-    bool complete(const Representation &rep, const QJsonObject &probe, qint64 now);
+    bool complete(const Representation &rep, const QJsonObject &probe, qint64 now, const QString &publisherJob = {});
     bool discardPartial(const QString &key);
     bool reconcile(const QSet<QString> &manifestPaths, const QSet<QString> &representationKeys);
     QJsonObject prune(bool dryRun, const QSet<QString> &protectedKeys = {}, quint64 needed = 0);

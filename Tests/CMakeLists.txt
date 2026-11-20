@@ -37,7 +37,10 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
     COMMAND Qt6::moc "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h" -o "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
     DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h")
-add_executable(companion-api-probe companion-api-probe.cpp
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-api-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc"
+    DEPENDS companion-api-probe.cpp)
+add_executable(companion-api-probe companion-api-probe.cpp "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc"
     "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp")
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
 target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${AERIAL_LOCK_SOURCE}")
@@ -166,7 +169,7 @@ add_test(NAME companion-provider COMMAND companion-content-probe resolver select
 add_test(NAME companion-prune-report COMMAND companion-content-probe pruneReportsRemovedMediaWhenReceiptCleanupFails)
 add_test(NAME companion-cache COMMAND companion-content-probe directoryDurability uncertainCacheCommit cacheAccountingAndOwnership loweredCapReclamation corruptPointerRecovery crashTransactions reconciliationOwnership recoveryReaderProtection persistedIdentitySurvivesMountDeviceChange metadataReadWriteLimit)
 add_test(NAME companion-snapshot COMMAND companion-content-probe snapshotPinningAndRestart nonblockingAndCorruption nativeEpisodeGeneration localFallbackInventory)
-add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerSelectionAndCadence plannerReadWriteLimit)
+add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerReceiptRetention plannerSelectionAndCadence plannerReadWriteLimit)
 # Explicit VM acceptance only: needs a dedicated small loop-mounted filesystem.
 # It must not fill the caller's normal workspace or the CI container filesystem.
 add_executable(companion-disk-probe companion-disk-probe.cpp
