@@ -1,0 +1,10 @@
+import QtQuick.tooling 1.2
+Module {
+    Component {
+        name: "Harness"
+        prototype: "Aerial::Settings::SettingsController"
+        exports: ["AerialLock.SettingsTest/Harness 1.0"]
+        isCreatable: false
+        isSingleton: true
+    }
+}

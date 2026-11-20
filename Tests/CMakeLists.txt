@@ -9,6 +9,7 @@ set(AERIAL_LOCK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
 get_filename_component(AERIAL_LOCK_SOURCE "${AERIAL_LOCK_SOURCE}" ABSOLUTE)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Test DBus Network)
 add_subdirectory("${AERIAL_LOCK_SOURCE}/common/client" "${CMAKE_CURRENT_BINARY_DIR}/client")
+add_subdirectory("${AERIAL_LOCK_SOURCE}/settings" "${CMAKE_CURRENT_BINARY_DIR}/settings")
 
 add_executable(native-input-probe native-input-probe.cpp)
 target_link_libraries(native-input-probe PRIVATE
@@ -123,6 +124,22 @@ set_target_properties(settings-client-probe PROPERTIES AUTOMOC ON)
 target_link_libraries(settings-client-probe PRIVATE aerial-client Qt6::Test)
 add_test(NAME settings-client COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-client.py"
     "$<TARGET_FILE:settings-client-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial" "${AERIAL_LOCK_SOURCE}")
+find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+foreach(probe IN ITEMS model quick)
+    add_executable(settings-${probe}-probe "${AERIAL_LOCK_SOURCE}/settings/tests/${probe}.cpp")
+    set_target_properties(settings-${probe}-probe PROPERTIES AUTOMOC ON)
+    target_link_libraries(settings-${probe}-probe PRIVATE aerial-settings-core Qt6::Test)
+    target_compile_definitions(settings-${probe}-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+endforeach()
+target_link_libraries(settings-quick-probe PRIVATE Qt6::QuickTest)
+add_executable(settings-visual-probe "${AERIAL_LOCK_SOURCE}/settings/tests/visual.cpp")
+target_link_libraries(settings-visual-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
+target_compile_definitions(settings-visual-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+add_dependencies(settings-model-probe settings-client-probe)
+add_test(NAME settings-model COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-model-probe>")
+add_test(NAME settings-single-instance COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-single-instance.py" "$<TARGET_FILE:aerial-settings>" "${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-qml COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-quick-probe>" -input "${AERIAL_LOCK_SOURCE}/settings/tests" -import "${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-fixture-cleanup COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-fixture-cleanup.py")
 add_test(NAME auth-handoff-driver
     COMMAND "${Python3_EXECUTABLE}" "${AERIAL_LOCK_SOURCE}/Tests/test-auth-handoff-driver.py")
 add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"

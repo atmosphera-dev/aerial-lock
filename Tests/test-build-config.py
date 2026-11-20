@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 from private_runtime import PrivateRuntime
 from companion_install import check_layout
@@ -75,6 +76,18 @@ def helper_path(plugin, expected, unexpected):
     assert str(unexpected).encode(encoding) not in payload, f"stale helper path in {plugin}: {unexpected}"
 
 
+def touch_after_outputs(header, *outputs):
+    """Establish a newer prerequisite even on coarse inode timestamp clocks."""
+    baseline = max(path.stat().st_mtime_ns for path in outputs)
+    deadline = time.monotonic() + 5
+    while True:
+        header.touch()
+        if header.stat().st_mtime_ns > baseline:
+            return
+        assert time.monotonic() < deadline, "filesystem did not advance the header timestamp"
+        time.sleep(.01)
+
+
 def paths(fixture, runtime):
     root, tree, a, b = fixture.locations()
     make = fixture.make
@@ -133,10 +146,27 @@ def paths(fixture, runtime):
     registration = tree / "build/surface-input.o"
     before_registration = registration.stat().st_mtime_ns
     header = tree / "common/config-document.h"
-    header.touch()
+    touch_after_outputs(header, registration)
     make(b)
     assert registration.stat().st_mtime_ns > before_registration, "transitive config layout left stale QML registration"
     assert "common/config-document.h" in (tree / "build/surface-input.d").read_text()
+    nested_settings = tree / "build/settings/aerial-settings"
+    settings_object = tree / "build/settings/CMakeFiles/aerial-settings.dir/main.cpp.o"
+    settings_before = nested_settings.stat().st_mtime_ns
+    object_before = settings_object.stat().st_mtime_ns
+    touch_after_outputs(tree / "native/shell-dir.h", settings, nested_settings, settings_object)
+    make(b, "settings/aerial-settings")
+    assert nested_settings.stat().st_mtime_ns > settings_before, "external shell-dir header left the nested settings app stale"
+    assert settings_object.stat().st_mtime_ns > object_before, "external shell-dir header did not recompile its consumer"
+    wrapper = root / "cxx-wrapper"
+    calls = root / "wrapper-calls.log"
+    calls.unlink(missing_ok=True)
+    wrapper.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shlex.quote(str(calls)) + "\nexec \"$@\"\n")
+    wrapper.chmod(0o700)
+    with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
+        make(b, "settings/aerial-settings", "CXX=" + wrapper.name + " g++")
+    assert "main.cpp" in calls.read_text(), "compiler wrapper did not build settings sources"
+    assert "service-connection.cpp" in calls.read_text(), "compiler wrapper did not build the shared client"
 
 
 def dev(fixture, runtime):

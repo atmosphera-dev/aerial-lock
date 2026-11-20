@@ -51,6 +51,7 @@ CMAKE_CXX_COMPILER = $(lastword $(CMAKE_CXX_PROGRAMS))
 CMAKE_CXX_LAUNCHER = $(subst $(space),;,$(filter-out $(CMAKE_CXX_COMPILER),$(CMAKE_CXX_PROGRAMS)))
 CMAKE_CXX_ARGUMENTS = $(call cxx_arguments,$(CXX))
 CLIENT_ARCHIVE := $(CLIENT_BUILD)/libaerial-client.a
+SETTINGS_BUILD := $(OBJDIR)/settings
 CLI_OBJS := $(OBJDIR)/aerialctl.o
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
@@ -60,7 +61,7 @@ INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 .PHONY: all install uninstall dev clean pam-limits build-flags force-native-config
 
-all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial companion/aerial-media-probe cli/aerialctl
+all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial companion/aerial-media-probe cli/aerialctl settings/aerial-settings
 
 # Let the compiler own the complete transitive header graph. Private flags do
 # not leak into shared code-generation/config prerequisites or link commands.
@@ -309,6 +310,11 @@ $(OBJDIR)/aerialctl.o: cli/aerialctl.cpp $(CLIENT_ARCHIVE) common/config-documen
 cli/aerialctl: $(CLI_OBJS) $(CLIENT_ARCHIVE)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(CLI_OBJS) $(CLIENT_ARCHIVE) $$(pkg-config --libs Qt6Core Qt6DBus)
 
+settings/aerial-settings: native/shell-dir.h $(CLIENT_ARCHIVE) $(shell find settings -type f ! -name aerial-settings) $(OBJDIR)/native-config
+	cmake -S settings -B "$(SETTINGS_BUILD)" -G Ninja -DCMAKE_CXX_COMPILER="$(CMAKE_CXX_COMPILER)" -DCMAKE_CXX_COMPILER_LAUNCHER="$(CMAKE_CXX_LAUNCHER)" -DCMAKE_CXX_FLAGS="$(CMAKE_CXX_ARGUMENTS) $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS)" -DCMAKE_EXE_LINKER_FLAGS="$(LDFLAGS)" -DAERIAL_COMPANION_DATADIR="$(DATADIR)" -DAERIAL_CLIENT_ARCHIVE="$(abspath $(CLIENT_ARCHIVE))"
+	cmake --build "$(SETTINGS_BUILD)" -j2
+	cp "$(SETTINGS_BUILD)/aerial-settings" $@
+
 $(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
 	/usr/lib/qt6/moc $< -o $@
 
@@ -473,6 +479,8 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/LICENSE $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/third-party-notices.md
 
 clean:
+	$(if $(wildcard $(SETTINGS_BUILD)/build.ninja),cmake --build "$(SETTINGS_BUILD)" --target clean, :)
+	rm -f settings/aerial-settings
 	$(if $(wildcard $(CLIENT_BUILD)/build.ninja),cmake --build "$(CLIENT_BUILD)" --target clean, :)
 	rm -f gen-pam-limits.tmp Config/pam-limits.json Config/build-flags.json
 	rm -f recovery/aerial-unlock recovery/ext-session-lock-v1-client.h recovery/ext-session-lock-v1-protocol.c
