@@ -215,7 +215,7 @@ bool CacheStore::canAcquire(const Representation &rep, const QString &evict) con
         if (victim < 0) return false;
         const auto entry = inventory[victim].toObject();
         const auto usable = [this](const QJsonValue &value) {
-            return !configuredSources || configuredSources->contains(value.toObject().value("sourceId").toString());
+            return !playbackSources || playbackSources->contains(value.toObject().value("sourceId").toString());
         };
         if (usable(entry) && std::count_if(inventory.begin(), inventory.end(), usable) <= 1) return false;
         struct stat file{};
@@ -443,7 +443,7 @@ bool CacheStore::persistIndex(bool reclamation)
 
 QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, quint64 needed)
 {
-    QJsonObject result{{"removedBytes", qint64(0)}, {"protected", false}, {"dryRun", dryRun}};
+    QJsonObject result{{"removedBytes", qint64(0)}, {"removedFiles", 0}, {"protected", false}, {"dryRun", dryRun}};
     if (!pending.isEmpty()) {
         if (!dryRun && !recoverTransaction()) { owned = false; result["error"] = "StorageError"; return result; }
         if (!pending.isEmpty()) { result["protected"] = true; return result; }
@@ -454,11 +454,12 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
         result["protected"] = true; return result;
     }
     quint64 removed = 0;
+    int removedFiles = 0;
     auto candidates = completed;
     // Protect the last fallback the consumer can actually use, not a clip from
     // a removed source. The playback lock still protects every old generation.
     const auto usable = [this](const QJsonObject &entry) {
-        return !configuredSources || configuredSources->contains(entry.value("sourceId").toString());
+        return !playbackSources || playbackSources->contains(entry.value("sourceId").toString());
     };
     while (!candidates.isEmpty()) {
         const auto usableCount = std::count_if(candidates.begin(), candidates.end(), [&](const QJsonValue &entry) { return usable(entry.toObject()); });
@@ -489,10 +490,14 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
                 if (directory.lastMutation() == OwnedDirectory::Mutation::Unsynchronized) owned = false;
                 pending = metadata("pending.json"); break;
             }
+            removed += st.st_size;
+            ++removedFiles;
             observe("removed");
             if (!removeFile("pending.json")) { owned = false; break; }
+        } else {
+            removed += st.st_size;
+            ++removedFiles;
         }
-        removed += st.st_size;
         if (needed && removed >= needed) break;
     }
     // Old generations can be removed only under the same reader lock. Their
@@ -507,6 +512,7 @@ QJsonObject CacheStore::prune(bool dryRun, const QSet<QString> &protectedKeys, q
     close(lock);
     if (!owned) result["error"] = "StorageError";
     result["removedBytes"] = qint64(removed);
+    result["removedFiles"] = removedFiles;
     return result;
 }
 

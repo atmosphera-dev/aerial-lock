@@ -54,10 +54,25 @@ def main():
         environment = dict(os.environ, **record["environment"],
                            XDG_CONFIG_HOME=str(fixture / "config"), XDG_CACHE_HOME=str(fixture / "cache"),
                            XDG_STATE_HOME=str(fixture / "state"), LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
+        original = json.loads((config / "config.json").read_text())["sources"][0]
+        personal = fixture / "personal"
+        personal.mkdir()
+        shutil.copyfile(fixture / "fixture.mp4", personal / "personal.mp4")
+        legacy_off = fixture / "cache/aerial-lock/Apple-Off"
+        (legacy_off / "videos").mkdir(parents=True)
+        shutil.copyfile(fixture / "fixture.mp4", legacy_off / "videos/legacy.mp4")
+        (legacy_off / "videos/legacy.mp4.done").touch()
+        (legacy_off / "entries.json").write_text('{"assets":[{"id":"legacy","title":"Mountain legacy"}]}')
+        disabled = [dict(original, enabled=False),
+                    dict(id="apple-off", type="apple", name="Apple Off", source="https://example.test/off.json", enabled=False),
+                    dict(id="folder-off", type="folder", name="Folder Off", source=str(personal), enabled=False),
+                    dict(id="file-off", type="file", name="File Off", source=str(fixture / "fixture.mp4"), enabled=False)]
+        cases = {"managed": [original], "disabled": disabled,
+                 "mixed": disabled[1:] + [original], "empty": [],
+                 "reenabled": [dict(original, enabled=True)]}
         results = {}
-        for label in ("managed", "empty"):
-            if label == "empty":
-                (config / "config.json").write_text('{"sources":[]}')
+        for label, sources in cases.items():
+            (config / "config.json").write_text(json.dumps({"sources": sources}))
             raw_log = output / (label + "-raw.log")
             with raw_log.open("w") as log:
                 process = subprocess.Popen(["bash", str(source / "Scripts/aerial-lock-run"), "--shell-dir", str(shell),
@@ -76,7 +91,7 @@ def main():
             if len(lines) != 1 or re.search(r"(ReferenceError|TypeError|is not a type|Cannot assign)", text):
                 raise RuntimeError(text)
             observed = json.loads(lines[0]); results[label] = observed
-            if label == "managed":
+            if label in ("managed", "mixed", "reenabled"):
                 assert len(observed["playlist"]) == 1 and len(observed["metadata"]) == 1, observed
                 metadata = observed["metadata"][0]
                 assert metadata["id"] == "opaque/asset" and metadata["secondaryName"] == "Mountain fixture", observed

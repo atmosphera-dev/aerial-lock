@@ -1,5 +1,6 @@
 #include "source-resolver.h"
 #include "../common/content-snapshot.h"
+#include "../common/config-document.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -135,6 +136,7 @@ QList<Representation> SourceResolver::select(const QList<Representation> &all, c
                                             int preferred, const QList<int> &allowed, bool manual)
 {
     // Keep provider order only for codec preference at the same height.
+    if (!sourceEnabled(source)) return {};
     QMap<QString, QMap<int, Representation>> assets;
     const auto low = source.value("minResolution").toInt(0), high = source.value("maxResolution").toInt(2160);
     for (const auto &rep : all) {

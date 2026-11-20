@@ -74,6 +74,15 @@ Each entry needs `type`, `name`, and `source` (all strings). `type` is one
 of `file`, `folder`, `apple`, `community`. A malformed or unknown entry is
 dropped with a startup warning naming its index (`sources[2].type`); the
 rest of the list is kept. `~` and `$HOME` expand in `file`/`folder` paths.
+Every source type accepts optional boolean `enabled`, defaulting to `true`.
+`false` excludes it from automatic and manual acquisition, manifest refresh and
+the next lock's playback/fallback. An already-running lock keeps its frozen
+episode. Disabling retains the entry, stable ID, cached clips and compatible
+partials; reenabling reuses them. It is not a removal or cleanup operation.
+All-off and explicit `[]` both select no footage, never inherited Apple.
+Invalid `enabled` values drop hand-written entries; API edits reject the entire
+transaction. The effective view includes the boolean; omitted user fields stay
+sparse.
 Remote sources (`apple`/`community`) may also carry `minResolution` /
 `maxResolution` (`1080` or `2160`) — the hard band fetch stays within (see
 "Resolution"). An invalid band value drops the source with a warning.

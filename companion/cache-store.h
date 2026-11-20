@@ -19,7 +19,9 @@ public:
     bool recover();
     QString path() const { return directory.path(); }
     void configure(quint64 maximum, quint64 reserve) { cap = maximum; freeReserve = reserve; }
-    void setSources(const QSet<QString> &sources) { configuredSources = sources; }
+    // Playback eligibility protects the last usable fallback. It does not
+    // alter owned inventory or the all-configured reconciliation catalogue.
+    void setPlaybackSources(const QSet<QString> &sources) { playbackSources = sources; }
     CacheUsage usage() const;
     bool reserve(quint64 remaining);
     void releaseReservation() { remaining = 0; }
@@ -52,6 +54,6 @@ private:
     QJsonObject pending;
     quint64 cap = 0, freeReserve = 0, remaining = 0;
     QJsonArray completed;
-    std::optional<QSet<QString>> configuredSources;
+    std::optional<QSet<QString>> playbackSources;
 };
 }

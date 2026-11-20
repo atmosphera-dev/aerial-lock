@@ -124,7 +124,7 @@ QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, QSt
         const auto name = source.value("name").toString();
         const auto url = source.value("source").toString();
         QString reason;
-        if (!completeValue(list.at(i), spec)) reason = " has invalid type/name/source/id/resolution fields";
+        if (!completeValue(list.at(i), spec)) reason = " has invalid type/name/source/id/enabled/resolution fields";
         if (source.contains("minResolution") && source.contains("maxResolution")
             && source.value("minResolution").toDouble() > source.value("maxResolution").toDouble())
             reason = " has an inverted resolution band";
@@ -151,6 +151,7 @@ QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, QSt
         }
         source["safeName"] = filtered;
         source["id"] = id;
+        source["enabled"] = sourceEnabled(source);
         names.insert(filtered);
         identities.insert(id);
         result.append(source);

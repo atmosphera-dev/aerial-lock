@@ -34,5 +34,7 @@ QJsonObject mergePatch(QJsonObject base, const QJsonObject &patch);
 QStringList validatePatch(const QJsonObject &patch, const QJsonObject &schema);
 QStringList changedPaths(const QJsonObject &patch, const QString &prefix = {});
 QString sourceIdentity(const QJsonObject &source);
+// Selection only. Disabled sources remain configured owners of cached data.
+inline bool sourceEnabled(const QJsonObject &source) { return source.value("enabled").toBool(true); }
 
 }

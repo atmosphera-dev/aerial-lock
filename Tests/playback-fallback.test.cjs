@@ -61,3 +61,15 @@ test('last frame updates in-episode recency without changing the frozen pool', (
     content.reportPlayback('/other')
     assert.deepEqual(paths(content.fallbackPlaylist()), ['/other'])
 })
+
+test('source selection excludes all disabled types before inventory and metadata indexing', () => {
+    const content = owner('/disabled')
+    const input = ['apple', 'community', 'folder', 'file'].flatMap(type => [
+        { type, id: type + '-off', enabled: false }, { type, id: type + '-on', enabled: true }, { type, id: type + '-old' },
+    ])
+    const selected = content.enabledSources(input)
+    assert.deepEqual(Array.from(selected, item => item.id), input.filter(item => item.enabled !== false).map(item => item.id))
+    assert.equal(input.length, 12, 'selection never removes configured ownership')
+    content._inventory = [] // all-off is not missing/empty configuration inheritance
+    assert.deepEqual(paths(content.fallbackPlaylist()), [])
+})

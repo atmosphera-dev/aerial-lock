@@ -1,4 +1,5 @@
 #include "acquisition-planner.h"
+#include "../common/config-document.h"
 
 #include <QSet>
 #include <algorithm>
@@ -20,6 +21,7 @@ AcquisitionPlan AcquisitionPlanner::evaluate(const QJsonObject &settings, const 
     QJsonArray active;
     for (const auto &value : settings.value("sources").toArray()) {
         const auto source = value.toObject();
+        if (!sourceEnabled(source)) continue;
         if (source.value("type") != "apple" && source.value("type") != "community") continue;
         const auto id = source.value("id").toString(); configured.insert(id);
         if (!sourceIds.isEmpty() && !sourceIds.contains(id)) continue;

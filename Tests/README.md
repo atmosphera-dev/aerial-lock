@@ -237,6 +237,16 @@ honest storage-error/unknown-usage reporting without adopting foreign files.
 `UsageKnown=false` means byte totals are unavailable, not an empty managed cache.
 These checks do not replace installed activation or rendered-lock acceptance.
 
+Source enablement coverage includes all four source types and sparse defaults
+in `companion-config`, provider/planner/snapshot filtering, and automatic/manual
+queue invalidation during queued, manifest, sizing and transfer work. Disabled
+IDs cannot force a fetch/refresh; partials and completed objects survive for
+reenabling. `companion-source-cache.py` cold-loads the actual selection owner
+with managed, all-disabled, mixed and reenabled inventories. The installed
+`companion-vm.py --case locker --backend niri` also observes decoded personal
+and managed frames, unchanged running episodes after disablement, and solid
+all-disabled/exhausted fallback episodes, with ordinary PAM unlock each time.
+
 ### Installed companion acceptance
 
 `companion-package.py` consumes a current `companion-vm.py --case prepare`

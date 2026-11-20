@@ -83,10 +83,11 @@ qulonglong CompanionService::partialBytes() const { return cache && usageKnown()
 qulonglong CompanionService::reservedBytes() const { return cache && usageKnown() ? cache->usage().reserved : 0; }
 qulonglong CompanionService::maxBytes() const { return config.document().effective.value("cache").toObject().value("maxBytes").toInteger(); }
 qulonglong CompanionService::nextCheck() const { return queue ? std::max<qint64>(0, queue->nextCheck()) : 0; }
-QJsonArray CompanionService::configuredEntries() const
+QJsonArray CompanionService::configuredEntries(bool enabledOnly) const
 {
     QSet<QString> configured;
-    for (const auto &source : config.document().effective.value("sources").toArray()) configured.insert(source.toObject().value("id").toString());
+    for (const auto &source : config.document().effective.value("sources").toArray())
+        if (!enabledOnly || sourceEnabled(source.toObject())) configured.insert(source.toObject().value("id").toString());
     QJsonArray result;
     if (cache) {
         const auto visible = cache->valid() ? cache->entries() : ContentSnapshot(cache->path()).entries();
@@ -95,7 +96,7 @@ QJsonArray CompanionService::configuredEntries() const
     }
     return result;
 }
-uint CompanionService::readyClips() const { return uint(configuredEntries().size()); }
+uint CompanionService::readyClips() const { return uint(configuredEntries(true).size()); }
 QVariantMap CompanionService::paths() const
 {
     const auto &paths = config.document().paths;
@@ -199,8 +200,8 @@ SourceList CompanionService::ListSources()
         const bool remote = source.value("type") == "apple" || source.value("type") == "community";
         // URL/path disclosure is restricted to explicit GetSettings inspection.
         result.append({{"id", source.value("id").toString()}, {"name", source.value("name").toString()},
-            {"type", source.value("type").toString()}, {"readyClips", count}, {"errorCode", diagnostic},
-            {"state", !remote ? QString("unmanaged") : count ? QString("ready") : diagnostic.isEmpty() ? status() : QString("error")}});
+            {"type", source.value("type").toString()}, {"enabled", sourceEnabled(source)}, {"readyClips", count}, {"errorCode", diagnostic},
+            {"state", !sourceEnabled(source) ? QString("disabled") : !remote ? QString("unmanaged") : count ? QString("ready") : diagnostic.isEmpty() ? status() : QString("error")}});
     }
     return result;
 }
