@@ -1,0 +1,27 @@
+import QtQuick.tooling 1.2
+Module {
+    Component {
+        name: "Aerial::Settings::SettingsController"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/SettingsController 1.0"]
+        isCreatable: false
+        Property { name: "controls"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "panel"; type: "QString"; isReadonly: true }
+        Property { name: "diagnostic"; type: "QString"; isReadonly: true }
+        Property { name: "status"; type: "QString"; isReadonly: true }
+        Property { name: "connectionObservation"; type: "QString"; isReadonly: true }
+        Property { name: "powerObservation"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method {
+            name: "edit"
+            Parameter { name: "key"; type: "QString" }
+            Parameter { name: "value"; type: "QVariant" }
+        }
+        Method { name: "retry" }
+        Method {
+            name: "choose"
+            Parameter { name: "key"; type: "QString" }
+            Parameter { name: "token"; type: "QString" }
+        }
+    }
+}
