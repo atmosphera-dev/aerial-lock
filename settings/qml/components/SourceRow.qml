@@ -24,6 +24,7 @@ Item {
         id: line
         anchors.fill: parent
         anchors.margins: 10
+        anchors.leftMargin: 6
         spacing: 12
         Item {
             objectName: "sourceGrip"

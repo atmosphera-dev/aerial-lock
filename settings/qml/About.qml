@@ -6,7 +6,9 @@ UI.Page {
     id: root
     required property SettingsController controller
     title: "About"
+    headingSpacing: 8
     RowLayout {
+        objectName: "aboutIdentity"
         Layout.fillWidth: true
         spacing: 18
         UI.AppIcon { Layout.preferredWidth: 60; Layout.preferredHeight: 60 }

@@ -26,20 +26,33 @@ runner and `settings/tests/` input, not the generic locker QML runner. Its wrapp
 rejects warnings from the complete construction-to-teardown log.
 
 For native settings checks, `Tests/settings-vm.py` accepts `--root`, `--vm-record`,
-`--host-receipt` (prepare only), and `--case prepare|cold-load|visuals`.
+`--host-receipt` (prepare only), and `--case` with `prepare`, `cold-load`,
+`controls`, `failure-recovery`, `portals`, `tray`, `units`, `install` or `visuals`.
 After delivery and test-build configuration, run `python3 Tests/settings-build.py
 <guest-workspace>` inside the owned guest with its disk-backed TMPDIR. The builder
 checks the source freeze before and after compiling and records output hashes in
 `run/settings-build.json`. Prepare verifies that existing build receipt; refreshing
 the source freeze without rebuilding cannot relabel stale binaries. It then
 binds source hashes, binaries and the actual niri session to the fork receipt;
-it never creates PAM fixtures. The other cases use a private service profile,
-confirm a single actual window and token-assisted focus from another owned
-window, compare a CLI-edited frame, and close naturally while the service stays
-alive. Visuals also renders the production window with deterministic injected
-dark/light palettes in a test-only harness. This proves build-tree behavior;
-installed-payload qualification is separate. All run inside the owned VM with
+it never creates PAM fixtures. Cold-load and visuals use a private service
+profile, confirm a single actual window and token-assisted focus from another
+owned window, compare a CLI-edited frame, and close naturally while the service
+stays alive. Controls and failure-recovery drive production QML/controllers in test
+harnesses with service/CLI readback; portals, tray and units exercise their real
+desktop consumers or user manager. Visuals also renders the production window
+with deterministic injected dark/light palettes in a test-only harness. This
+proves build-tree behavior; installed-payload qualification is separate. All run
+inside the owned VM with
 TMPDIR on its disk-backed workspace, never on a physical host.
+
+The `install` case builds a labelled exact-tree package using the retained AUR
+recipe with CMake/Ninja added as build tools, without changing runtime
+dependencies or the release recipe. It validates the scalable icons, theme
+previews, desktop/D-Bus/unit payload and actual installed preview reads. A
+disposable account has empty sources before its user manager starts. Installed
+desktop activation uses one window; install/reinstall starts no tray/idle,
+preserves user enablement and does not restart the content service. It never
+unmasks the desktop account's content service.
 
 The `Checks` GitHub workflow runs on pushes and PRs to master, using Blacksmith
 `blacksmith-8vcpu-ubuntu-2404` x64 VMs (8 vCPU, 32 GB RAM, 160 GB disk).

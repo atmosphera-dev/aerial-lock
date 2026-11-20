@@ -152,6 +152,10 @@ and can leave reported over-budget bytes until readers release; it never deletes
 live playlist files to force numerical compliance. The last verified fallback
 is protected. The cap limits storage, not lifetime/monthly download traffic.
 
+In the app's meter, Stored data includes completed clips and managed metadata;
+partial downloads are its separate, non-overlapping segment. Reservations add
+only the bytes still to be received.
+
 Durable jobs, retries, rotation and playback recency use
 `$XDG_STATE_HOME/aerial-lock/` (default `~/.local/state/...`); runtime coordination
 uses `$XDG_RUNTIME_DIR/aerial-lock/`. Bulk staging stays in the disk cache.
@@ -306,6 +310,13 @@ Bundled: `Macintosh.qml`, `Windows7.qml`, `MaterialYou.qml`, `Enfield.qml`,
 `Clockwork.qml`. See `docs/theming.md` for the authoring contract, the
 context object, and the topic-preference semantics that let a theme bias
 which of your configured clips play (Enfield prefers mountains).
+
+The Aerial app's Lock screen page shows a thumbnail for each theme from
+`previews/<Name>.png` next to the theme file (for example
+`/usr/share/aerial-lock/Themes/previews/Enfield.png` or
+`~/.config/aerial-lock/themes/previews/MyTheme.png`). It only reads these PNGs
+and never loads theme QML; a theme without one shows its name. Selecting a
+theme writes `theme` as usual.
 
 New managed clips play only after successful transfer, size/checksum checks when
 available, isolated initial-frame decoding, immutable publication and indexing.

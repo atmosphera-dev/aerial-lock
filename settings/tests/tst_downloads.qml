@@ -17,7 +17,7 @@ TestCase {
         UI.SourceRow { sourceId: "fixture"; title: "Source"; toggle: () => {}; edit: () => {}; remove: () => {}; retry: () => {}; beginDrag: () => {} }
     }
     Component { id: themeComponent; UI.ThemeCard { text: "Theme without a preview" } }
-    Component { id: cacheComponent; UI.CacheMeter { usage: "2 GB of 10 GB used"; free: "8 GB free"; segments: [{ kind: "videos", fraction: 0.2 }]; legend: [{ kind: "videos", label: "Videos 2 GB" }] } }
+    Component { id: cacheComponent; UI.CacheMeter { usage: "2 GB of 10 GB used"; free: "8 GB free"; segments: [{ kind: "stored", fraction: 0.2 }]; legend: [{ kind: "stored", label: "Stored data 2 GB" }] } }
     function test_sharedComponents() {
         for (const component of [sourceComponent, themeComponent, cacheComponent]) {
             const item = createTemporaryObject(component, test, { width: 600 });

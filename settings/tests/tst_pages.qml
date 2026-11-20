@@ -17,6 +17,30 @@ TestCase {
     SourceSheet { id: sheet; sources: Harness.sources; parent: test }
     CleanupSheet { id: cleanupSheet; cache: Harness.cache; parent: test }
     SignalSpy { id: trayIntent; target: Harness; signalName: "trayChangeRequested" }
+    Image {
+        id: previewCard
+        x: 20; y: 20; width: 200; height: 125
+        visible: false
+        source: Harness.themes.rows.length ? Harness.themes.rows[0].preview : ""
+    }
+    function test_previewReplacementPixels() {
+        currentPage = -1;
+        previewCard.visible = true;
+        try {
+            Harness.retry();
+            tryVerify(() => Harness.themes.rows.length > 0);
+            Harness.replacePreview("#ff0000");
+            tryVerify(() => Harness.themes.rows.length > 0 && Harness.themes.rows[0].user);
+            tryVerify(() => Qt.colorEqual(Harness.pixels(previewCard, [{ x: 50, y: 50 }])[0], "#ff0000"));
+            const previous = String(previewCard.source);
+            Harness.replacePreview("#0000ff");
+            tryVerify(() => String(previewCard.source) !== previous);
+            tryVerify(() => Qt.colorEqual(Harness.pixels(previewCard, [{ x: 50, y: 50 }])[0], "#0000ff"));
+        } finally {
+            previewCard.visible = false;
+            Harness.replacePreview("");
+        }
+    }
     function test_aboutTrayIntentAndNoHost() {
         currentPage = 3;
         const toggle = findChild(about, "about-tray");
@@ -87,6 +111,23 @@ TestCase {
         }
     }
     function test_pageGeometry_data() { return [{ tag: "reference", width: 672 }, { tag: "compact", width: 432 }, { tag: "wide", width: 992 }]; }
+    function test_headingSpacing_data() { return [{ tag: "about", index: 3, name: "aboutIdentity", gap: 8 }, { tag: "cache", index: 0, name: "cacheHero", gap: 14 }]; }
+    function test_headingSpacing(data) {
+        currentPage = data.index;
+        verify(waitForPolish(test.Window.window));
+        const page = [cache, lock, sources, about][data.index];
+        const heading = findChild(page, "pageHeading");
+        const body = findChild(page, data.name);
+        const end = heading.mapToItem(page, 0, heading.height).y;
+        fuzzyCompare(body.mapToItem(page, 0, 0).y - end, data.gap, 0.01);
+    }
+    function test_cacheReadinessSpacing() {
+        currentPage = 0;
+        verify(waitForPolish(test.Window.window));
+        const hero = findChild(cache, "cacheHero");
+        const facts = findChild(cache, "cacheReadiness");
+        fuzzyCompare(facts.mapToItem(cache, 0, 0).y - hero.mapToItem(cache, 0, hero.height).y, 12, 0.01);
+    }
     function test_pageGeometry(data) {
         test.width = data.width;
         for (const pair of [{ page: cache, index: 0, name: "cache.maxBytes" }, { page: lock, index: 1, name: "idleTimeout" }]) {

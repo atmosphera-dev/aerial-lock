@@ -19,6 +19,7 @@ public:
     Q_INVOKABLE void confirmCleanup();
     Q_INVOKABLE void dismissCleanup();
     static QString bytes(qulonglong value);
+    static QVariantMap storageFacts(const QVariantMap &properties);
 signals:
     void changed();
 private:

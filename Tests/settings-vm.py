@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Receipt-bound settings acceptance, only in the owned guest; never locks.
 
-Build-tree app qualification. Installed exact payload is P7. Unimplemented phase
-cases fail explicitly, never skip. Native portal peers use real desktop consumers.
+Build-tree app qualification; `install` builds and installs an exact-tree guest
+test package. Native portal peers use real desktop consumers.
 """
 import argparse
 import hashlib
@@ -12,6 +12,7 @@ from pathlib import Path
 import pwd
 import signal
 import subprocess
+import sys
 import time
 
 from fixture_files import publish
@@ -23,6 +24,10 @@ from settings_build import binary_paths, quick_test_inputs, verify_build
 
 def run(argv, **kwargs):
     return subprocess.run(argv, check=True, timeout=30, **kwargs)
+
+
+def probe_command(source, *arguments):
+    return [sys.executable, str(source / "Tests/run-settings-test.py"), *map(str, arguments)]
 
 
 def prepare(args):
@@ -204,13 +209,13 @@ def native(args):
                 for palette in ("dark", "light"):
                     visual = owned.check_binary(owned.paths["build"] / "settings-visual-probe")
                     path = output / ("downloads-" + palette + ".png")
-                    probe = run(["dbus-run-session", "--", str(visual), palette, str(path)], env=env, capture_output=True, text=True)
+                    probe = run(probe_command(source, visual, palette, path), env=env, capture_output=True, text=True)
                     publish(output / ("visual-" + palette + ".log"), probe.stdout + probe.stderr)
                     assert not probe.stdout + probe.stderr, "unexpected visual probe log"
                     assert path.is_file()
                     captures.append(str(path))
                     pages = output / ("pages-" + palette); pages.mkdir()
-                    probe = run(["dbus-run-session", "--", str(visual), "--pages", palette, str(pages)], env=env, capture_output=True, text=True)
+                    probe = run(probe_command(source, visual, "--pages", palette, pages), env=env, capture_output=True, text=True)
                     publish(output / ("visual-pages-" + palette + ".log"), probe.stdout + probe.stderr)
                     assert not probe.stdout + probe.stderr, "unexpected page visual probe log"
                     captures += sorted(str(p) for p in pages.glob("*.png"))
@@ -241,13 +246,13 @@ def main():
             result = prepare(args)
         elif args.case in ("cold-load", "visuals"):
             result = native(args)
-        elif args.case in ("controls", "failure-recovery", "portals", "tray", "units"):
+        elif args.case in ("controls", "failure-recovery", "portals", "tray", "units", "install"):
             owned = OwnedInstance(args.vm_record, args.root); owned.check(require_binaries=True)
             environment = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
             environment.pop("QT_QPA_PLATFORM", None)
             owned.check_session(owned.record["session"], environment)
             output = args.root / "results" / ("settings-" + args.case + "-" + str(time.time_ns())); output.mkdir(mode=0o700)
-            if args.case in ("portals", "tray", "units"):
+            if args.case in ("portals", "tray", "units", "install"):
                 from importlib.machinery import SourceFileLoader
                 module = SourceFileLoader("settings_native_" + args.case, str(owned.paths["source"] / ("Tests/settings-native-" + args.case + ".py"))).load_module()
                 result = getattr(module, args.case)(owned, output)
@@ -255,14 +260,20 @@ def main():
                 # Native QuickTest drives the actual production controls and
                 # checks CLI readback, source drag, drafts, outage and repair.
                 test_inputs = quick_test_inputs(owned.paths["source"], owned.record["source_files"])
-                commands = [["dbus-run-session", "--", str(owned.paths["build"] / "settings-quick-probe"), "-input", str(owned.paths["source"] / "settings/tests"), "-import", str(owned.paths["source"])]]
+                commands = [probe_command(owned.paths["source"], owned.paths["build"] / "settings-quick-probe", "-input", owned.paths["source"] / "settings/tests", "-import", owned.paths["source"])]
                 if args.case == "failure-recovery":
-                    commands += [["dbus-run-session", "--", str(owned.paths["build"] / name)] for name in ("settings-model-probe", "settings-pages-probe")]
+                    commands += [probe_command(owned.paths["source"], owned.paths["build"] / name) for name in ("settings-model-probe", "settings-pages-probe")]
                 for index, command in enumerate(commands):
-                    probe = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                    # Qt 6.12's v3 input context warns on QuickTest synthetic
+                    # clicks even without Aerial. See the QuickTest item in
+                    # Documents/Aerial/TODO.md and companion-ui/checkpoint-10.md.
+                    # Only this native QuickTest lane selects v1; real apps and
+                    # other probes retain the default context and warning gate.
+                    probe_environment = dict(environment, QT_WAYLAND_TEXT_INPUT_PROTOCOL="zwp_text_input_v1") if index == 0 else environment
+                    probe = subprocess.run(command, env=probe_environment, capture_output=True, text=True, timeout=120)
                     text = probe.stdout + probe.stderr; publish(output / (str(index) + ".log"), text)
                     assert probe.returncode == 0 and "QWARN" not in text and "FAIL!" not in text, text
-                result = {"nativeProductionControls": True, "cliReadback": True, "draftOutageAndRepair": True, "testInputs": test_inputs, "output": str(output)}
+                result = {"nativeProductionControls": True, "cliReadback": True, "draftOutageAndRepair": True, "quickTestTextInputProtocol": "zwp_text_input_v1", "testInputs": test_inputs, "output": str(output)}
         else:
             raise RuntimeError("case belongs to a later implementation phase: " + args.case)
         publish(result_path, json.dumps({"case": args.case, "exit": 0, "observations": result}, indent=2))

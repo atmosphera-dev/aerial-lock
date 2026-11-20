@@ -6,10 +6,12 @@ Module {
         exports: ["AerialLock.SettingsTest/Harness 1.0"]
         isCreatable: false
         isSingleton: true
+        Method { name: "pixels"; type: "QVariantList"; Parameter { name: "item"; type: "QObject"; isPointer: true } Parameter { name: "points"; type: "QVariantList" } }
         Method { name: "saved"; type: "QVariant"; Parameter { name: "key"; type: "QString" } }
         Method { name: "externalEdit"; Parameter { name: "key"; type: "QString" } Parameter { name: "json"; type: "QString" } }
         Method { name: "configureTray"; Parameter { name: "available"; type: "bool" } Parameter { name: "on"; type: "bool" } }
         Method { name: "configureTray"; Parameter { name: "available"; type: "bool" } Parameter { name: "on"; type: "bool" } Parameter { name: "persistent"; type: "bool" } }
+        Method { name: "replacePreview"; Parameter { name: "color"; type: "QString" } }
         Method { name: "stopService" }
         Method { name: "startService" }
         Method { name: "breakConfig" }

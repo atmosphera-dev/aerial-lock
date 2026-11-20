@@ -2,6 +2,7 @@
 #include "settings-controller.h"
 #include <QDateTime>
 #include <algorithm>
+#include <limits>
 
 namespace Aerial::Settings {
 namespace {
@@ -14,6 +15,12 @@ QString outcome(const QVariantMap &result, bool preview)
     return (preview ? "Can remove " : "Removed ") + CacheController::bytes(result.value("removedBytes").toULongLong())
         + " in " + result.value("removedFiles").toString() + " files."
         + (result.value("protected").toBool() ? " Videos in use are protected." : " Videos in use stay.");
+}
+QString sumBytes(qulonglong a, qulonglong b)
+{
+    if (b <= std::numeric_limits<qulonglong>::max() - a) return CacheController::bytes(a + b);
+    // Aggregates beyond uint64 are already in the decimal-GB display range.
+    return QString::number(double((static_cast<long double>(a) + b) / 1000000000.L), 'f', 1) + " GB";
 }
 }
 CacheController::CacheController(Client::ServiceConnection &service, QObject *parent) : QObject(parent), service(service)
@@ -46,33 +53,46 @@ QVariantMap CacheController::transfer() const
     }
     return {};
 }
+QVariantMap CacheController::storageFacts(const QVariantMap &p)
+{
+    const auto managed = p.value("ManagedBytes").toULongLong();
+    const auto partial = qMin(managed, p.value("PartialBytes").toULongLong());
+    const auto reserved = p.value("ReservedBytes").toULongLong(), limit = p.value("MaxBytes").toULongLong();
+    // ManagedBytes already includes partial files and metadata. Split that
+    // whole once; only the remaining reservation adds to total allocation.
+    const auto stored = managed - partial;
+    const long double used = static_cast<long double>(managed) + reserved;
+    const auto remaining = managed <= limit ? limit - managed : 0ULL;
+    const bool over = managed > limit || reserved > remaining;
+    const auto free = over ? 0ULL : remaining - reserved;
+    const auto overage = !over ? QString() : managed > limit ? sumBytes(managed - limit, reserved) : bytes(reserved - remaining);
+    const bool known = p.value("UsageKnown").toBool();
+    const long double denominator = qMax(static_cast<long double>(limit), used);
+    QVariantList segments, legend;
+    for (const auto &entry : {qMakePair(QString("stored"), stored), qMakePair(QString("partial"), partial), qMakePair(QString("reserved"), reserved)}) {
+        segments << QVariantMap{{"kind", entry.first}, {"fraction", denominator > 0 ? double(entry.second / denominator) : 0.0}};
+        const QString label = entry.first == "stored" ? "Stored data " : entry.first == "partial" ? "Partial download " : "Reserved ";
+        legend << QVariantMap{{"kind", entry.first}, {"label", label + bytes(entry.second)}};
+    }
+    legend << QVariantMap{{"kind", "free"}, {"label", "Free " + bytes(free)}};
+    return {{"usage", known ? bytes(managed) + " of " + bytes(limit) + " used" : "Cache usage unavailable"},
+        {"free", known ? (over ? overage + " over limit" : bytes(free) + " free") : ""},
+        {"segments", known ? segments : QVariantList{}}, {"legend", known ? legend : QVariantList{}}};
+}
 QVariantMap CacheController::facts() const
 {
     const auto p = service.snapshot().properties;
     const auto current = transfer(); const auto details = current.value("Details").toMap();
     const auto total = current.value("TotalBytes").toULongLong(), received = current.value("ReceivedBytes").toULongLong();
-    const auto managed = p.value("ManagedBytes").toULongLong(), partial = p.value("PartialBytes").toULongLong();
-    const auto reserved = p.value("ReservedBytes").toULongLong(), limit = p.value("MaxBytes").toULongLong();
-    const long double used = static_cast<long double>(managed) + partial + reserved;
-    const auto free = used >= limit ? 0ULL : limit - managed - partial - reserved;
-    const bool known = p.value("UsageKnown").toBool();
-    const long double denominator = qMax(static_cast<long double>(limit), used);
-    QVariantList segments, legend;
-    for (const auto &entry : {qMakePair(QString("videos"), managed), qMakePair(QString("partial"), partial), qMakePair(QString("reserved"), reserved)}) {
-        segments << QVariantMap{{"kind", entry.first}, {"fraction", denominator > 0 ? double(entry.second / denominator) : 0.0}};
-        const QString label = entry.first == "videos" ? "Videos " : entry.first == "partial" ? "Partial download " : "Reserved ";
-        legend << QVariantMap{{"kind", entry.first}, {"label", label + bytes(entry.second)}};
-    }
-    legend << QVariantMap{{"kind", "free"}, {"label", "Free " + bytes(free)}};
-    return {{"downloading", !current.isEmpty()}, {"title", !current.isEmpty() ? "Downloading " + details.value("assetTitle", "video").toString() : StatusFormatter::summary(service.snapshot())},
+    QVariantMap result{{"downloading", !current.isEmpty()}, {"title", !current.isEmpty() ? "Downloading " + details.value("assetTitle", "video").toString() : StatusFormatter::summary(service.snapshot())},
         {"source", details.value("sourceName").toString()}, {"progressKnown", current.value("TotalKnown").toBool() && total > 0},
         {"progress", total ? double(qMin(1.L, static_cast<long double>(received) / total)) : 0.0},
         {"received", bytes(received)}, {"total", current.value("TotalKnown").toBool() ? bytes(total) : "unknown size"},
         {"ready", StatusFormatter::ready(p.value("ReadyClips", 0).toULongLong())}, {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))}, {"lastCheck", "Last check: " + localTime(p.value("LastCheck"))},
-        {"usage", known ? bytes(managed + partial) + " of " + bytes(limit) + " used" : "Cache usage unavailable"},
-        {"free", known ? (used > limit ? bytes(qulonglong(used - limit)) + " over limit" : bytes(free) + " free") : ""},
-        {"segments", known ? segments : QVariantList{}}, {"legend", known ? legend : QVariantList{}},
         {"reason", p.value("DeferReason").toString()}};
+    const auto storage = storageFacts(p);
+    for (auto it = storage.cbegin(); it != storage.cend(); ++it) result.insert(it.key(), it.value());
+    return result;
 }
 QVariantList CacheController::activity() const
 {

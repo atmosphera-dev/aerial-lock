@@ -26,7 +26,7 @@ ColumnLayout {
                     required property var modelData
                     width: meter.width * modelData.fraction
                     height: meter.height
-                    color: modelData.kind === "videos" ? Style.accent : modelData.kind === "partial" ? Style.selection : Style.muted
+                    color: modelData.kind === "stored" ? Style.accent : modelData.kind === "partial" ? Style.selection : Style.muted
                 }
             }
         }
@@ -40,7 +40,7 @@ ColumnLayout {
                 id: legendItem
                 required property var modelData
                 spacing: 7
-                Rectangle { implicitWidth: 10; implicitHeight: 10; radius: 3; color: modelData.kind === "videos" ? Style.accent : modelData.kind === "partial" ? Style.selection : modelData.kind === "reserved" ? Style.muted : Style.line }
+                Rectangle { implicitWidth: 10; implicitHeight: 10; radius: 3; color: modelData.kind === "stored" ? Style.accent : modelData.kind === "partial" ? Style.selection : modelData.kind === "reserved" ? Style.muted : Style.line }
                 Label { text: legendItem.modelData.label; font.pixelSize: 13 }
             }
         }

@@ -1,6 +1,7 @@
 #include "fixture.h"
 #include <QImage>
 #include <QSaveFile>
+#include <limits>
 #include <sys/stat.h>
 using namespace Aerial;
 using namespace Aerial::Settings;
@@ -28,6 +29,58 @@ private slots:
         QCOMPARE(late.themes()->rows().size(), 5);
         QCOMPARE(late.sources()->rows().size(), 1);
         QCOMPARE(late.sources()->rows().first().toMap().value("id").toString(), QString("local"));
+    }
+    void storageAccounting()
+    {
+        QVariantMap p{{"UsageKnown", true}, {"ManagedBytes", QVariant::fromValue(100ULL)},
+            {"PartialBytes", QVariant::fromValue(40ULL)}, {"ReservedBytes", QVariant::fromValue(20ULL)},
+            {"MaxBytes", QVariant::fromValue(200ULL)}, {"ReadyClips", 0}};
+        const auto facts = CacheController::storageFacts(p);
+        QCOMPARE(facts.value("usage").toString(), QString("100 bytes of 200 bytes used"));
+        QCOMPARE(facts.value("free").toString(), QString("80 bytes free"));
+        const auto segments = facts.value("segments").toList();
+        QCOMPARE(segments.size(), 3); QCOMPARE(facts.value("legend").toList().size(), 4);
+        QCOMPARE(segments[0].toMap().value("kind").toString(), QString("stored"));
+        QCOMPARE(segments[0].toMap().value("fraction").toDouble(), 0.3);
+        QCOMPARE(segments[1].toMap().value("fraction").toDouble(), 0.2);
+        QCOMPARE(segments[2].toMap().value("fraction").toDouble(), 0.1);
+        QCOMPARE(facts.value("legend").toList()[0].toMap().value("label").toString(), QString("Stored data 60 bytes"));
+        p["PartialBytes"] = QVariant::fromValue(0ULL);
+        QCOMPARE(CacheController::storageFacts(p).value("legend").toList().size(), 4);
+        QCOMPARE(CacheController::storageFacts(p).value("legend").toList()[0].toMap().value("label").toString(), QString("Stored data 100 bytes"));
+        p["PartialBytes"] = QVariant::fromValue(40ULL); p["MaxBytes"] = QVariant::fromValue(80ULL);
+        QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("40 bytes over limit"));
+        p["MaxBytes"] = QVariant::fromValue(0ULL);
+        QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("120 bytes over limit"));
+        p["ManagedBytes"] = QVariant::fromValue(9007199254740993ULL);
+        p["PartialBytes"] = QVariant::fromValue(4503599627370496ULL);
+        p["ReservedBytes"] = QVariant::fromValue(1ULL); p["MaxBytes"] = QVariant::fromValue(9007199254740996ULL);
+        QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("2 bytes free"));
+        p["ManagedBytes"] = QVariant::fromValue(std::numeric_limits<qulonglong>::max());
+        p["ReservedBytes"] = QVariant::fromValue(2ULL); p["MaxBytes"] = p["ManagedBytes"];
+        QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("2 bytes over limit"));
+        p["ReservedBytes"] = p["ManagedBytes"]; p["MaxBytes"] = QVariant::fromValue(0ULL);
+        QVERIFY(CacheController::storageFacts(p).value("free").toString().endsWith(" GB over limit"));
+        p["ManagedBytes"] = QVariant::fromValue(100ULL); p["PartialBytes"] = QVariant::fromValue(200ULL);
+        p["ReservedBytes"] = QVariant::fromValue(0ULL); p["MaxBytes"] = QVariant::fromValue(200ULL);
+        QCOMPARE(CacheController::storageFacts(p).value("segments").toList().size(), 3);
+        QCOMPARE(CacheController::storageFacts(p).value("segments").toList()[0].toMap().value("fraction").toDouble(), 0.0);
+        p["UsageKnown"] = false;
+        const auto unknown = CacheController::storageFacts(p);
+        QCOMPARE(unknown.value("usage").toString(), QString("Cache usage unavailable"));
+        QVERIFY(unknown.value("free").toString().isEmpty()); QVERIFY(unknown.value("segments").toList().isEmpty());
+        QVERIFY(unknown.value("legend").toList().isEmpty());
+        p["UsageKnown"] = true; p["ManagedBytes"] = p["PartialBytes"] = p["ReservedBytes"] = p["MaxBytes"] = QVariant::fromValue(0ULL);
+        const auto empty = CacheController::storageFacts(p);
+        QCOMPARE(empty.value("free").toString(), QString("0 bytes free"));
+        for (const auto &segment : empty.value("segments").toList()) QCOMPARE(segment.toMap().value("fraction").toDouble(), 0.0);
+        Fixture f; QVERIFY(f.start());
+        QTRY_VERIFY(f.controller->serviceProperties().value("UsageKnown").toBool());
+        const auto actual = f.controller->serviceProperties();
+        QCOMPARE(f.controller->cache()->facts().value("usage").toString(),
+                 CacheController::bytes(actual.value("ManagedBytes").toULongLong()) + " of " + CacheController::bytes(actual.value("MaxBytes").toULongLong()) + " used");
+        QCOMPARE(f.controller->cache()->facts().value("legend").toList().size(), 4);
+        QVERIFY(f.controller->cache()->facts().value("legend").toList()[0].toMap().value("label").toString().startsWith("Stored data "));
     }
     void settingsRoundTrips()
     {

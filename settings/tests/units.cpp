@@ -6,6 +6,9 @@
 #include <QDBusConnectionInterface>
 #include <QDBusVirtualObject>
 #include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -70,6 +73,14 @@ int main(int argc, char **argv)
     QQuickWindow *quick = nullptr;
     for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
     if (!quick || !QTest::qWaitForWindowExposed(quick)) return 1;
+    const auto capture = [&](const QString &name) {
+        QTest::qWait(250);
+        const auto path = QFileInfo(output).absolutePath() + '/' + QFileInfo(output).completeBaseName() + '-' + name + ".png";
+        const auto image = quick->grabWindow();
+        if (image.isNull() || !image.save(path)) return false;
+        auto images = receipt.value("captures").toArray(); images.append(path); receipt["captures"] = images;
+        return true;
+    };
     std::function<QQuickItem *(QQuickItem *, const QString &)> find = [&](QQuickItem *item, const QString &name) -> QQuickItem * {
         if (item->objectName() == name && item->isVisible() && item->width() > 0) return item;
         for (auto *child : item->childItems()) if (auto *found = find(child, name)) return found;
@@ -100,6 +111,7 @@ int main(int argc, char **argv)
     if (idle) {
         const auto idleUnit = [&] { return settings.systemd()->units().value("aerial-idle.service").toMap(); };
         if (!require(QTest::qWaitFor([&] { return settings.systemd()->idle().value("action") == "enableStart"; }, 15000), "idle initially off")) return 1;
+        if (!capture("idle-off")) return 1;
         auto *action = control("idle-action"); if (!require(action, "idle Turn on button")) return 1;
         QString existingBeforeEnable;
         if (mode == "idle-existing") {
@@ -108,6 +120,7 @@ int main(int argc, char **argv)
         }
         click(action);
         auto *turnOn = control("idle-turn-on"); if (!require(turnOn, "idle one-owner sheet")) return 1;
+        if (!capture("idle-turn-on")) return 1;
         click(turnOn);
         if (!require(settle("Turn on enables and starts idle"), "Turn on succeeds")) return 1;
         if (mode == "idle-existing") {
@@ -134,6 +147,7 @@ int main(int argc, char **argv)
         QTest::qWait(3000);
         if (!require(operations.isEmpty() && idleUnit().value("invocation") == before && idleUnit().value("active") == "active", "save never restarts idle")) return 1;
         receipt["afterSave"] = QJsonObject::fromVariantMap(idleUnit());
+        if (!capture("idle-restart")) return 1;
         action = control("idle-action"); if (!require(action, "idle Restart button")) return 1;
         click(action);
         if (!require(settle("Restart completes"), "Restart succeeds")) return 1;
@@ -149,8 +163,10 @@ int main(int argc, char **argv)
         receipt["enabledUnit"] = QJsonObject::fromVariantMap(settings.systemd()->units().value("aerial-tray.service").toMap());
         if (mode == "failure") {
             if (!require(!ok && !settings.systemd()->error().isEmpty() && window.hasWindow(), "failure stays actionable")) return 1;
+            if (!capture("about-unit-error")) return 1;
         } else {
             if (!require(ok && settings.tray().value("persistent").toBool() && tray.enabled(), "About enables startup")) return 1;
+            if (!capture("about-tray-on")) return 1;
             operations.clear(); click(toggle);
             if (!require(settle("Hide completes") && window.hasWindow() && !tray.enabled(), "Hide disables and keeps window")) return 1;
             operations.clear();

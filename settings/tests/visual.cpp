@@ -2,6 +2,7 @@
 #include "window-controller.h"
 #include <QApplication>
 #include <QImage>
+#include <QFileInfo>
 #include <QPalette>
 #include <QQuickWindow>
 #include <QQuickItem>
@@ -93,7 +94,12 @@ int main(int argc, char **argv)
         const QStringList names{"downloads", "sources", "cache", "lock", "about"};
         for (int i = 0; i < names.size(); ++i) {
             quick->setProperty("page", i); QTest::qWait(250);
+            bool sidebarAligned = false;
             std::function<void(QQuickItem *)> inspect = [&](QQuickItem *item) {
+                if (item->objectName() == "sidebarStatus" && item->isVisible()) {
+                    const auto gap = quick->height() - item->mapToScene({0, item->height()}).y();
+                    sidebarAligned = qAbs(gap - 16) <= 1;
+                }
                 if (item->objectName() == "pageTitle" && item->isVisible()) {
                     const auto point = item->mapToScene({0, 0});
                     geometry[names[i]] = QJsonObject{{"titleY", point.y()}, {"titleHeight", item->height()}, {"headingHeight", item->parentItem()->height()}, {"headingY", item->parentItem()->mapToScene({0, 0}).y()}};
@@ -101,7 +107,24 @@ int main(int argc, char **argv)
                 for (auto *child : item->childItems()) inspect(child);
             };
             inspect(quick->contentItem());
+            if (!sidebarAligned) return 1;
             if (!captureNative(destination + '/' + names[i] + ".png")) return 1;
+            if (i == 3) {
+                // The supported reference-height window scrolls on this page.
+                // Also retain a full lower-window frame, never a stitched crop.
+                std::function<QQuickItem *(QQuickItem *)> scrollable = [&](QQuickItem *item) -> QQuickItem * {
+                    if (!item->isVisible()) return nullptr;
+                    if (item->inherits("QQuickFlickable") && item->property("contentHeight").toDouble() > item->height()) return item;
+                    for (auto *child : item->childItems()) if (auto *found = scrollable(child)) return found;
+                    return nullptr;
+                };
+                auto *item = scrollable(quick->contentItem());
+                if (!item) return 1;
+                const auto top = item->property("contentY");
+                item->setProperty("contentY", item->property("contentHeight").toDouble() - item->height()); QTest::qWait(250);
+                if (!captureNative(destination + "/lock-options.png")) return 1;
+                item->setProperty("contentY", top); QTest::qWait(100);
+            }
         }
         quick->setProperty("page", 1);
         fixture.controller->sources()->begin(); fixture.controller->sources()->field("name", "Drone flights");
@@ -109,6 +132,88 @@ int main(int argc, char **argv)
         QTest::qWait(250);
         if (!captureNative(destination + "/source-sheet.png")) return 1;
         fixture.controller->sources()->dismiss();
+        const auto shot = [&](const QString &name) {
+            QTest::qWait(250);
+            return captureNative(destination + '/' + name + ".png");
+        };
+        auto *sources = fixture.controller->sources();
+        sources->begin("drones");
+        if (!shot("source-edit")) return 1;
+        sources->dismiss();
+        // A real stale revision leaves the unsubmitted sheet fields intact.
+        sources->begin(); sources->field("name", "Keep my draft");
+        sources->field("source", "https://example.org/draft.json");
+        fixture.cli({"config", "set", "cache.rotationDays", "30"});
+        sources->save();
+        if (!QTest::qWaitFor([&] { return !sources->busy() && !sources->draft().value("error").toString().isEmpty(); })) return 1;
+        if (!shot("source-conflict")) return 1;
+        sources->dismiss();
+        fixture.cli({"config", "set", "sources", "[]"});
+        if (!QTest::qWaitFor([&] { return sources->rows().isEmpty() && sources->appleAvailable(); })) return 1;
+        if (!shot("sources-empty")) return 1;
+        for (const auto &type : {QStringLiteral("community"), QStringLiteral("folder"), QStringLiteral("file"), QStringLiteral("defaultApple")}) {
+            sources->begin(); sources->field("type", type);
+            if (sources->draft().value("type").toString() != (type == "defaultApple" ? "apple" : type)) return 1;
+            if (!shot("source-choice-" + type)) return 1;
+            sources->dismiss();
+        }
+        sources->begin(); sources->field("name", "Keep my draft"); sources->field("source", "not a URL"); sources->save();
+        if (sources->draft().value("error").toString().isEmpty() || !shot("source-validation")) return 1;
+        sources->dismiss();
+        quick->setProperty("page", 2);
+        if (!shot("cache-empty-paused")) return 1;
+        fixture.controller->cache()->prepareCleanup();
+        if (!QTest::qWaitFor([&] { return fixture.controller->cache()->cleanup().value("state") == "confirm"; })) return 1;
+        if (!shot("prune-confirmation")) return 1;
+        fixture.controller->cache()->dismissCleanup();
+        fixture.cli({"content", "resume"});
+        if (!QTest::qWaitFor([&] { return fixture.controller->status().startsWith("Waiting"); })) return 1;
+        if (!shot("cache-waiting")) return 1;
+        quick->setProperty("page", 3);
+        const auto customDir = QFileInfo(fixture.paths.config).absolutePath() + "/themes";
+        QDir().mkpath(customDir);
+        QFile custom(customDir + "/Macintosh.qml");
+        if (!custom.open(QIODevice::WriteOnly)) return 1;
+        custom.write("// Never loaded by the settings app.\n"); custom.close();
+        if (!QTest::qWaitFor([&] { return fixture.controller->themes()->rows().first().toMap().value("preview").toString().isEmpty(); })) return 1;
+        if (!shot("theme-name-only")) return 1;
+        // Existing owner-test contract: an obstructed planner state root is an
+        // honest storage error. Preserve the fixture's existing directory.
+        const auto stop = [&] {
+            fixture.daemon.terminate();
+            return fixture.daemon.waitForFinished(5000) && QTest::qWaitFor([&] { return fixture.controller->panel() == "unavailable"; });
+        };
+        const auto start = [&] {
+            fixture.daemon.start(QString(AERIAL_SETTINGS_TEST_SOURCE) + "/companion/aerial", {});
+            return fixture.daemon.waitForStarted() && QTest::qWaitFor([&] { return fixture.controller->panel() == "settings"; });
+        };
+        if (!stop() || !QDir().rename(fixture.paths.state, fixture.paths.state + ".retained")) return 1;
+        QFile obstruction(fixture.paths.state);
+        if (!obstruction.open(QIODevice::WriteOnly)) return 1;
+        obstruction.write("Owned visual fixture obstruction\n"); obstruction.close();
+        quick->setProperty("page", 2);
+        if (!start() || !QTest::qWaitFor([&] { return fixture.controller->serviceProperties().value("DeferReason") == "StorageError"; })) return 1;
+        if (!shot("cache-storage-error")) return 1;
+        if (!stop() || !obstruction.remove() || !QDir().rename(fixture.paths.state + ".retained", fixture.paths.state) || !start()) return 1;
+        const auto goodConfig = fixture.cli({"config", "show", "--json"});
+        if (goodConfig.isEmpty()) return 1;
+        QFile config(fixture.paths.config);
+        if (!config.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+        config.write("{\n broken\n"); config.close();
+        if (!QTest::qWaitFor([&] { return fixture.controller->panel() == "diagnostic"; })) return 1;
+        if (!shot("settings-json-error")) return 1;
+        if (!config.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+        config.write(goodConfig); config.close();
+        if (!QTest::qWaitFor([&] { return fixture.controller->panel() == "settings"; })) return 1;
+        const auto permissions = config.permissions();
+        if (!config.setPermissions({})) return 1;
+        if (!QTest::qWaitFor([&] { return fixture.controller->panel() == "diagnostic"; })) return 1;
+        if (!shot("settings-unreadable")) return 1;
+        if (!config.setPermissions(permissions) || !QTest::qWaitFor([&] { return fixture.controller->panel() == "settings"; })) return 1;
+        quick->setProperty("page", 1); sources->begin(); sources->field("name", "Draft survives owner loss");
+        if (!stop() || !shot("source-draft-owner-loss")) return 1;
+        sources->dismiss();
+        if (!shot("service-unavailable")) return 1;
         QFile receipt(destination + "/geometry.json"); if (!receipt.open(QIODevice::WriteOnly)) return 1;
         receipt.write(QJsonDocument(geometry).toJson());
     } else {
