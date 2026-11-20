@@ -1,6 +1,8 @@
 #include "settings-controller.h"
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QColor>
+#include <QFileInfo>
 #include <QQmlEngine>
 
 namespace Aerial::Settings {
@@ -25,7 +27,9 @@ QString shortError(const QString &error)
     return "Couldn't save: " + error.section('.', -1) + ".";
 }
 }
-SettingsController::SettingsController(Client::ServiceConnection &service, QObject *parent) : QObject(parent), service(service)
+SettingsController::SettingsController(Client::ServiceConnection &service, QObject *parent)
+    : QObject(parent), service(service), portalClient(QDBusConnection::sessionBus()), sourceController(service, portalClient),
+      cacheController(service), themeCatalog(service), systemdController(QDBusConnection::sessionBus())
 {
     connect(&service, &Client::ServiceConnection::changed, this, &SettingsController::sampled);
     connect(&service, &Client::ServiceConnection::mutationFinished, this, [this](quint64 id, const QVariant &result, const QString &error) {
@@ -43,6 +47,7 @@ SettingsController::SettingsController(Client::ServiceConnection &service, QObje
             if (this->service.ready()) { sampled(); return; }
             this->service.refresh();
         }
+        observeIdleWrites();
         emit changed();
     });
     sampled();
@@ -65,6 +70,7 @@ void SettingsController::sampled()
         editOwner.clear();
     }
     dispatchEdit();
+    observeIdleWrites();
     emit changed();
 }
 QVariantMap SettingsController::controls() const
@@ -75,7 +81,8 @@ QVariantMap SettingsController::controls() const
         "acquisition.automatic.allowMetered", "acquisition.automatic.connectionTypes.ethernet", "acquisition.automatic.connectionTypes.wifi",
         "acquisition.automatic.connectionTypes.cellular", "acquisition.automatic.connectionTypes.bluetooth", "acquisition.automatic.connectionTypes.vpn",
         "acquisition.automatic.connectionTypes.other", "acquisition.automatic.connectionTypes.unknown", "acquisition.automatic.power.ac",
-        "acquisition.automatic.power.battery", "acquisition.automatic.power.unknown"};
+        "acquisition.automatic.power.battery", "acquisition.automatic.power.unknown", "cache.maxBytes", "cache.rotationDays",
+        "theme", "backgroundColor", "powerActions.enabled", "idle.timeoutSeconds", "idle.respectInhibitors", "idle.lockOnSuspend", "idle.logindLockUnlock"};
     for (const auto &key : keys) {
         const auto settingPath = key == "automatic" ? QString("acquisition.automatic.enabled") : key;
         QVariant value = leaf(snapshot.effective, settingPath).toVariant();
@@ -85,6 +92,12 @@ QVariantMap SettingsController::controls() const
         QVariantList choices;
         if (key == "acquisition.checkIntervalSeconds") choices = {choice("Every hour", 3600), choice("Every 6 hours", 21600), choice("Every day", 86400)};
         if (key == "acquisition.automatic.allowedResolutions") choices = {choice("Up to 1080p", QVariantList{1080}), choice("Allow 4K", QVariantList{1080, 2160})};
+        if (key == "cache.maxBytes") for (qint64 gb : {2, 5, 10, 20, 50}) choices << choice(QString::number(gb) + " GB", gb * 1000000000LL);
+        if (key == "cache.rotationDays") choices = {choice("Every day", 1), choice("Every week", 7), choice("Every month", 30), choice("Never", 0)};
+        if (key == "idle.timeoutSeconds") {
+            choices << choice("Never", 0);
+            for (int minute = 1; minute <= 60; ++minute) choices << choice(QString::number(minute) + (minute == 1 ? " minute" : " minutes"), minute * 60);
+        }
         int selected = -1;
         for (int i = 0; i < choices.size(); ++i) if (QJsonValue::fromVariant(choices[i].toMap().value("value")) == QJsonValue::fromVariant(value)) selected = i;
         const bool custom = !choices.isEmpty() && selected < 0;
@@ -97,8 +110,14 @@ QVariantMap SettingsController::controls() const
             if (problem.isEmpty() && !path.isEmpty() && (settingPath == path || settingPath.startsWith(path + '.')))
                 problem = "Using the service default: invalid setting at " + path + ".";
         }
-        result[key] = QVariantMap{{"value", value}, {"on", on}, {"inherited", inherited}, {"pending", latest.contains(key) || queued.contains(key)},
+        QVariantMap descriptor{{"value", value}, {"on", on}, {"inherited", inherited}, {"pending", latest.contains(key) || queued.contains(key)},
             {"error", problem}, {"choices", choices}, {"selected", selected}, {"custom", custom}};
+        if (key == "backgroundColor") {
+            const QColor color(value.toString());
+            descriptor["color"] = color.isValid() ? color : QColor(Qt::black);
+            if (service.ready() && !color.isValid()) descriptor["error"] = "The configured color is invalid. Choose a valid color; the file is left unchanged until you save.";
+        }
+        result[key] = descriptor;
     }
     return result;
 }
@@ -166,7 +185,14 @@ void SettingsController::edit(const QString &key, const QVariant &value)
     editOwner = service.uniqueOwner();
     if (!queued.contains(key)) editOrder.append(key);
     queued[key] = sent;
-    dispatchEdit(); emit changed();
+    dispatchEdit(); observeIdleWrites(); emit changed();
+}
+void SettingsController::observeIdleWrites()
+{
+    bool pending = false;
+    for (auto it = queued.cbegin(); it != queued.cend(); ++it) pending |= it.key().startsWith("idle.");
+    for (const auto &intent : intents) pending |= intent.key.startsWith("idle.");
+    systemdController.setIdleWritesPending(pending);
 }
 void SettingsController::dispatchEdit()
 {
@@ -181,6 +207,27 @@ void SettingsController::dispatchEdit()
     intents[id] = {key, sent, false, {}}; latest[key] = id;
 }
 void SettingsController::retry() { service.refresh(); }
+QVariantMap SettingsController::about() const
+{
+    const auto p = service.snapshot().properties;
+    const auto paths = p.value("Paths").toMap();
+    auto state = p.value("State").toString(); if (!state.isEmpty()) state[0] = state[0].toUpper();
+    return {{"version", "aerial " + p.value("Version").toString() + ", interface version " + p.value("ApiVersion").toString()},
+        {"state", state}, {"config", paths.value("config")}, {"cache", paths.value("cache")}, {"paths", paths}};
+}
+void SettingsController::setColor(const QString &text)
+{
+    const QColor color(text);
+    if (!color.isValid()) { errors["backgroundColor"] = "Enter a valid color, such as #000000."; emit changed(); return; }
+    edit("backgroundColor", color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb));
+}
+QString SettingsController::canonicalColor(const QString &text) const
+{
+    const QColor color(text);
+    return color.isValid() ? color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb) : QString();
+}
+void SettingsController::openSettingsFolder() { portalClient.openFolder(QFileInfo(service.snapshot().properties.value("Paths").toMap().value("config").toString()).absolutePath()); }
+void SettingsController::openCacheFolder() { portalClient.openFolder(service.snapshot().properties.value("Paths").toMap().value("cache").toString()); }
 void SettingsController::choose(const QString &key, const QString &token)
 {
     QJsonParseError error;
@@ -191,5 +238,10 @@ void SettingsController::choose(const QString &key, const QString &token)
 void registerTypes()
 {
     qmlRegisterUncreatableType<SettingsController>("AerialLock.Settings", 1, 0, "SettingsController", "Owned by the application");
+    qmlRegisterUncreatableType<SourcesController>("AerialLock.Settings", 1, 0, "SourcesController", "Owned by the application");
+    qmlRegisterUncreatableType<CacheController>("AerialLock.Settings", 1, 0, "CacheController", "Owned by the application");
+    qmlRegisterUncreatableType<ThemeCatalog>("AerialLock.Settings", 1, 0, "ThemeCatalog", "Owned by the application");
+    qmlRegisterUncreatableType<PortalClient>("AerialLock.Settings", 1, 0, "PortalClient", "Owned by the application");
+    qmlRegisterUncreatableType<SystemdController>("AerialLock.Settings", 1, 0, "SystemdController", "Owned by the application");
 }
 }

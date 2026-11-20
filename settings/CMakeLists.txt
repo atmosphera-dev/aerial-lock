@@ -11,7 +11,9 @@ if(NOT TARGET aerial-client)
         add_subdirectory("${AERIAL_SETTINGS_SOURCE}/common/client" "${CMAKE_CURRENT_BINARY_DIR}/client")
     endif()
 endif()
-add_library(aerial-settings-core STATIC settings-controller.cpp settings-controller.h window-controller.cpp window-controller.h)
+add_library(aerial-settings-core STATIC settings-controller.cpp settings-controller.h window-controller.cpp window-controller.h
+    sources-controller.cpp sources-controller.h cache-controller.cpp cache-controller.h theme-catalog.cpp theme-catalog.h
+    portal-client.cpp portal-client.h systemd-controller.cpp systemd-controller.h)
 set_target_properties(aerial-settings-core PROPERTIES AUTOMOC ON CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(aerial-settings-core PUBLIC aerial-client Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 target_include_directories(aerial-settings-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

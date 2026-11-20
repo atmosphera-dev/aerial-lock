@@ -10,7 +10,7 @@ ColumnLayout {
     ColumnLayout {
         Layout.fillWidth: true
         spacing: 2
-        Label { Layout.fillWidth: true; text: root.title; font.pixelSize: 16; font.bold: true }
+        Label { Layout.fillWidth: true; visible: text.length > 0; text: root.title; font.pixelSize: 16; font.bold: true }
         Flow {
             id: information
             Layout.fillWidth: true

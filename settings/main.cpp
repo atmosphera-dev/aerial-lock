@@ -6,6 +6,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDBusVariant>
+#include <QIcon>
 #include <QTextStream>
 #include <QTimer>
 #ifndef AERIAL_COMPANION_DATADIR
@@ -29,6 +30,9 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     app.setApplicationName("Aerial");
+    QIcon icon;
+    for (int size : {16, 24, 32, 48, 64, 128, 256}) icon.addFile(":/settings/assets/icons/" + QString::number(size) + ".png");
+    app.setWindowIcon(icon);
     app.setDesktopFileName("org.aeriallock.AerialSettings");
     app.setQuitOnLastWindowClosed(false);
     const auto args = app.arguments().mid(1);

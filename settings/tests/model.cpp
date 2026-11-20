@@ -1,5 +1,6 @@
 #include "fixture.h"
 #include <QSaveFile>
+#include <QDBusReply>
 using namespace Aerial;
 using namespace Aerial::Settings;
 using namespace Aerial::Settings::Test;
@@ -22,6 +23,21 @@ private slots:
         auto job = snapshot.jobs.first().toMap(); job["TotalKnown"] = false; snapshot.jobs = {job};
         QCOMPARE(StatusFormatter::summary(snapshot), QString("Downloading Grand Canyon"));
     }
+    void completionCarriesItsSnapshot()
+    {
+        // A reply is reported only with state sampled after it: an intent sent
+        // from the completion handler must not carry the replaced revision.
+        Fixture fixture; QVERIFY(fixture.start());
+        auto *service = fixture.service.get(); QStringList observed;
+        connect(service, &Client::ServiceConnection::mutationFinished, this, [&](quint64, const QVariant &result, const QString &error) {
+            observed << error << result.toString() << service->snapshot().revision;
+            if (observed.size() == 3) service->updateSettings(service->snapshot().revision, {{"backgroundColor", "#000080"}});
+        });
+        service->updateSettings(service->snapshot().revision, {{"backgroundColor", "#102030"}});
+        QTRY_COMPARE(observed.size(), 6);
+        QVERIFY(observed[0].isEmpty()); QCOMPARE(observed[2], observed[1]);
+        QVERIFY(observed[3].isEmpty()); QCOMPARE(observed[5], observed[4]);
+    }
     void downloadsRoundTrips()
     {
         Fixture fixture; QVERIFY(fixture.start());
@@ -29,7 +45,7 @@ private slots:
         QCOMPARE(fixture.control("automatic").value("value").toBool(), false);
         const auto keys = fixture.controller->controls().keys();
         for (const auto &key : keys) {
-            if (key == "automatic" || key == "acquisition.checkIntervalSeconds" || key == "acquisition.automatic.allowedResolutions") continue;
+            if (!key.startsWith("acquisition.automatic.") || key == "acquisition.automatic.allowedResolutions") continue;
             for (bool value : {false, true}) {
                 fixture.controller->edit(key, value);
                 QCOMPARE(fixture.control(key).value("value").toBool(), value);
@@ -130,6 +146,39 @@ private slots:
         Fixture f; QVERIFY(f.start()); QSaveFile file(f.paths.config); QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("{\"sources\":[],\"acquisition\":{\"automatic\":{\"enabled\":\"wrong\"}}}"); QVERIFY(file.commit());
         QTRY_VERIFY(f.control("automatic").value("error").toString().contains("acquisition.automatic.enabled"));
+    }
+    void acceptedCleanupReadFailureIsActionableAndRecoverable_data()
+    {
+        QTest::addColumn<bool>("omitted"); QTest::newRow("present") << false; QTest::newRow("omitted") << true;
+    }
+    void acceptedCleanupReadFailureIsActionableAndRecoverable()
+    {
+        QFETCH(bool, omitted);
+        const auto bus = QDBusConnection::sessionBus(); const auto paths = ConfigPaths::environment(QString(AERIAL_SETTINGS_TEST_SOURCE));
+        QProcess peer; peer.start(QCoreApplication::applicationDirPath() + "/settings-client-probe", {"--peer", readConfig(paths).profile, QString::number(QCoreApplication::applicationPid())});
+        struct Retire { QProcess &peer; ~Retire() { peer.terminate(); peer.waitForFinished(5000); } } retire{peer};
+        QVERIFY(peer.waitForStarted()); QVERIFY(peer.waitForReadyRead()); QCOMPARE(peer.readAllStandardOutput().trimmed(), QByteArray("READY"));
+        const auto name = "org.aeriallock.TestPeer.p" + QString::number(peer.processId());
+        auto call = [&](const QString &method, const QVariantMap &flags = QVariantMap()) {
+            auto message = QDBusMessage::createMethodCall(name, "/control", "org.aeriallock.TestPeer", method);
+            if (method == "Configure") message << flags;
+            return bus.call(message);
+        };
+        Client::ServiceConnection service(bus, paths, paths.bundle); service.start(); QTRY_VERIFY(service.ready()); CacheController cache(service);
+        call("Configure", {{"failJob", true}}); cache.prepareCleanup();
+        QTRY_COMPARE(cache.cleanup().value("state").toString(), QString("error"));
+        QVERIFY(cache.cleanup().value("error").toString().contains("accepted"));
+        QVERIFY(!service.ready());
+        call("Configure", {{"failJob", false}, {"noJobs", omitted}, {"jobDetails", QVariantMap{{"prune", QVariantMap{{"removedFiles", 0}, {"removedBytes", 0}}}}}});
+        service.refresh(); QTRY_VERIFY(service.ready());
+        if (omitted) {
+            QTRY_VERIFY(cache.cleanup().value("error").toString().contains("no longer available"));
+            QDBusReply<QVariantMap> before(call("Stats")); QCOMPARE(before.value().value("Prune").toInt(), 1);
+            call("Configure", {{"noJobs", false}}); service.refresh(); QTRY_VERIFY(service.ready());
+            cache.prepareCleanup(); QTRY_COMPARE(cache.cleanup().value("state").toString(), QString("confirm"));
+        } else { QTRY_COMPARE(cache.cleanup().value("state").toString(), QString("confirm")); }
+        QVERIFY(cache.cleanup().value("error").toString().isEmpty());
+        QDBusReply<QVariantMap> stats(call("Stats")); QVERIFY(stats.isValid()); QCOMPARE(stats.value().value("Prune").toInt(), omitted ? 2 : 1);
     }
     void queuedEditsSurviveOnlyTheirOwnersReadFailure_data()
     {

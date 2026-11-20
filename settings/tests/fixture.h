@@ -14,7 +14,7 @@ struct Fixture {
     ConfigPaths paths;
     std::unique_ptr<Client::ServiceConnection> service;
     std::unique_ptr<SettingsController> controller;
-    bool start()
+    bool start(QDBusConnection serviceBus = QDBusConnection::sessionBus())
     {
         const QString source = AERIAL_SETTINGS_TEST_SOURCE;
         environment.insert("AERIAL_LOCK_SHELL", source);
@@ -28,7 +28,7 @@ struct Fixture {
         daemon.setProcessEnvironment(environment);
         daemon.start(source + "/companion/aerial", {});
         if (!daemon.waitForStarted()) return false;
-        service = std::make_unique<Client::ServiceConnection>(QDBusConnection::sessionBus(), paths, source);
+        service = std::make_unique<Client::ServiceConnection>(serviceBus, paths, source);
         controller = std::make_unique<SettingsController>(*service);
         service->start();
         return QTest::qWaitFor([this] { return service->ready(); }, 5000);
