@@ -501,22 +501,35 @@ private slots:
         HttpFixture server; server.media = QByteArray(16000000, 'x'); server.mode = "controlled";
         HttpTransport transport;
         auto representation = rep(server.url()); representation.bytes = server.media.size();
-        Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; });
+        qint64 checkpointNow = 10000;
+        Transfer transfer(cache, transport, representation, probe, {}, [] { return 123; }, nullptr, [&] { return checkpointNow; });
         QSignalSpy done(&transfer, &Transfer::finished); transfer.start();
         const auto metadata = [&] { return cache.metadata("partials/" + representation.key + ".json").value("received").toInteger(-1); };
         QTRY_COMPARE(metadata(), qint64(0)); QVERIFY(server.controlled);
+        checkpointNow += 1999;
         server.controlled->write(QByteArray(65536, 'x'));
         QTRY_COMPARE(transfer.received(), qint64(65536));
         QCOMPARE(metadata(), qint64(0)); QCOMPARE(done.size(), 0);
-        if (age) QTest::qWait(2100);
-        const auto next = age ? 65536 : 8 * 1024 * 1024 - 65536;
-        server.controlled->write(QByteArray(next, 'x'));
-        QTRY_COMPARE_WITH_TIMEOUT(transfer.received(), qint64(65536 + next), 5000);
-        QTRY_VERIFY_WITH_TIMEOUT(metadata() > 0, 5000);
-        // Threshold may land within the final socket batch. It must precede
-        // terminal persistence and cover at least the threshold-triggering byte.
-        QVERIFY(metadata() >= (age ? qint64(65537) : qint64(8 * 1024 * 1024)));
+        const qint64 threshold = age ? 65537 : 8 * 1024 * 1024;
+        if (age) ++checkpointNow;
+        else {
+            // Freeze elapsed time below its threshold, even on a slow runner.
+            server.controlled->write(QByteArray(threshold - 65536 - 1, 'x'));
+            QTRY_COMPARE_WITH_TIMEOUT(transfer.received(), threshold - 1, 5000);
+            QCOMPARE(metadata(), qint64(0));
+        }
+        server.controlled->write("x");
+        QTRY_COMPARE_WITH_TIMEOUT(transfer.received(), threshold, 5000);
+        // Read durable metadata while HTTP is still open, not cancellation or
+        // terminal persistence. The final byte alone crosses this row's gate.
+        QCOMPARE(metadata(), threshold);
         QCOMPARE(done.size(), 0);
+        checkpointNow += 1999;
+        server.controlled->write("x"); QTRY_COMPARE(transfer.received(), threshold + 1);
+        QCOMPARE(metadata(), threshold); // Every checkpoint restarts its age.
+        ++checkpointNow;
+        server.controlled->write("x"); QTRY_COMPARE(transfer.received(), threshold + 2);
+        QCOMPARE(metadata(), threshold + 2); QCOMPARE(done.size(), 0);
         transfer.cancel(); QTRY_COMPARE(done.size(), 1);
         QCOMPARE(cache.usage().reserved, quint64(0));
     }

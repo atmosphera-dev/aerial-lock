@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QTimer>
+#include <chrono>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -26,12 +27,19 @@ qint64 length(const QByteArray &bytes)
     const auto number = bytes.toLongLong(&ok);
     return ok && number >= 0 ? number : -1;
 }
+qint64 monotonicMilliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 }
 
 Transfer::Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
-                   QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent)
+                   QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent,
+                   std::function<qint64()> checkpointClock)
     : QObject(parent), cache(cache), transport(transport), rep(std::move(representation)),
-      probeExecutable(std::move(probeExecutable)), appleRoot(std::move(appleRoot)), clock(std::move(clock)) {}
+      probeExecutable(std::move(probeExecutable)), appleRoot(std::move(appleRoot)), clock(std::move(clock)),
+      checkpointClock(checkpointClock ? std::move(checkpointClock) : monotonicMilliseconds) {}
 
 Transfer::~Transfer()
 {
@@ -171,7 +179,7 @@ QString Transfer::chunk(const QByteArray &bytes)
     // Progress remains live, but durable checkpoints amortize synchronous file
     // and metadata flushes. Errors/cancellation and successful termination also
     // persist, so restart loses at most the uncheckpointed received tail.
-    if ((offset - checkpointOffset >= 8 * 1024 * 1024 || checkpointAge.elapsed() >= 2000)
+    if ((offset - checkpointOffset >= 8 * 1024 * 1024 || checkpointClock() - checkpointTime >= 2000)
         && !persist()) return "CacheFull";
     emit progress();
     return {};
@@ -184,7 +192,7 @@ bool Transfer::persist()
     if (!cache.writeMetadata("partials/" + rep.key + ".json", {{"version", 1}, {"key", rep.key},
         {"url", rep.url.toString(QUrl::FullyEncoded)}, {"effectiveUrl", effectiveUrl.toString(QUrl::FullyEncoded)}, {"validator", QString::fromLatin1(validator)},
         {"received", offset}, {"total", expected}})) return false;
-    checkpointOffset = offset; checkpointAge.start();
+    checkpointOffset = offset; checkpointTime = checkpointClock();
     return true;
 }
 

@@ -175,6 +175,11 @@ the cap below existing usage, retaining the last verified fallback. Such
 reclamation atomically publishes a smaller index before removing media; its
 temporary bookkeeping and any remaining overage stay included in reported usage.
 
+Live checkpoint tests inject a monotonic millisecond clock independently of
+completion timestamps. The byte row freezes age below two seconds and crosses
+8 MiB with a final single byte; the age row advances through two seconds with a small
+payload. Both read durable metadata before ending HTTP and verify age resets.
+
 The transfer, policy and control CTests share one Qt probe, but the discovered
 test functions have disjoint suite ownership: `serviceCli*` and the compatibility
 frontend run in control, `policy*` in policy, and the remaining functions in

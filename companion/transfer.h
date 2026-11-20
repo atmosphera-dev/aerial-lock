@@ -5,7 +5,6 @@
 #include "local-probe.h"
 #include <QPointer>
 #include <QCryptographicHash>
-#include <QElapsedTimer>
 #include <functional>
 
 namespace Aerial {
@@ -16,7 +15,8 @@ class Transfer : public QObject {
     Q_OBJECT
 public:
     Transfer(CacheStore &cache, HttpTransport &transport, Representation representation,
-             QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent = nullptr);
+             QString probeExecutable, QByteArray appleRoot, std::function<qint64()> clock, QObject *parent = nullptr,
+             std::function<qint64()> checkpointClock = {});
     ~Transfer();
     void start();
     void cancel(const QString &reason = "Cancelled");
@@ -41,6 +41,8 @@ private:
     QString probeExecutable;
     QByteArray appleRoot;
     std::function<qint64()> clock;
+    // Monotonic milliseconds, independent of persisted completion timestamps.
+    std::function<qint64()> checkpointClock;
     QPointer<HttpOperation> http;
     QPointer<LocalProbe> worker;
     HttpResult lastResponse;
@@ -48,8 +50,7 @@ private:
     QByteArray validator;
     QUrl effectiveUrl;
     qint64 offset = 0, expected = -1, resumeOffset = 0;
-    qint64 checkpointOffset = 0;
-    QElapsedTimer checkpointAge;
+    qint64 checkpointOffset = 0, checkpointTime = 0;
     int file = -1;
     int hashInput = -1;
     qint64 hashed = 0;
