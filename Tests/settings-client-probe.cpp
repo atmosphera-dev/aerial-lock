@@ -82,6 +82,8 @@ public:
                 if (flags.value("expireJob").toBool()) {
                     flags["noJobs"] = true;
                     reply = message.createErrorReply(QDBusError::UnknownObject, "expired");
+                } else if (flags.value("failJob").toBool()) {
+                    reply = message.createErrorReply(QDBusError::AccessDenied, "job not readable");
                 } else {
                     SourceList nested{{{"code", "Success"}, {"bytes", QVariant::fromValue(large)}}};
                     QVariantMap values{{"State", flags.value("jobState", "succeeded")}, {"SourceId", flags.value("jobSourceId", "fixture")}, {"Cancellable", false},
@@ -296,6 +298,23 @@ private slots:
         bool sawFailure = false;
         connect(&client, &ServiceConnection::changed, &client, [&] { sawFailure |= !client.ready() && client.errorName().endsWith("Failed"); });
         control(peer, "Notify"); QTRY_VERIFY(sawFailure); QTRY_VERIFY(client.ready());
+        QCOMPARE(control(peer, "Stats").value("SetPaused").toInt(), 1);
+    }
+    void failedPostMutationJobReadCompletesOnce()
+    {
+        QTemporaryDir root; const auto paths = fixturePaths(root.path());
+        Process peer; peer.peer(readConfig(paths).profile);
+        ServiceConnection client(QDBusConnection::sessionBus(), paths, source); client.start(); QTRY_VERIFY(client.ready());
+        control(peer, "Configure", {{"failJob", true}});
+        QSignalSpy mutations(&client, &ServiceConnection::mutationFinished);
+        const auto id = client.setPaused(true);
+        QTRY_COMPARE(mutations.size(), 1);
+        QCOMPARE(mutations[0][0].toULongLong(), id);
+        QVERIFY(mutations[0][2].toString().isEmpty()); // Mutation succeeded; only the subsequent snapshot failed.
+        QVERIFY(!client.ready()); QVERIFY(client.errorName().endsWith("AccessDenied"));
+        QCOMPARE(control(peer, "Stats").value("SetPaused").toInt(), 1);
+        control(peer, "Configure", {{"failJob", false}}); client.refresh(); QTRY_VERIFY(client.ready());
+        QTest::qWait(50); QCOMPARE(mutations.size(), 1);
         QCOMPARE(control(peer, "Stats").value("SetPaused").toInt(), 1);
     }
     void sourceInvalidationFollowsJobSemantics()

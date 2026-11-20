@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStringList>
+#include <QUrl>
 
 namespace Aerial {
 
@@ -38,5 +39,11 @@ QStringList changedPaths(const QJsonObject &patch, const QString &prefix = {});
 QString sourceIdentity(const QJsonObject &source);
 // Selection only. Disabled sources remain configured owners of cached data.
 inline bool sourceEnabled(const QJsonObject &source) { return source.value("enabled").toBool(true); }
+// Shared config/editor/dispatch contract. HTTP is intentionally supported;
+// opaque query strings remain part of the user's explicitly selected URL.
+inline bool remoteContentUrl(const QUrl &url) {
+    return url.isValid() && (url.scheme() == "http" || url.scheme() == "https") && !url.host().isEmpty()
+        && url.userInfo().isEmpty() && url.fragment().isEmpty() && url.toEncoded().size() <= 16384;
+}
 
 }

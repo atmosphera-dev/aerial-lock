@@ -4,6 +4,7 @@ import QtQuick.Layouts
 C.ScrollView {
     id: root
     property string title
+    property Component headingAction
     default property alias contents: column.data
     clip: true
     contentWidth: availableWidth
@@ -12,6 +13,12 @@ C.ScrollView {
         id: column
         width: root.availableWidth
         spacing: 22
-        Label { Layout.fillWidth: true; text: root.title; font.pixelSize: 22; font.bold: true; Layout.minimumHeight: 40; verticalAlignment: Text.AlignVCenter }
+        RowLayout {
+            objectName: "pageHeading"
+            Layout.fillWidth: true
+            Layout.minimumHeight: 40
+            Label { objectName: "pageTitle"; Layout.fillWidth: true; text: root.title; font.pixelSize: 22; font.bold: true; verticalAlignment: Text.AlignVCenter }
+            Loader { sourceComponent: root.headingAction }
+        }
     }
 }

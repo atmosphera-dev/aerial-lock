@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Receipt-bound settings acceptance, only in the owned guest; never locks.
 
-P4 implements prepare/cold-load/visuals. Other named phases fail explicitly until
-implemented, not skip. P4 proves build-tree apps; installed exact payload is P7.
+Build-tree app qualification. Installed exact payload is P7. Unimplemented phase
+cases fail explicitly, never skip. Native portal peers use real desktop consumers.
 """
 import argparse
 import hashlib
@@ -209,6 +209,11 @@ def native(args):
                     assert not probe.stdout + probe.stderr, "unexpected visual probe log"
                     assert path.is_file()
                     captures.append(str(path))
+                    pages = output / ("pages-" + palette); pages.mkdir()
+                    probe = run(["dbus-run-session", "--", str(visual), "--pages", palette, str(pages)], env=env, capture_output=True, text=True)
+                    publish(output / ("visual-pages-" + palette + ".log"), probe.stdout + probe.stderr)
+                    assert not probe.stdout + probe.stderr, "unexpected page visual probe log"
+                    captures += sorted(str(p) for p in pages.glob("*.png"))
             result = {"window": window, "forwarded": True, "raised_from_peer": True, "natural_exit": 0, "service_survives": True, "captures": captures, "source_identity": owned.record["current_source_identity"]}
             publish(output / "result.json", json.dumps(result, indent=2))
             return result
@@ -236,6 +241,28 @@ def main():
             result = prepare(args)
         elif args.case in ("cold-load", "visuals"):
             result = native(args)
+        elif args.case in ("controls", "failure-recovery", "portals"):
+            owned = OwnedInstance(args.vm_record, args.root); owned.check(require_binaries=True)
+            environment = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
+            environment.pop("QT_QPA_PLATFORM", None)
+            owned.check_session(owned.record["session"], environment)
+            output = args.root / "results" / ("settings-" + args.case + "-" + str(time.time_ns())); output.mkdir(mode=0o700)
+            if args.case == "portals":
+                from importlib.machinery import SourceFileLoader
+                module = SourceFileLoader("settings_native_portals", str(owned.paths["source"] / "Tests/settings-native-portals.py")).load_module()
+                result = module.portals(owned, output)
+            else:
+                # Native QuickTest drives the actual production controls and
+                # checks CLI readback, source drag, drafts, outage and repair.
+                test_inputs = quick_test_inputs(owned.paths["source"], owned.record["source_files"])
+                commands = [["dbus-run-session", "--", str(owned.paths["build"] / "settings-quick-probe"), "-input", str(owned.paths["source"] / "settings/tests"), "-import", str(owned.paths["source"])]]
+                if args.case == "failure-recovery":
+                    commands += [["dbus-run-session", "--", str(owned.paths["build"] / name)] for name in ("settings-model-probe", "settings-pages-probe")]
+                for index, command in enumerate(commands):
+                    probe = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                    text = probe.stdout + probe.stderr; publish(output / (str(index) + ".log"), text)
+                    assert probe.returncode == 0 and "QWARN" not in text and "FAIL!" not in text, text
+                result = {"nativeProductionControls": True, "cliReadback": True, "draftOutageAndRepair": True, "testInputs": test_inputs, "output": str(output)}
         else:
             raise RuntimeError("case belongs to a later implementation phase: " + args.case)
         publish(result_path, json.dumps({"case": args.case, "exit": 0, "observations": result}, indent=2))

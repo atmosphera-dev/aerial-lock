@@ -23,6 +23,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from settings_build import binary_paths, hashes, quick_test_inputs, source_identity, verify_build
+from desktop_entry import exec_argument
 
 
 class CleanupTest(unittest.TestCase):
@@ -39,6 +40,16 @@ class CleanupTest(unittest.TestCase):
         self.assertIs(caught.exception, original)
         self.assertIn("cleanup failed: fixture: retirement failed", output.getvalue())
 
+    def test_desktop_exec_preserves_literal_profile_characters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); target = root / 'literal %z "quote" \\ $cash `tick`'
+            desktop = root / "literal.desktop"
+            desktop.write_text("[Desktop Entry]\nType=Application\nName=Literal argv fixture\nExec=/usr/bin/touch " + exec_argument(target) + "\nTerminal=false\n")
+            result = subprocess.run(["gio", "launch", str(desktop)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            deadline = time.monotonic() + 5
+            while not target.exists() and time.monotonic() < deadline: time.sleep(.01)
+            self.assertTrue(target.exists(), result.stdout + result.stderr)
 
     def test_quicktest_rejects_inputs_added_after_the_freeze(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -50,6 +61,14 @@ class CleanupTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unfrozen settings test input"):
                 quick_test_inputs(root, files)
 
+    def test_chooser_selection_never_uses_preexisting_or_ambiguous_windows(self):
+        spec = importlib.util.spec_from_file_location("portals", Path(__file__).with_name("settings-native-portals.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = dict(id=1, title="Choose a video folder"); new = dict(id=2, title=old["title"])
+        self.assertEqual(module.new_chooser([old, new], {1}, old["title"]), new)
+        self.assertIsNone(module.new_chooser([old], {1}, old["title"]))
+        with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+            module.new_chooser([old, new, dict(id=3, title=old["title"])], {1}, old["title"])
 
 
     def test_client_wrapper_rejects_failures_under_optimization(self):
@@ -186,6 +205,41 @@ class CleanupTest(unittest.TestCase):
                                      home / "workspaces/task/results/private", output])
         self.assertEqual(len(paths), len(set(paths)))
 
+    def test_portal_setup_and_compositor_failures_restore_mime(self):
+        spec = importlib.util.spec_from_file_location("portals", Path(__file__).with_name("settings-native-portals.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            mime = home / ".config/mimeapps.list"; mime.parent.mkdir()
+            mime.write_bytes(b"[Default Applications]\nx-scheme-handler/http=original.desktop;\ntext/plain=old.desktop;\n")
+            output = home / "output"; output.mkdir()
+            owned = Mock()
+            owned.paths = {"root": home, "build": home}
+            owned.record = {"session": {}, "environment": {"XDG_RUNTIME_DIR": str(home)}}
+            def fail(*args, **kwargs):
+                mime.write_bytes(b"[Default Applications]\nx-scheme-handler/http=aerial-portal-test-browser.desktop;\ntext/plain=new.desktop;\n")
+                raise RuntimeError("original xdg-mime failure")
+            with patch.object(Path, "home", return_value=home), patch.object(module.subprocess, "run", side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError, "original xdg-mime failure") as caught:
+                    module.portals(owned, output)
+            self.assertEqual(mime.read_bytes(), b"[Default Applications]\nx-scheme-handler/http=original.desktop;\ntext/plain=new.desktop;\n")
+            self.assertFalse((home / ".local/share/applications/aerial-portal-test-browser.desktop").exists())
+            self.assertIn("cleanup failed", str(caught.exception.__notes__))
+
+    def test_mime_retirement_preserves_other_writers(self):
+        spec = importlib.util.spec_from_file_location("portals", Path(__file__).with_name("settings-native-portals.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "mimeapps.list"
+            current = "[Default Applications]\nx-scheme-handler/http=later.desktop;\nx-scheme-handler/https=fixture.desktop;added.desktop;\ntext/plain=new.desktop;\n"
+            file.write_text(current); original = b"[Default Applications]\nx-scheme-handler/https=old.desktop;\n"
+            module.restore_mime_override(file, original, "fixture.desktop")
+            self.assertEqual(file.read_text(), current.replace("fixture.desktop;added.desktop;", "old.desktop;added.desktop;"))
+            file.write_text(current); module.restore_mime_override(file, None, "fixture.desktop")
+            self.assertEqual(file.read_text(), current.replace("fixture.desktop;added.desktop;", "added.desktop;"))
+            file.write_text("[Default Applications]\nx-scheme-handler/https=new.desktop;fixture.desktop;\n")
+            module.restore_mime_override(file, original, "fixture.desktop")
+            self.assertEqual(file.read_text(), "[Default Applications]\nx-scheme-handler/https=new.desktop;\n")
 
 
 

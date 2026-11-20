@@ -75,12 +75,10 @@ C.ApplicationWindow {
                 anchors.topMargin: 22
                 anchors.bottomMargin: 32
                 Downloads { id: downloads; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 0; controller: root.controller }
-                UI.Page {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: root.controller.panel === "settings" && root.page !== 0
-                    title: ["Downloads", "Sources", "Cache & status", "Lock screen", "About"][root.page]
-                }
+                Sources { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 1; controller: root.controller }
+                Cache { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 2; controller: root.controller; onDownloadsRequested: root.page = 0 }
+                Lock { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 3; controller: root.controller }
+                About { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 4; controller: root.controller }
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -92,10 +90,14 @@ C.ApplicationWindow {
                     UI.Label { Layout.fillWidth: true; text: root.controller.panel === "diagnostic" ? "Fix the settings file, then try again. The file is left unchanged." : "Settings and downloads need it. Starting it doesn't change any settings."; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                     UI.Label { Layout.fillWidth: true; text: root.controller.diagnostic; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                     UI.Label { Layout.fillWidth: true; visible: root.controller.panel === "unavailable"; text: "If it is masked, run systemctl --user unmask aerial, then try again."; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 13 }
-                    UI.Button { Layout.alignment: Qt.AlignHCenter; primary: true; text: root.controller.panel === "diagnostic" ? "Try again" : "Start service"; onClicked: root.controller.retry() }
+                    UI.Button { Layout.alignment: Qt.AlignHCenter; visible: root.controller.panel === "diagnostic" || root.controller.systemd.available; primary: true; text: root.controller.panel === "diagnostic" ? "Try again" : "Start service"; onClicked: root.controller.panel === "diagnostic" ? root.controller.retry() : root.controller.systemd.operate("aerial.service", "start") }
+                    UI.Button { Layout.alignment: Qt.AlignHCenter; visible: root.controller.panel === "diagnostic"; text: "Open folder"; onClicked: root.controller.openSettingsFolder() }
+                    UI.Label { Layout.fillWidth: true; visible: text.length > 0; text: root.controller.systemd.error; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                     Item { Layout.fillHeight: true }
                 }
             }
         }
     }
+    SourceSheet { sources: root.controller.sources; parent: C.Overlay.overlay }
+    CleanupSheet { cache: root.controller.cache; parent: C.Overlay.overlay }
 }

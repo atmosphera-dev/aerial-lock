@@ -13,8 +13,7 @@
 namespace Aerial {
 bool SourceResolver::remoteUrl(const QUrl &url)
 {
-    return url.isValid() && (url.scheme() == "http" || url.scheme() == "https")
-        && !url.host().isEmpty() && url.userInfo().isEmpty() && url.fragment().isEmpty() && url.toEncoded().size() <= 16384;
+    return remoteContentUrl(url);
 }
 
 QUrl SourceResolver::manifestUrl(const QJsonObject &source)

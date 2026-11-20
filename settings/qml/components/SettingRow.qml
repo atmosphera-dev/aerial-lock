@@ -25,7 +25,7 @@ Item {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 2
-            Label { Layout.fillWidth: true; text: root.title; font.weight: Font.Medium }
+            Label { Layout.fillWidth: true; visible: text.length > 0; text: root.title; font.weight: Font.Medium }
             Label { Layout.fillWidth: true; visible: text.length > 0; text: root.description; font.pixelSize: 13; wrapMode: Text.WordWrap }
             Label { Layout.fillWidth: true; visible: text.length > 0; text: root.error; font.pixelSize: 13; wrapMode: Text.WordWrap }
         }

@@ -10,6 +10,10 @@ QVariant unpack(const QVariant &value)
     if (value.metaType() == QMetaType::fromType<QDBusVariant>()) return unpack(value.value<QDBusVariant>().variant());
     if (value.metaType() == QMetaType::fromType<QDBusArgument>()) {
         const auto argument = value.value<QDBusArgument>();
+        // asVariant() duplicates a structure without decoding it. Recursing on
+        // that unchanged value overflows the stack (e.g. systemd Unit.Job).
+        // Preserve future/unknown structured properties as opaque wire values.
+        if (argument.currentType() == QDBusArgument::StructureType) return value;
         if (argument.currentType() == QDBusArgument::MapType) return unpack(QVariant::fromValue(qdbus_cast<QVariantMap>(argument)));
         if (argument.currentType() == QDBusArgument::ArrayType) {
             QVariantList result; argument.beginArray();

@@ -152,8 +152,7 @@ QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, Dia
             reason = " has an inverted resolution band";
         if (type == "apple" || type == "community") {
             const QUrl remote(url);
-            if (!remote.isValid() || (remote.scheme() != "https" && remote.scheme() != "http")
-                || remote.host().isEmpty()) reason = ".source must be an HTTP(S) URL";
+            if (!remoteContentUrl(remote)) reason = ".source must be an HTTP(S) URL without user-info or fragments";
         }
         auto safe = name;
         safe.replace(' ', '-');
