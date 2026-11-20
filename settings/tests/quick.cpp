@@ -4,6 +4,7 @@
 #include <QSaveFile>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QImage>
 #include <QTouchEvent>
 using namespace Aerial::Settings;
 class QuickHarness : public SettingsController {
@@ -15,6 +16,23 @@ public:
     QPointer<QQuickWindow> touchWindow;
     QPointer<const QPointingDevice> touchDevice;
     QuickHarness(Aerial::Settings::Test::Fixture &fixture) : SettingsController(*fixture.service), fixture(fixture) {}
+    Q_INVOKABLE QVariantList pixels(QObject *object, const QVariantList &points)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->window()) qFatal("pixel probe requires an exposed item");
+        auto *window = item->window();
+        const auto image = window->grabWindow();
+        if (image.isNull()) qFatal("pixel probe could not grab the window");
+        QVariantList result;
+        for (const auto &entry : points) {
+            const auto point = entry.toMap();
+            const auto scene = item->mapToScene({point.value("x").toDouble(), point.value("y").toDouble()});
+            const QPoint pixel(qRound(scene.x() * image.width() / window->width()), qRound(scene.y() * image.height() / window->height()));
+            if (!image.rect().contains(pixel)) qFatal("pixel probe point is outside the window image");
+            result << image.pixelColor(pixel);
+        }
+        return result;
+    }
     Q_INVOKABLE void observeTouch(QObject *object)
     {
         auto *item = qobject_cast<QQuickItem *>(object);
@@ -43,6 +61,17 @@ public:
     }
     Q_INVOKABLE void externalEdit(const QString &key, const QString &json) { fixture.cli({"config", "set", key, json}); }
     Q_INVOKABLE void configureTray(bool available, bool on, bool persistent = false) { setTrayState({{"available", available}, {"on", on}, {"persistent", persistent}, {"message", "Desktop tray fixture"}}); }
+    Q_INVOKABLE void replacePreview(const QString &color)
+    {
+        const auto directory = QFileInfo(fixture.paths.config).absolutePath() + "/themes";
+        if (!QDir().mkpath(directory + "/previews")) qFatal("preview directory failed");
+        const auto theme = directory + "/Macintosh.qml", preview = directory + "/previews/Macintosh.png";
+        if (color.isEmpty()) { QFile::remove(theme); QFile::remove(preview); return; }
+        QFile file(theme); if (!file.open(QIODevice::WriteOnly)) qFatal("theme fixture failed");
+        file.write("never execute this theme fixture"); file.close();
+        QImage image(16, 10, QImage::Format_RGB32); image.fill(QColor(color));
+        if (!image.save(preview)) qFatal("preview fixture failed");
+    }
     Q_INVOKABLE void stopService() { fixture.daemon.terminate(); if (!fixture.daemon.waitForFinished(5000)) qFatal("fixture did not stop"); }
     Q_INVOKABLE void startService() { fixture.daemon.start(QString(AERIAL_SETTINGS_TEST_SOURCE) + "/companion/aerial", {}); if (!fixture.daemon.waitForStarted()) qFatal("fixture did not start"); }
     Q_INVOKABLE void breakConfig()

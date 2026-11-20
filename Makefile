@@ -363,134 +363,135 @@ companion/aerial-media-probe: $(PROBE_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(PROBE_OBJS) $$(pkg-config --libs Qt6Core libavformat libavcodec libavutil)
 
 install: all
-	install -d $(DESTDIR)$(DATADIR)
-	install -d $(DESTDIR)$(DATADIR)/Modules/Lock
-	install -d $(DESTDIR)$(DATADIR)/Services
-	install -d $(DESTDIR)$(CONFDIR)
-	install -d $(DESTDIR)$(I18NDIR)
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 644 shell.qml $(DESTDIR)$(DATADIR)/shell.qml
-	install -m 644 Modules/Lock/qmldir $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/Lock.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/LockContent.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/LockBackground.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/AccentSampler.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/AccentTone.js $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/ThemeHost.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/AuthField.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/AuthEditor.qml Modules/Lock/AuthInputSink.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/Avatar.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/FrostedText.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/PowerActionControls.qml Modules/Lock/PowerActionButton.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -m 644 Modules/Lock/PowerActionMaterial.qml $(DESTDIR)$(DATADIR)/Modules/Lock/
-	install -d $(DESTDIR)$(DATADIR)/Themes
-	install -m 644 Themes/Macintosh.qml $(DESTDIR)$(DATADIR)/Themes/
-	install -m 644 Themes/Windows7.qml $(DESTDIR)$(DATADIR)/Themes/
-	install -m 644 Themes/MaterialYou.qml $(DESTDIR)$(DATADIR)/Themes/
-	install -m 644 Themes/Enfield.qml $(DESTDIR)$(DATADIR)/Themes/
-	install -m 644 Themes/Clockwork.qml $(DESTDIR)$(DATADIR)/Themes/
+	install -d "$(DESTDIR)$(DATADIR)"
+	install -d "$(DESTDIR)$(DATADIR)/Modules/Lock"
+	install -d "$(DESTDIR)$(DATADIR)/Services"
+	install -d "$(DESTDIR)$(CONFDIR)"
+	install -d "$(DESTDIR)$(I18NDIR)"
+	install -d "$(DESTDIR)$(BINDIR)"
+	install -m 644 shell.qml "$(DESTDIR)$(DATADIR)/shell.qml"
+	install -m 644 Modules/Lock/qmldir "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/Lock.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/LockContent.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/LockBackground.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/AccentSampler.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/AccentTone.js "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/ThemeHost.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/AuthField.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/AuthEditor.qml Modules/Lock/AuthInputSink.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/Avatar.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/FrostedText.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/PowerActionControls.qml Modules/Lock/PowerActionButton.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -m 644 Modules/Lock/PowerActionMaterial.qml "$(DESTDIR)$(DATADIR)/Modules/Lock/"
+	install -d "$(DESTDIR)$(DATADIR)/Themes"
+	install -m 644 Themes/Macintosh.qml "$(DESTDIR)$(DATADIR)/Themes/"
+	install -m 644 Themes/Windows7.qml "$(DESTDIR)$(DATADIR)/Themes/"
+	install -m 644 Themes/MaterialYou.qml "$(DESTDIR)$(DATADIR)/Themes/"
+	install -m 644 Themes/Enfield.qml "$(DESTDIR)$(DATADIR)/Themes/"
+	install -m 644 Themes/Clockwork.qml "$(DESTDIR)$(DATADIR)/Themes/"
+	install -d "$(DESTDIR)$(DATADIR)/Themes/previews"
+	install -m 644 Themes/previews/Macintosh.png Themes/previews/Windows7.png Themes/previews/MaterialYou.png Themes/previews/Enfield.png Themes/previews/Clockwork.png "$(DESTDIR)$(DATADIR)/Themes/previews/"
 	# d44 font bundles + attribution/notices (OFL 1.1; see Themes/ATTRIBUTION.md)
-	install -m 644 Themes/ATTRIBUTION.md $(DESTDIR)$(DATADIR)/Themes/
-	install -d $(DESTDIR)$(DATADIR)/Themes/fonts/google-sans
-	install -m 644 "Themes/fonts/google-sans/GoogleSans-VariableFont_GRAD,opsz,wght.ttf" $(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/
-	install -m 644 Themes/fonts/google-sans/OFL.txt $(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/
-	install -m 644 Themes/fonts/google-sans/NOTICE $(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/
-	install -d $(DESTDIR)$(DATADIR)/Themes/fonts/orbitron
-	install -m 644 Themes/fonts/orbitron/Orbitron-VariableFont_wght.ttf $(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/
-	install -m 644 Themes/fonts/orbitron/OFL.txt $(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/
-	install -m 644 Themes/fonts/orbitron/NOTICE $(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/
-	install -d $(DESTDIR)$(DATADIR)/Themes/fonts/outfit
-	install -m 644 Themes/fonts/outfit/Outfit-Black.ttf $(DESTDIR)$(DATADIR)/Themes/fonts/outfit/
-	install -m 644 Themes/fonts/outfit/OFL.txt $(DESTDIR)$(DATADIR)/Themes/fonts/outfit/
-	install -m 644 Themes/fonts/outfit/NOTICE $(DESTDIR)$(DATADIR)/Themes/fonts/outfit/
-	install -m 644 Services/qmldir $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/Logger.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/ConfigStore.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/PamLimits.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/PamProbe.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/BuildFlags.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/Compositor.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/SourceCache.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/ThemeSelection.js $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/LockContext.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/AuthInputState.qml $(DESTDIR)$(DATADIR)/Services/
-	install -m 644 Services/EngagementReport.qml $(DESTDIR)$(DATADIR)/Services/
-	install -d $(DESTDIR)$(DATADIR)/Services/Compositor
-	install -m 644 Services/Compositor/HyprlandBackend.qml $(DESTDIR)$(DATADIR)/Services/Compositor/
-	install -m 644 Config/defaults.json $(DESTDIR)$(CONFDIR)/
-	install -m 644 Config/settings-schema.json $(DESTDIR)$(CONFDIR)/
-	install -m 644 Config/apple-root.pem $(DESTDIR)$(CONFDIR)/
-	install -m 644 Config/pam-limits.json $(DESTDIR)$(CONFDIR)/
-	install -m 644 Config/build-flags.json $(DESTDIR)$(CONFDIR)/
-	install -m 644 Config/i18n/en.json $(DESTDIR)$(I18NDIR)/
-	install -m 755 aerial-lock $(DESTDIR)$(BINDIR)/aerial-lock
-	install -m 755 cli/aerialctl $(DESTDIR)$(BINDIR)/aerialctl
-	install -m 755 settings/aerial-settings $(DESTDIR)$(BINDIR)/aerial-settings
-	install -d $(DESTDIR)$(PREFIX)/share/applications
-	install -m 644 data/org.aeriallock.AerialSettings.desktop $(DESTDIR)$(PREFIX)/share/applications/
-	for size in 16 24 32 48 64 128 256; do \
-		install -d $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps; \
-		install -m 644 settings/assets/icons/$$size.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/org.aeriallock.AerialSettings.png; \
-	done
-	install -m 755 Scripts/aerial-lock-fetch $(DESTDIR)$(BINDIR)/aerial-lock-fetch
-	install -m 755 recovery/aerial-unlock $(DESTDIR)$(BINDIR)/aerial-unlock
-	install -m 755 supervisor/aerial-lock-supervisor $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
-	install -m 755 idle/aerial-idle $(DESTDIR)$(BINDIR)/aerial-idle
-	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user $(DESTDIR)$(DATADIR)/examples
+	install -m 644 Themes/ATTRIBUTION.md "$(DESTDIR)$(DATADIR)/Themes/"
+	install -d "$(DESTDIR)$(DATADIR)/Themes/fonts/google-sans"
+	install -m 644 "Themes/fonts/google-sans/GoogleSans-VariableFont_GRAD,opsz,wght.ttf" "$(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/"
+	install -m 644 Themes/fonts/google-sans/OFL.txt "$(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/"
+	install -m 644 Themes/fonts/google-sans/NOTICE "$(DESTDIR)$(DATADIR)/Themes/fonts/google-sans/"
+	install -d "$(DESTDIR)$(DATADIR)/Themes/fonts/orbitron"
+	install -m 644 Themes/fonts/orbitron/Orbitron-VariableFont_wght.ttf "$(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/"
+	install -m 644 Themes/fonts/orbitron/OFL.txt "$(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/"
+	install -m 644 Themes/fonts/orbitron/NOTICE "$(DESTDIR)$(DATADIR)/Themes/fonts/orbitron/"
+	install -d "$(DESTDIR)$(DATADIR)/Themes/fonts/outfit"
+	install -m 644 Themes/fonts/outfit/Outfit-Black.ttf "$(DESTDIR)$(DATADIR)/Themes/fonts/outfit/"
+	install -m 644 Themes/fonts/outfit/OFL.txt "$(DESTDIR)$(DATADIR)/Themes/fonts/outfit/"
+	install -m 644 Themes/fonts/outfit/NOTICE "$(DESTDIR)$(DATADIR)/Themes/fonts/outfit/"
+	install -m 644 Services/qmldir "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/Logger.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/ConfigStore.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/PamLimits.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/PamProbe.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/BuildFlags.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/Compositor.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/SourceCache.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/ThemeSelection.js "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/LockContext.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/AuthInputState.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -m 644 Services/EngagementReport.qml "$(DESTDIR)$(DATADIR)/Services/"
+	install -d "$(DESTDIR)$(DATADIR)/Services/Compositor"
+	install -m 644 Services/Compositor/HyprlandBackend.qml "$(DESTDIR)$(DATADIR)/Services/Compositor/"
+	install -m 644 Config/defaults.json "$(DESTDIR)$(CONFDIR)/"
+	install -m 644 Config/settings-schema.json "$(DESTDIR)$(CONFDIR)/"
+	install -m 644 Config/apple-root.pem "$(DESTDIR)$(CONFDIR)/"
+	install -m 644 Config/pam-limits.json "$(DESTDIR)$(CONFDIR)/"
+	install -m 644 Config/build-flags.json "$(DESTDIR)$(CONFDIR)/"
+	install -m 644 Config/i18n/en.json "$(DESTDIR)$(I18NDIR)/"
+	install -m 755 aerial-lock "$(DESTDIR)$(BINDIR)/aerial-lock"
+	install -m 755 cli/aerialctl "$(DESTDIR)$(BINDIR)/aerialctl"
+	install -m 755 settings/aerial-settings "$(DESTDIR)$(BINDIR)/aerial-settings"
+	install -d "$(DESTDIR)$(PREFIX)/share/applications"
+	install -m 644 data/org.aeriallock.AerialSettings.desktop "$(DESTDIR)$(PREFIX)/share/applications/"
+	install -d "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps" "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/status"
+	install -m 644 settings/assets/org.aeriallock.AerialSettings.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/"
+	install -m 644 settings/assets/aerial-symbolic.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/status/org.aeriallock.AerialSettings-symbolic.svg"
+	install -m 755 Scripts/aerial-lock-fetch "$(DESTDIR)$(BINDIR)/aerial-lock-fetch"
+	install -m 755 recovery/aerial-unlock "$(DESTDIR)$(BINDIR)/aerial-unlock"
+	install -m 755 supervisor/aerial-lock-supervisor "$(DESTDIR)$(BINDIR)/aerial-lock-supervisor"
+	install -m 755 idle/aerial-idle "$(DESTDIR)$(BINDIR)/aerial-idle"
+	install -d "$(DESTDIR)$(PREFIX)/lib/systemd/user" "$(DESTDIR)$(DATADIR)/examples"
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-idle.service.in > $(OBJDIR)/aerial-idle.service
-	install -m 644 $(OBJDIR)/aerial-idle.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
+	install -m 644 $(OBJDIR)/aerial-idle.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-tray.service.in > $(OBJDIR)/aerial-tray.service
-	install -m 644 $(OBJDIR)/aerial-tray.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
+	install -m 644 $(OBJDIR)/aerial-tray.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial.service.in > $(OBJDIR)/aerial.service
-	install -m 644 $(OBJDIR)/aerial.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
-	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants
-	ln -sfn ../aerial.service $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial.service
-	install -m 644 examples/idle.json $(DESTDIR)$(DATADIR)/examples/
-	install -d $(DESTDIR)$(LIBEXECDIR) $(DESTDIR)$(PLUGINROOT)/generic
-	install -m 755 Scripts/aerial-lock-run $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run
-	install -m 755 native/aerial-lock-auth $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
-	install -m 755 companion/aerial $(DESTDIR)$(BINDIR)/aerial
-	install -m 755 companion/aerial-media-probe $(DESTDIR)$(LIBEXECDIR)/aerial-media-probe
-	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces
-	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/services
+	install -m 644 $(OBJDIR)/aerial.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
+	install -d "$(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants"
+	ln -sfn ../aerial.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial.service"
+	install -m 644 examples/idle.json "$(DESTDIR)$(DATADIR)/examples/"
+	install -d "$(DESTDIR)$(LIBEXECDIR)" "$(DESTDIR)$(PLUGINROOT)/generic"
+	install -m 755 Scripts/aerial-lock-run "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-run"
+	install -m 755 native/aerial-lock-auth "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth"
+	install -m 755 companion/aerial "$(DESTDIR)$(BINDIR)/aerial"
+	install -m 755 companion/aerial-media-probe "$(DESTDIR)$(LIBEXECDIR)/aerial-media-probe"
+	install -d "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces"
+	install -d "$(DESTDIR)$(PREFIX)/share/dbus-1/services"
 	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.Aerial1.service.in > $(OBJDIR)/org.aeriallock.Aerial1.service
-	install -m 644 $(OBJDIR)/org.aeriallock.Aerial1.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/
+	install -m 644 $(OBJDIR)/org.aeriallock.Aerial1.service "$(DESTDIR)$(PREFIX)/share/dbus-1/services/"
 	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.AerialSettings.service.in > $(OBJDIR)/org.aeriallock.AerialSettings.service
-	install -m 644 $(OBJDIR)/org.aeriallock.AerialSettings.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/
-	install -m 644 dbus/org.aeriallock.Aerial1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
-	install -m 644 dbus/org.aeriallock.Aerial1.Job1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
-	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
-	install -d $(DESTDIR)$(DATADIR)/AerialLock/Native
-	install -m 644 AerialLock/Native/qmldir AerialLock/Native/native.qmltypes $(DESTDIR)$(DATADIR)/AerialLock/Native/
-	install -m 755 $(GUARD_PLUGIN) $(DESTDIR)$(PLUGINROOT)/generic/
-	install -m 755 $(INPUT_PLUGIN) $(DESTDIR)$(PLUGINROOT)/generic/
-	install -d $(DESTDIR)$(PAMDIR)
-	install -m 644 pam.d/aerial-lock $(DESTDIR)$(PAMDIR)/aerial-lock
-	install -d $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock
-	install -m 644 LICENSE docs/third-party-notices.md $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/
+	install -m 644 $(OBJDIR)/org.aeriallock.AerialSettings.service "$(DESTDIR)$(PREFIX)/share/dbus-1/services/"
+	install -m 644 dbus/org.aeriallock.Aerial1.xml "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/"
+	install -m 644 dbus/org.aeriallock.Aerial1.Job1.xml "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/"
+	install -m 755 emergency/aerial-lock-emergency "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency"
+	install -d "$(DESTDIR)$(DATADIR)/AerialLock/Native"
+	install -m 644 AerialLock/Native/qmldir AerialLock/Native/native.qmltypes "$(DESTDIR)$(DATADIR)/AerialLock/Native/"
+	install -m 755 $(GUARD_PLUGIN) "$(DESTDIR)$(PLUGINROOT)/generic/"
+	install -m 755 $(INPUT_PLUGIN) "$(DESTDIR)$(PLUGINROOT)/generic/"
+	install -d "$(DESTDIR)$(PAMDIR)"
+	install -m 644 pam.d/aerial-lock "$(DESTDIR)$(PAMDIR)/aerial-lock"
+	install -d "$(DESTDIR)$(PREFIX)/share/licenses/aerial-lock"
+	install -m 644 LICENSE docs/third-party-notices.md "$(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/"
 
 uninstall:
-	rm -rf $(DESTDIR)$(DATADIR)
-	rm -f $(DESTDIR)$(BINDIR)/aerial-lock
-	rm -f $(DESTDIR)$(BINDIR)/aerialctl
-	rm -f $(DESTDIR)$(BINDIR)/aerial-settings $(DESTDIR)$(PREFIX)/share/applications/org.aeriallock.AerialSettings.desktop
-	for size in 16 24 32 48 64 128 256; do rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/org.aeriallock.AerialSettings.png; done
-	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-tray.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.AerialSettings.service
-	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-fetch
-	rm -f $(DESTDIR)$(BINDIR)/aerial-unlock
-	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
-	rm -f $(DESTDIR)$(BINDIR)/aerial-idle $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-idle.service
-	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial.service $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial.service
-	rm -f $(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.Aerial1.service
-	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-run $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockConnectionGuard.so
-	rm -f $(DESTDIR)$(PLUGINROOT)/generic/libAerialLockSurfaceInput.so
-	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth
-	rm -f $(DESTDIR)$(BINDIR)/aerial $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Aerial1.xml
-	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-media-probe
-	rm -f $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Aerial1.Job1.xml
-	rm -f $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
-	rm -f $(DESTDIR)$(PAMDIR)/aerial-lock
-	rm -f $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/LICENSE $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/third-party-notices.md
+	rm -rf "$(DESTDIR)$(DATADIR)"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-lock"
+	rm -f "$(DESTDIR)$(BINDIR)/aerialctl"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-settings" "$(DESTDIR)$(PREFIX)/share/applications/org.aeriallock.AerialSettings.desktop"
+	rm -f "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/org.aeriallock.AerialSettings.svg" "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/status/org.aeriallock.AerialSettings-symbolic.svg"
+	rm -f "$(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-tray.service" "$(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.AerialSettings.service"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-lock-fetch"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-unlock"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-lock-supervisor"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial-idle" "$(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-idle.service"
+	rm -f "$(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants/aerial.service" "$(DESTDIR)$(PREFIX)/lib/systemd/user/aerial.service"
+	rm -f "$(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.Aerial1.service"
+	rm -f "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-run" "$(DESTDIR)$(PLUGINROOT)/generic/libAerialLockConnectionGuard.so"
+	rm -f "$(DESTDIR)$(PLUGINROOT)/generic/libAerialLockSurfaceInput.so"
+	rm -f "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-auth"
+	rm -f "$(DESTDIR)$(BINDIR)/aerial" "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Aerial1.xml"
+	rm -f "$(DESTDIR)$(LIBEXECDIR)/aerial-media-probe"
+	rm -f "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/org.aeriallock.Aerial1.Job1.xml"
+	rm -f "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency"
+	rm -f "$(DESTDIR)$(PAMDIR)/aerial-lock"
+	rm -f "$(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/LICENSE" "$(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/third-party-notices.md"
 
 clean:
 	$(if $(wildcard $(SETTINGS_BUILD)/build.ninja),cmake --build "$(SETTINGS_BUILD)" --target clean, :)
@@ -507,7 +508,7 @@ clean:
 	rm -f $(UNLOCK_OBJS) $(SUPERVISOR_OBJS) $(GUARD_OBJS) $(IDLE_OBJS)
 	rm -f emergency/aerial-lock-emergency emergency/ext-session-lock-v1-client.h emergency/ext-session-lock-v1-protocol.c $(EMERGENCY_OBJS)
 	rm -f $(OBJDIR)/native-config $(OBJDIR)/native-config.tmp $(OBJDIR)/aerial-idle.service
-	rm -f $(OBJDIR)/aerial.service $(OBJDIR)/org.aeriallock.Aerial1.service
+	rm -f $(OBJDIR)/aerial.service $(OBJDIR)/org.aeriallock.Aerial1.service $(OBJDIR)/aerial-tray.service $(OBJDIR)/org.aeriallock.AerialSettings.service
 	rm -f companion/aerial $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
 	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.o $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp

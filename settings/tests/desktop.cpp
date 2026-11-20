@@ -1,8 +1,11 @@
 #include "portal-client.h"
 #include "systemd-controller.h"
+#include "tray-controller.h"
+#include "window-controller.h"
 #include "fixture.h"
 #include "common/client/client-support.h"
 #include <QCoreApplication>
+#include <QApplication>
 #include <QDBusArgument>
 #include <QDBusMetaType>
 #include <QDBusUnixFileDescriptor>
@@ -11,6 +14,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcess>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -182,6 +187,37 @@ struct PeerProcess {
 class DesktopTest : public QObject {
     Q_OBJECT
 private slots:
+    void portalFeedbackSurvivesPanelChanges()
+    {
+        PeerProcess peer; QVERIFY(peer.ready());
+        Test::Fixture fixture; QVERIFY(fixture.start());
+        WindowController window(*fixture.controller); window.open();
+        QQuickWindow *quick = nullptr;
+        for (auto *candidate : QGuiApplication::topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
+        QVERIFY(quick); QVERIFY(QTest::qWaitForWindowExposed(quick));
+        QFile config(fixture.paths.config); QVERIFY(config.open(QIODevice::ReadOnly));
+        const auto original = config.readAll(); config.close();
+        QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Truncate)); config.write("{broken"); config.close();
+        QTRY_COMPARE(fixture.controller->panel(), QString("diagnostic"));
+        peer.configure({{"mode", "deny"}});
+        fixture.controller->openSettingsFolder();
+        QTRY_VERIFY(!fixture.controller->portal()->error().isEmpty());
+        const auto feedbackItems = quick->findChildren<QQuickItem *>("portalError");
+        QCOMPARE(feedbackItems.size(), 1); auto *feedback = feedbackItems.first();
+        QTRY_VERIFY(feedback->isVisible());
+        QCOMPARE(feedback->property("text").toString(), fixture.controller->portal()->error());
+        QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Truncate)); config.write(original); config.close();
+        QTRY_COMPARE(fixture.controller->panel(), QString("settings"));
+        for (int page = 0; page < 5; ++page) {
+            quick->setProperty("page", page); QTRY_VERIFY(feedback->isVisible());
+            QCOMPARE(feedback->property("text").toString(), fixture.controller->portal()->error());
+        }
+        peer.configure({}); QSignalSpy finished(fixture.controller->portal(), &PortalClient::finished);
+        fixture.controller->openSettingsFolder(); QTRY_COMPARE(finished.size(), 1);
+        QVERIFY(fixture.controller->portal()->error().isEmpty());
+        QTRY_VERIFY(!feedback->isVisible());
+        quick->close(); QTRY_VERIFY(!window.hasWindow());
+    }
     void portals()
     {
         for (const auto &bytes : {QByteArray(), QByteArray("broken"), QByteArray("{}"), QByteArray("[]"), QByteArray("{\"sources\":null}"), QByteArray("{\"sources\":[{}]}")}) QVERIFY(!noSources(bytes));
@@ -214,6 +250,39 @@ private slots:
     {
         PortalClient portal(QDBusConnection::sessionBus()); QSignalSpy finished(&portal, &PortalClient::finished);
         portal.choose(false); QTRY_COMPARE(finished.size(), 1); QVERIFY(!finished.first()[3].toString().isEmpty());
+    }
+    void connectionRetryWithoutSystemd()
+    {
+        Test::Fixture fixture;
+        const auto root = fixture.root.path(), source = QString(AERIAL_SETTINGS_TEST_SOURCE);
+        fixture.paths = {source, root + "/config.json", root + "/cache", root + "/state", root + "/runtime"};
+        fixture.daemon.start(QFileInfo(QCoreApplication::applicationFilePath()).absolutePath() + "/settings-client-probe",
+            {"--peer", Aerial::readConfig(fixture.paths).profile, QString::number(QCoreApplication::applicationPid())});
+        QVERIFY(fixture.daemon.waitForStarted()); QVERIFY(fixture.daemon.waitForReadyRead());
+        QCOMPARE(fixture.daemon.readAllStandardOutput().trimmed(), QByteArray("READY"));
+        const auto configure = [&](bool wrong) {
+            auto call = QDBusMessage::createMethodCall(Aerial::Client::Service, Aerial::Client::Path, "org.aeriallock.TestPeer", "Configure");
+            call << QVariantMap{{"wrongProfile", wrong}, {"noSources", true}};
+            return QDBusConnection::sessionBus().call(call).type() != QDBusMessage::ErrorMessage;
+        };
+        QVERIFY(configure(true));
+        fixture.service = std::make_unique<Aerial::Client::ServiceConnection>(QDBusConnection::sessionBus(), fixture.paths, source);
+        fixture.controller = std::make_unique<SettingsController>(*fixture.service); fixture.service->start();
+        QTRY_VERIFY(fixture.service->errorName().endsWith("ProfileMismatch"));
+        QTRY_VERIFY(!fixture.controller->systemd()->error().isEmpty());
+        QVERIFY(!fixture.controller->systemd()->available());
+        const auto owner = fixture.service->uniqueOwner(); QVERIFY(!owner.isEmpty());
+        WindowController window(*fixture.controller); window.open();
+        QQuickWindow *quick = nullptr;
+        for (auto *candidate : QGuiApplication::topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
+        QVERIFY(quick); QVERIFY(QTest::qWaitForWindowExposed(quick));
+        auto *retry = quick->findChild<QQuickItem *>("connectionRetry"); QVERIFY(retry); QVERIFY(retry->isVisible());
+        auto *start = quick->findChild<QQuickItem *>("serviceStart"); QVERIFY(start); QVERIFY(!start->isVisible());
+        QVERIFY(configure(false)); QVERIFY(!fixture.service->ready());
+        QTest::mouseClick(quick, Qt::LeftButton, Qt::NoModifier, retry->mapToScene({retry->width() / 2, retry->height() / 2}).toPoint());
+        QTRY_VERIFY(fixture.service->ready()); QCOMPARE(fixture.service->uniqueOwner(), owner);
+        QCOMPARE(fixture.controller->panel(), QString("settings"));
+        quick->close(); QTRY_VERIFY(!window.hasWindow());
     }
     void cancelledPortalClosesLateAlternateHandleOnce()
     {
@@ -337,7 +406,7 @@ private slots:
     void discoveryRetriesWithoutOwnerChange()
     {
         const auto path = qEnvironmentVariable("AERIAL_TEST_DISCOVERY_CONFIG"); QVERIFY(!path.isEmpty());
-        PeerProcess peer; QVERIFY(peer.ready()); SystemdController manager(QDBusConnection::sessionBus());
+        PeerProcess peer; QVERIFY(peer.ready()); SystemdController manager(QDBusConnection::sessionBus(), nullptr, 1000);
         QTRY_VERIFY(!manager.error().isEmpty()); QVERIFY(!manager.available());
         QFile config(path); QVERIFY(config.open(QIODevice::ReadOnly)); auto text = config.readAll(); config.close();
         const QByteArray denial = "<deny send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"GetNameOwner\"/>";
@@ -348,6 +417,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(manager.available(), 5000);
         QTRY_COMPARE(manager.units().value("aerial-idle.service").toMap().value("fileState").toString(), QString("disabled"));
         QCOMPARE(peer.calls().count("Subscribe"), 1);
+        QSignalSpy done(&manager, &SystemdController::operationFinished);
+        manager.operate("aerial-idle.service", "start");
+        QTRY_COMPARE(done.size(), 1); QVERIFY(done.first()[2].toBool());
+        peer.configure({{"idleFile", "enabled"}}); peer.call("ExternalUnit", {QString("aerial-idle.service")});
+        QTRY_COMPARE(manager.units().value("aerial-idle.service").toMap().value("fileState").toString(), QString("enabled"));
     }
     void alreadySubscribedIsReady()
     {
@@ -436,6 +510,19 @@ private slots:
         QCOMPARE(manager.units().value("aerial-tray.service").toMap().value("fileState").toString(), QString("disabled"));
         QVERIFY(peer.calls().contains("disable-runtime")); QVERIFY(peer.calls().contains("disable-persistent"));
     }
+    void trayStartupPersistenceIsNotSessionEnablement()
+    {
+        PeerProcess peer; QVERIFY(peer.ready()); const auto bus = QDBusConnection::sessionBus();
+        const auto paths = Aerial::ConfigPaths::environment(QString(AERIAL_SETTINGS_TEST_SOURCE));
+        Aerial::Client::ServiceConnection service(bus, paths, paths.bundle); SettingsController settings(service);
+        TrayController tray(settings, bus, nullptr, [] { return false; }); tray.show();
+        for (const auto &file : {"enabled", "enabled-runtime", "disabled"}) {
+            peer.configure({{"trayFile", file}}); settings.systemd()->refresh();
+            QTRY_COMPARE(settings.systemd()->units().value("aerial-tray.service").toMap().value("fileState").toString(), QString(file));
+            QTRY_COMPARE(settings.tray().value("persistent").toBool(), QString(file) == "enabled");
+            QVERIFY(settings.tray().value("on").toBool());
+        }
+    }
     void failedOperationKeepsDisplayReason()
     {
         PeerProcess peer; QVERIFY(peer.ready()); peer.configure({{"inactiveAfterJob", true}});
@@ -452,7 +539,7 @@ private slots:
 };
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     if (app.arguments().size() == 5 && app.arguments()[1].startsWith("--native-")) {
         const auto mode = app.arguments()[1], value = app.arguments()[2], expected = app.arguments()[3], output = app.arguments()[4];
         QJsonObject receipt; bool complete = false, accepted = false;
@@ -508,6 +595,6 @@ int main(int argc, char **argv)
         for (const auto &name : {"org.freedesktop.portal.Desktop", "org.freedesktop.systemd1", "org.aeriallock.TestPeer"}) if (!peer.bus.registerService(name)) return 1;
         fprintf(stdout, "READY\n"); fflush(stdout); return app.exec();
     }
-    DesktopTest test; return QTest::qExec(&test, argc, argv);
+    registerTypes(); DesktopTest test; return QTest::qExec(&test, argc, argv);
 }
 #include "desktop.moc"

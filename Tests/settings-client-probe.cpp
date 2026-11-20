@@ -124,7 +124,7 @@ public:
                 signal << revision << QStringList{"marker"}; bus.send(signal);
                 reply = message.createErrorReply(QDBusError::Failed, "one failed read after invalidation");
             } else if (flags.value("failSources").toBool()) reply = message.createErrorReply(QDBusError::Failed, "not readable");
-            else reply = message.createReply(QVariantList{QVariant::fromValue(SourceList{{{"id", "fixture"}, {"enabled", true},
+            else reply = message.createReply(QVariantList{QVariant::fromValue(flags.value("noSources").toBool() ? SourceList{} : SourceList{{{"id", "fixture"}, {"enabled", true},
                 {"activeDownloads", flags.value("jobState") == "downloading" && flags.value("jobSourceId", "fixture") == "fixture" ? 1 : 0}}})});
             if (flags.value("holdSources").toBool()) { held.append(reply); return true; }
         } else if (method == "ListJobs") {

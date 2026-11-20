@@ -26,6 +26,7 @@ C.ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 12
                 anchors.topMargin: 16
+                anchors.bottomMargin: 16
                 spacing: 2
                 RowLayout {
                     Layout.fillWidth: true
@@ -62,7 +63,7 @@ C.ApplicationWindow {
                     }
                 }
                 Item { Layout.fillHeight: true; Layout.minimumHeight: 24 }
-                UI.StatusSummary { Layout.fillWidth: true; text: root.controller.status; onClicked: root.page = 2 }
+                UI.StatusSummary { objectName: "sidebarStatus"; Layout.fillWidth: true; text: root.controller.status; onClicked: root.page = 2 }
             }
         }
         Item {

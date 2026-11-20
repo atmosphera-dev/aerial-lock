@@ -33,6 +33,9 @@ frame decodes. The headless `aerial` content service also requires
 Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
 `aerialctl` and the compatible `aerial-lock-fetch` command use that service;
 they do not require curl, Python or tar. Python remains test tooling.
+The Aerial settings app uses Qt6 Widgets (`qt6-base`) and Qt Quick, Controls
+and Shapes (`qt6-declarative`). Its choosers and links use the desktop's
+`xdg-desktop-portal` when one is present; nothing else needs it.
 
 Building requires a C/C++ compiler, Make, CMake, Ninja, pkg-config, Qt6
 Core/Gui/DBus/Quick development files, PAM headers, wayland-client and
@@ -53,7 +56,10 @@ installs `/usr/lib/systemd/user/aerial-idle.service` and
 `/usr/share/aerial-lock/examples/idle.json`. The service is **not enabled
 automatically**. The separate content service is enabled for future
 user-manager startup through a vendor wants link. Installation/upgrade does
-not start or restart it in running sessions. `PREFIX` and `DESTDIR` select
+not start or restart it in running sessions. The Aerial settings app adds
+`/usr/bin/aerial-settings`, its desktop entry and D-Bus activation file, icons
+under `hicolor/scalable`, theme previews and `aerial-tray.service`, which is
+also **not enabled**. `PREFIX` and `DESTDIR` select
 the layout; Arch packaging uses `LIBEXECDIR=/usr/lib/aerial-lock`.
 
 ### First use and automatic content
@@ -104,6 +110,38 @@ connection, power or automatic-quality settings. It still honors configured
 sources, hard source resolution bands, cache/disk limits, TLS and media validation;
 offline transport can fail. `systemctl --user mask aerial.service`
 prevents service startup/activation; unlike pause, it also prevents manual fetch.
+
+### The Aerial settings app
+
+Launch **Aerial** from your application launcher, or run `aerial-settings`.
+Starting it again raises the open window. Its pages are Downloads, Sources,
+Cache & status, Lock screen and About. It is a client of the `aerial` service:
+the service writes every setting and does every download, so closing the window
+(or the app crashing) never stops downloads, aerial-idle or a running lock.
+
+- **Changes save at once.** There is no Apply button. If another client
+  (`aerialctl` or another API client) changed the settings first, the control
+  returns to the service's value and shows a conflict instead of overwriting.
+  Edits from `aerialctl` appear in the open window.
+- **Sources can be switched off.** A switched-off source keeps its entry, cache
+  and partial downloads, is not downloaded or refreshed, and is skipped from the
+  next lock on; a lock that is already showing keeps its videos. With every
+  source off, or none, locks show solid colour.
+- **Service problems.** If `aerial` is masked, stopped or its config file is
+  broken, the window says so and offers the recovery: Start service and the
+  unmask command, or Open folder and Try again for a file you fix yourself. A
+  broken file is never rewritten by the app.
+- **Folder and file choosers, Open folder and links** use the desktop's
+  `xdg-desktop-portal`. Without a portal those actions report an error; local
+  sources can still be added with `aerialctl config set sources ...`.
+- **Tray icon (optional, off by default).** About > Show tray icon shows a tray
+  icon with download status, Fetch now/Stop download, Pause/Resume and Open
+  settings, and enables `aerial-tray.service` for later graphical logins. Hide
+  tray icon in its menu turns that off again. The icon needs a
+  StatusNotifierItem tray (Noctalia, Waybar, KDE and similar). Without one, the
+  switch is hidden and About says no tray was found; an enabled preference is
+  kept until a tray returns. Without systemd, start `aerial-settings --tray`
+  from your compositor's autostart; the app cannot make that persistent itself.
 
 ### Apple footage and credits
 
@@ -580,9 +618,9 @@ supervisor never performs takeover-and-unlock automatically.
 
 ## Roadmap
 
-The optional idle daemon and headless content service have separate roles.
-Later work includes settings/tray clients, catalogue browsing and advanced
-rotation controls over the companion API, plus POI/location presentation.
+The optional idle daemon, headless content service and Aerial settings app have
+separate roles. Later work includes catalogue browsing and advanced rotation
+controls over the companion API, plus POI/location presentation.
 Local sources and configured Apple/community packs remain first-class sources;
 community content is never added automatically.
 

@@ -105,7 +105,14 @@ def units(owned, output):
         tested = as_user([probe, source, result_file, mode], capture_output=True, text=True, timeout=120, check=False)
         publish(output / (name + ".log"), tested.stdout + tested.stderr)
         assert tested.returncode == 0 and not tested.stdout + tested.stderr, (name, tested.returncode, tested.stdout + tested.stderr)
-        return json.loads(as_user(["cat", result_file], capture_output=True, text=True).stdout)
+        receipt = json.loads(as_user(["cat", result_file], capture_output=True, text=True).stdout)
+        captures = []
+        for image in receipt.get("captures", []):
+            target = output / Path(image).name
+            target.write_bytes(as_user(["cat", image], capture_output=True).stdout)
+            captures.append(str(target))
+        receipt["captures"] = captures
+        return receipt
 
     def session(start):
         # graphical-session.target refuses manual start; bind it like a compositor unit does.

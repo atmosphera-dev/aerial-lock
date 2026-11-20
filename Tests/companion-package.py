@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build/install an exact-tree acceptance package inside the attested owned VM.
 
-The retained release recipe is not retargeted or published. Only its source and
-checksum differ in the labelled test copy; normal distro build options remain.
+The retained release recipe is not retargeted or published. The labelled test
+copy uses the exact source/checksum and adds CMake/Ninja build tools; normal
+distro build options and runtime dependencies remain unchanged.
 """
 import argparse
 import json
@@ -76,7 +77,9 @@ def main():
     archive_hash = digest(archive)
     test_text, source_count = re.subn(r"^source=\([^\n]*\)$", 'source=("' + archive.name + '")', original_text, flags=re.M)
     test_text, checksum_count = re.subn(r"^sha256sums=\([^\n]*\)$", "sha256sums=('" + archive_hash + "')", test_text, flags=re.M)
-    assert source_count == checksum_count == 1
+    test_text, tools_count = re.subn(r"^makedepends=\('wayland-protocols'\)$",
+                                    "makedepends=('wayland-protocols' 'cmake' 'ninja')", test_text, flags=re.M)
+    assert source_count == checksum_count == tools_count == 1
     (test / "PKGBUILD").write_text(test_text)
     shutil.copy2(original / "aerial-lock.install", test / "aerial-lock.install")
     (test / "TEST-ONLY.md").write_text("Exact task-tree acceptance package, not a release recipe or publication.\n")

@@ -6,7 +6,7 @@ ConditionEnvironment=WAYLAND_DISPLAY
 
 [Service]
 Type=exec
-ExecStart=@BINDIR@/aerial-settings --tray
+ExecStart="@BINDIR@/aerial-settings" --tray
 Restart=on-failure
 
 [Install]
