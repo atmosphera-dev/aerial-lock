@@ -2,15 +2,21 @@
 """Acceptance contract regressions. Run only inside an authorized execution VM."""
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import uuid
 
 import acceptance as a
+import guest_acceptance as guest
+import vm_platform
 
 
 def outcome(backend, group, case):
@@ -164,6 +170,117 @@ class Contract(unittest.TestCase):
         (self.inputs / 'niri-smoke/slice.json').write_text('{')
         self.assertEqual(self.merge()['status'], 'FAIL')
         self.assertTrue((self.output / 'junit.xml').is_file())
+
+    def test_malformed_slice_identity_never_breaks_failure_reporting(self):
+        self.populate()
+        for name in ([], {}, None, 17):
+            with self.subTest(name=name):
+                a.write(self.inputs / 'niri-smoke/slice.json', {'slice': name})
+                summary = self.merge()
+                self.assertEqual(summary['status'], 'FAIL')
+                self.assertTrue(summary['errors'])
+                for filename in ('summary.json', 'junit.xml', 'summary.md'):
+                    self.assertTrue((self.output / filename).is_file())
+
+    def test_image_plan_binds_lock_content_and_manifest_binds_exact_bytes(self):
+        source = Path(a.__file__).parents[2]
+        plan = a.freeze(source, 'revision', 'run', '1')
+        content = json.loads((source / 'Tests/vm/image.lock.json').read_text())
+        image = self.root / 'image'
+        image.mkdir()
+        lock = image / 'resolved-lock.json'
+        lock.write_text(json.dumps(content, separators=(',', ':')))
+        a.write(image / 'image-manifest.json', dict(image_sha256='a' * 64,
+            lock_sha256=a.digest(lock), tools=plan['image_tools']))
+        a.validate_image(plan, image, 'a' * 64)
+        lock.write_text(lock.read_text() + '\n')
+        with self.assertRaises(ValueError): a.validate_image(plan, image, 'a' * 64)
+        content['snapshot'] = '2000/01/01'
+        lock.write_text(json.dumps(content))
+        a.write(image / 'image-manifest.json', dict(image_sha256='a' * 64,
+            lock_sha256=a.digest(lock), tools=plan['image_tools']))
+        with self.assertRaises(ValueError): a.validate_image(plan, image, 'a' * 64)
+
+    def test_local_matrix_preserves_original_configuration_path_base(self):
+        origin = self.root / 'original'
+        origin.mkdir()
+        config = dict(instance='original', host='test-vm', user='tester', storage='storage',
+                      guest_root='/home/tester/acceptance', ssh_key='keys/id', firmware='bios.fd', qemu='bin/qemu')
+        a.write(origin / 'config.json', config)
+        image = self.root / 'image.qcow2'
+        image.write_bytes(b'not booted: matrix transport is mocked')
+        checksums = self.root / 'SHA256SUMS'
+        checksums.write_text(a.digest(image) + '  ' + image.name + '\n')
+        observed = []
+        def capture(args, plan):
+            observed.append(json.loads(Path(args.config).read_text()))
+        args = SimpleNamespace(workspace=str(self.root), source=str(Path(a.__file__).parents[2]), revision='revision',
+            image=str(image), checksums=str(checksums), config=str(origin / 'config.json'))
+        with patch.object(a, 'run_slice', side_effect=capture), patch.object(a, 'result'), \
+                patch.object(a, 'merge', return_value=dict(status='PASS', exercised=0, planned=12)):
+            a.local(args)
+        self.assertEqual(len(observed), len(a.GROUPS))
+        for cfg in observed:
+            for name in ('ssh_key', 'firmware', 'qemu'):
+                self.assertEqual(cfg[name], str(origin / config[name]))
+            self.assertTrue(cfg['instance'].startswith('acceptance-niri-'))
+            self.assertTrue(Path(cfg['storage']).is_relative_to(self.root / 'v'))
+
+    def test_adapter_deadline_bounds_blocked_cleanup_and_retains_evidence(self):
+        root = self.root / 'guest'
+        for name in ('run', 'results'): (root / name).mkdir(parents=True)
+        worker = root / 'fixture-worker.py'
+        worker.write_text('import json, pathlib, signal, sys, time\n'
+            'job=json.loads(pathlib.Path(sys.argv[1]).read_text())\n'
+            'root=pathlib.Path(job["request"]["root"])\n'
+            '(root/"results/acceptance-progress.json").write_text("retained progress")\n'
+            '(root/"run/BLOCKED.json").write_text("retained live-lock latch")\n'
+            'print("cleanup blocked", flush=True)\n'
+            'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+            'while True: time.sleep(60)\n')
+        request = dict(root=str(root), backend='niri', group='smoke', group_seconds=1, acceptance_plan='plan')
+        started = time.monotonic()
+        with patch.object(guest, '__file__', str(worker)), self.assertRaises(subprocess.TimeoutExpired):
+            guest.run({}, self.root, root, dict(run=root / 'run', results=root / 'results'),
+                      root / 'run/owned-vm.json', dict(os.environ), request)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual((root / 'results/acceptance-progress.json').read_text(), 'retained progress')
+        self.assertTrue((root / 'run/BLOCKED.json').is_file())
+        self.assertIn('cleanup blocked', (root / 'results/acceptance-adapter.log').read_text())
+
+    def test_acceptance_junit_names_do_not_require_a_plan_token(self):
+        names = vm_platform.group_testcases('emergency-failures', 'niri')
+        self.assertEqual(names, [f'niri/emergency-failures/{case}' for case in a.FAULTS])
+        self.assertEqual(vm_platform.group_testcases('niri-smoke', 'niri'), ['niri/unlock/1'])
+        self.assertEqual(vm_platform.group_testcases('niri-emergency', 'niri'),
+                         ['niri/emergency/missing-runner', 'niri/emergency/main-crash'])
+
+    def test_adapter_consumes_only_complete_identity_bound_worker_result(self):
+        root = self.root / 'adapter-result'
+        for name in ('run', 'results'): (root / name).mkdir(parents=True)
+        worker = root / 'fixture-worker.py'
+        worker.write_text('import json, pathlib, sys\n'
+            'job=json.loads(pathlib.Path(sys.argv[1]).read_text())\n'
+            'root=pathlib.Path(job["request"]["root"])\n'
+            '(root/"results/acceptance-worker-result.json").write_text(json.dumps(job["summary"]))\n')
+        request = dict(root=str(root), backend='niri', group='smoke', group_seconds=5,
+                       acceptance_plan='plan', uuid='instance', source_freeze_identity='source')
+        value = dict(instance_uuid='instance', source_identity='source', source_revision='rev', image_sha256='image',
+            backend='niri', group='smoke', acceptance_plan='plan', planned=1, exercised=1,
+            no_surviving_locker=True, status='PASS', cells=[dict(id='niri/smoke/unlock', outcome=outcome('niri', 'smoke', 'unlock'))])
+        args = (self.root, root, dict(run=root / 'run', results=root / 'results'), root / 'run/owned-vm.json',
+                dict(os.environ), request)
+        with patch.object(guest, '__file__', str(worker)):
+            observed = copy.deepcopy(value)
+            guest.run(observed, *args)
+            self.assertEqual(observed, value)
+        # A worker's PASS cannot replace the actual caller identity or contract.
+        original = worker.read_text()
+        for mutation in ('job["summary"]["instance_uuid"]="other"',
+                         'job["summary"]["cells"][0]["outcome"]["desktop_input"]=False'):
+            worker.write_text(original.replace('root=pathlib.Path', mutation + '\nroot=pathlib.Path'))
+            with patch.object(guest, '__file__', str(worker)), self.assertRaises((ValueError, RuntimeError)):
+                guest.run(copy.deepcopy(value), *args)
 
     def test_evidence_path_escape_is_rejected(self):
         self.populate()

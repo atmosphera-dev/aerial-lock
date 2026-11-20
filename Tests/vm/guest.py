@@ -229,7 +229,7 @@ def run_group(request_path):
         if group in acceptance.GROUPS:
             import guest_acceptance
             os.environ.update(env)
-            guest_acceptance.run(summary, source, root, paths, manifest, env, request, driver)
+            guest_acceptance.run(summary, source, root, paths, manifest, env, request)
         elif group == 'niri-emergency':
             summary['phase'] = 'emergency-recovery'
             case, backend = request.get('case', 'recovery'), request.get('backend', 'niri')

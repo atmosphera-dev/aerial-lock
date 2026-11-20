@@ -12,6 +12,7 @@ import time
 import unittest
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 from datetime import date, datetime, timezone
@@ -656,6 +657,18 @@ class ReviewRegressions(unittest.TestCase):
                     platform.run_group(args, cfg)
             vm.stop.assert_called_once_with(force=True)
             self.assertIs(error.exception, primary)
+
+    def test_direct_acceptance_failure_emits_all_group_junit_cases_without_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, cfg, args, vm = self.group_fixture(Path(directory))
+            args.group = 'emergency-failures'
+            vm.wait_ready.side_effect = RuntimeError('boot failed')
+            vm.ssh.side_effect = TimeoutError('export unavailable')
+            with patch.object(platform, 'VM', return_value=vm), self.assertRaises(RuntimeError):
+                platform.run_group(args, cfg)
+            suite = ET.parse(Path(args.results) / 'junit.xml').getroot()
+            self.assertEqual(len(suite.findall('testcase')), 8)
+            self.assertEqual(suite.get('failures'), '8')
 
     def test_source_transfer_preserves_modes_under_restrictive_guest_umask(self):
         with tempfile.TemporaryDirectory() as directory:

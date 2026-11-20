@@ -52,9 +52,10 @@ def freeze(source, revision, run, attempt):
     source = Path(source).resolve(strict=True)
     inventory = vm_platform.source_files(source)
     tools = {name: digest(source / 'Tests/vm' / name) for name in ('vm_platform.py', 'provision.sh', 'guest.py')}
+    lock = identity(json.loads((source / 'Tests/vm/image.lock.json').read_text()))
     return dict(schema=1, source_revision=revision, source_identity=identity(inventory), run=str(run), attempt=str(attempt),
-                image_specification=identity(dict(tools=tools, lock=digest(source / 'Tests/vm/image.lock.json'))),
-                image_tools=tools, image_lock_sha256=digest(source / 'Tests/vm/image.lock.json'),
+                image_specification=identity(dict(tools=tools, lock=lock)),
+                image_tools=tools, image_lock_sha256=lock,
                 matrix=matrix())
 
 
@@ -123,7 +124,7 @@ def validate_image(plan, root, image_sha256):
     manifest = json.loads((Path(root) / 'image-manifest.json').read_text())
     lock = Path(root) / 'resolved-lock.json'
     if manifest.get('image_sha256') != image_sha256 or manifest.get('lock_sha256') != digest(lock) \
-            or digest(lock) != plan['image_lock_sha256'] or manifest.get('tools') != plan['image_tools']:
+            or identity(json.loads(lock.read_text())) != plan['image_lock_sha256'] or manifest.get('tools') != plan['image_tools']:
         raise ValueError('image provenance differs from frozen tools/lock/bytes')
 
 
@@ -185,8 +186,11 @@ def merge(plan, inputs, output, matrix_status='success'):
     found, errors, cells, uuids = {}, [], [], set()
     for path in sorted(Path(inputs).rglob('slice.json')):
         value = None
+        name = None
         try:
             value = json.loads(path.read_text())
+            if not isinstance(value, dict) or not isinstance(value.get('slice'), str):
+                raise ValueError('invalid slice identity: expected a string')
             name = value['slice']
             if name not in expected or name in found: raise ValueError('unexpected/duplicate slice: ' + name)
             found[name] = value
@@ -227,7 +231,7 @@ def merge(plan, inputs, output, matrix_status='success'):
             cells.extend(value['cells'])
         except Exception as error:
             errors.append(f'{path.parent.name}: {error}')
-            if isinstance(value, dict) and found.get(value.get('slice')) is value:
+            if name is not None and found.get(name) is value:
                 value['validation_status'] = 'INVALID'
     for missing in sorted(expected.keys() - found.keys()): errors.append('missing slice: ' + missing)
     if matrix_status != 'success': errors.append('matrix job status: ' + matrix_status)
@@ -281,6 +285,7 @@ def run_slice(args, plan):
 
 def local(args):
     """Serial local reproduction, with one new instance per planned slice."""
+    import vm_platform
     root = Path(args.workspace).resolve(strict=True) / ('local-' + str(time.time_ns()))
     root.mkdir(mode=0o700)
     plan = freeze(args.source, args.revision, root.name, '1')
@@ -289,7 +294,7 @@ def local(args):
     checksums = [line.split() for line in Path(args.checksums).read_text().splitlines()]
     matches = [parts[0] for parts in checksums if len(parts) == 2 and parts[1] == image.name]
     if len(matches) != 1 or digest(image) != matches[0]: raise ValueError('image checksum mismatch')
-    config = json.loads(Path(args.config).read_text())
+    config = vm_platform.config(args.config)
     errors = []
     for index, row in enumerate(plan['matrix']):
         name = row['slice']

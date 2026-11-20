@@ -284,6 +284,9 @@ specification independently. Random machine identities and filesystem timestamps
 make image bytes differ across rebuilds: the merge requires common specification
 identity and validates the **exact per-slice image hash** against that slice's
 VM request/receipt, never treats independent builds as byte-identical.
+Lock comparison uses canonical parsed content; the image manifest separately
+binds the exact resolved-lock file bytes, so formatting cannot masquerade as
+package drift or bypass checksum validation.
 
 No image artifact is uploaded or fanned out. Each job uploads JSON, JUnit and
 compressed sanitized diagnostics only, with evidence hashes and three-day
@@ -304,6 +307,10 @@ execution itself is bounded to 20 minutes. The expected full wall time is
 45-90 minutes, to be checked against the measured combined summary. The job
 deadline stays below six hours with cleanup/upload margin. Independent image
 builds trade runner time for avoiding multi-GiB Actions artifact storage.
+
+The guest parent applies the group deadline to an isolated adapter process,
+including blocked cleanup waits. Timeout preserves progress/logs and leaves
+surviving lockers to owned-VM disposal; it never kills their process group.
 
 For local reproduction **inside an authorized disposable execution VM** with
 nested KVM and at least 12 GiB outer memory, use disk-backed paths. Build the

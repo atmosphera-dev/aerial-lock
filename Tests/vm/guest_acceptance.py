@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Software niri acceptance adapters for the existing real-PAM drivers."""
+import importlib.util
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -10,7 +12,29 @@ from types import SimpleNamespace
 import acceptance
 
 
-def run(summary, source, root, paths, manifest, env, request, driver):
+def run(summary, source, root, paths, manifest, env, request):
+    """Own the whole group deadline, including a driver's BLOCKED cleanup wait.
+
+    Timeout kills only the Python adapter, never its process group or locker.
+    Progress/logs and any surviving lock remain for export and owned-VM disposal.
+    """
+    job = paths['run'] / 'acceptance-worker.json'
+    acceptance.write(job, dict(summary=summary, request=request, source=str(source), root=str(root),
+        paths={key: str(value) for key, value in paths.items()}, manifest=str(manifest)))
+    job.chmod(0o600)
+    with (paths['results'] / 'acceptance-adapter.log').open('w') as stream:
+        subprocess.run([sys.executable, str(Path(__file__).resolve()), str(job)], env=env,
+            check=True, timeout=request['group_seconds'], stdout=stream, stderr=subprocess.STDOUT)
+    observed = json.loads((paths['results'] / 'acceptance-worker-result.json').read_text())
+    for key in ('instance_uuid', 'image_sha256', 'source_identity', 'source_revision'):
+        if observed.get(key) != summary.get(key): raise RuntimeError('stale adapter result identity: ' + key)
+    if observed.get('acceptance_plan') != request['acceptance_plan']:
+        raise RuntimeError('stale adapter plan identity')
+    acceptance.validate_group(observed, request)
+    summary.update(observed)
+
+
+def run_worker(summary, source, root, paths, manifest, env, request, driver):
     backend, group = request['backend'], request['group']
     if backend != 'niri' or group not in acceptance.GROUPS:
         raise RuntimeError('software niri acceptance group required')
@@ -66,3 +90,19 @@ def run(summary, source, root, paths, manifest, env, request, driver):
                 raise RuntimeError('stale emergency outcome')
             record(value['case'], value)
     summary.update(status='PASS', phase='complete', no_surviving_locker=True)
+
+
+def main(job_path):
+    job = json.loads(Path(job_path).read_text())
+    source, root = Path(job['source']), Path(job['root'])
+    sys.path.insert(0, str(source / 'Tests'))
+    spec = importlib.util.spec_from_file_location('remediation', source / 'Tests/remediation-driver.py')
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    paths = {key: Path(value) for key, value in job['paths'].items()}
+    run_worker(job['summary'], source, root, paths, Path(job['manifest']), dict(os.environ), job['request'], driver)
+    acceptance.write(paths['results'] / 'acceptance-worker-result.json', job['summary'])
+
+
+if __name__ == '__main__':
+    main(sys.argv[1])

@@ -590,6 +590,14 @@ def validate_summary(summary, request):
         raise RuntimeError('required niri unlock outcome absent: ' + summary.get('status', 'missing'))
 
 
+def group_testcases(group, backend):
+    import acceptance
+    if group in acceptance.GROUPS:
+        return [f'{backend}/{group}/{case}' for case in acceptance.cases(backend, group)]
+    return {'niri-smoke': ['niri/unlock/1'],
+            'niri-emergency': ['niri/emergency/missing-runner', 'niri/emergency/main-crash']}[group]
+
+
 def run_group(args, cfg):
     if not re.fullmatch('[a-f0-9]{64}', args.sha256) or digest(args.image) != args.sha256:
         raise ValueError('test image checksum mismatch before boot')
@@ -699,11 +707,7 @@ def run_group(args, cfg):
         except Exception as error:
             primary = primary or error
             retain('diagnostic-error.json', failure_details(error))
-        if acceptance_plan:
-            import acceptance
-            names = [f'{backend}/{args.group}/{case}' for case in acceptance.cases(backend, args.group)]
-        else:
-            names = ['niri/unlock/1'] if args.group == 'niri-smoke' else ['niri/emergency/missing-runner', 'niri/emergency/main-crash']
+        names = group_testcases(args.group, backend)
         suite = ET.Element('testsuite', name=args.group, tests=str(len(names)), failures=str(len(names)) if primary else '0')
         for name in names:
             cell = ET.SubElement(suite, 'testcase', name=name, classname='aerial-lock.vm')
