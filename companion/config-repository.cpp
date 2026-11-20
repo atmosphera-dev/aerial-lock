@@ -38,9 +38,11 @@ void ConfigRepository::reload()
 {
     auto next = readConfig(paths);
     const bool different = next.revision != current.revision;
+    const bool diagnosticsDifferent = next.settingsDiagnostics != current.settingsDiagnostics;
     current = std::move(next);
     watch();
     if (different) emit changed(current.revision, {});
+    if (diagnosticsDifferent) emit diagnosticsChanged();
 }
 
 bool ConfigRepository::prepareDirectory()
@@ -113,9 +115,11 @@ ConfigTransaction ConfigRepository::transact(const QString &revision, const QJso
     if (!output.open(QIODevice::WriteOnly) || !output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
         || output.write(bytes) != bytes.size() || !output.commit())
         return {{}, "StorageError", {"atomic settings write failed"}};
+    const auto diagnostics = current.settingsDiagnostics;
     current = readConfig(paths);
     watch();
     emit changed(current.revision, changedPaths(patch));
+    if (diagnostics != current.settingsDiagnostics) emit diagnosticsChanged();
     return {current.revision, {}, {}};
 }
 

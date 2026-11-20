@@ -1,6 +1,7 @@
 #include "../common/config-document.h"
 #include "../companion/config-repository.h"
 #include "../native/local-config.h"
+#include "read-permissions.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonArray>
@@ -9,6 +10,7 @@
 #include <QQmlEngine>
 #include <QSaveFile>
 #include <QSignalSpy>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <sys/stat.h>
@@ -26,7 +28,66 @@ class ConfigTests : public QObject {
     Q_OBJECT
 public:
     QString source;
+    bool permissionsChild = false;
 private slots:
+    void structuredDiagnostics()
+    {
+        QTemporaryDir root; auto paths = ConfigPaths::environment(source); paths.config = root.path() + "/config.json";
+        QVERIFY(readConfig(paths).settingsDiagnostics.isEmpty()); // missing user file is valid inheritance
+        const QByteArray bytes("{\n  \"secret\": \"https://example.test/?token=private-token\",\n  \"idle\": [\"\xc3\xa9\",broken\n}");
+        writeFile(paths.config, bytes);
+        auto doc = readConfig(paths);
+        QCOMPARE(doc.settingsDiagnostics.size(), 1);
+        const auto diagnostic = doc.settingsDiagnostics[0].toObject();
+        QCOMPARE(diagnostic.value("code"), "MalformedJson"); QCOMPARE(diagnostic.value("severity"), "error");
+        QCOMPARE(diagnostic.value("file"), paths.config);
+        QJsonParseError parse; QJsonDocument::fromJson(bytes, &parse);
+        QCOMPARE(diagnostic.value("byteOffset").toInteger(), qint64(parse.offset));
+        const auto prefix = bytes.left(parse.offset);
+        QCOMPARE(diagnostic.value("line").toInteger(), prefix.count('\n') + 1);
+        QCOMPARE(diagnostic.value("column").toInteger(), QString::fromUtf8(prefix.mid(prefix.lastIndexOf('\n') + 1)).toUcs4().size() + 1);
+        QVERIFY(!QJsonDocument(doc.settingsDiagnostics).toJson().contains("private-token"));
+        QVERIFY(!doc.diagnostics.join('\n').contains("https://"));
+        writeFile(paths.config, "[]"); doc = readConfig(paths);
+        QCOMPARE(doc.settingsDiagnostics[0].toObject().value("code"), "NonObject");
+        QVERIFY(!doc.settingsDiagnostics[0].toObject().contains("byteOffset"));
+        writeFile(paths.config, R"({"idle":{"timeoutSeconds":-2},"sources":[{"type":"file","name":"Invalid","source":"/clip","enabled":"secret-token"}]})");
+        doc = readConfig(paths); QCOMPARE(doc.settingsDiagnostics.size(), 2);
+        QCOMPARE(doc.settingsDiagnostics[0].toObject().value("code"), "InvalidField");
+        QCOMPARE(doc.settingsDiagnostics[0].toObject().value("settingPath"), "idle.timeoutSeconds");
+        QCOMPARE(doc.settingsDiagnostics[1].toObject().value("code"), "InvalidSource");
+        QVERIFY(!QJsonDocument(doc.settingsDiagnostics).toJson().contains("secret-token"));
+        writeFile(paths.config, R"({"sources":[]})"); doc = readConfig(paths);
+        QVERIFY(doc.settingsDiagnostics.isEmpty()); QVERIFY(doc.effective.value("sources").toArray().isEmpty());
+        QCOMPARE(doc.defaultSources.size(), 1); QCOMPARE(doc.defaultSources[0].toObject().value("id"), "apple-tv");
+    }
+
+    void permissionOnlyDiagnostics()
+    {
+        if (!permissionsChild) {
+            QProcess child;
+            child.start(QCoreApplication::applicationFilePath(), {"--permissions", source});
+            QVERIFY(child.waitForFinished(15000));
+            QVERIFY2(child.exitCode() == 0, (child.readAllStandardOutput() + child.readAllStandardError()).constData());
+            return;
+        }
+        QTemporaryDir root; auto paths = ConfigPaths::environment(source); paths.config = root.path() + "/config.json";
+        writeFile(paths.config, "");
+        ConfigRepository repository(paths);
+        const auto revision = repository.document().revision;
+        QSignalSpy diagnostics(&repository, &ConfigRepository::diagnosticsChanged);
+        QSignalSpy changed(&repository, &ConfigRepository::changed);
+        QCOMPARE(repository.document().settingsDiagnostics[0].toObject().value("code"), "MalformedJson");
+        QVERIFY(QFile::setPermissions(paths.config, {}));
+        QTRY_COMPARE(repository.document().settingsDiagnostics[0].toObject().value("code"), QJsonValue("UnreadableFile"));
+        QCOMPARE(repository.document().revision, revision); QCOMPARE(changed.size(), 0); QVERIFY(!diagnostics.isEmpty());
+        QVERIFY(QFile::setPermissions(paths.config, QFile::ReadOwner | QFile::WriteOwner));
+        QTRY_COMPARE(repository.document().settingsDiagnostics[0].toObject().value("code"), QJsonValue("MalformedJson"));
+        QCOMPARE(repository.document().revision, revision); QVERIFY(diagnostics.size() >= 2);
+        writeFile(paths.config, "{\"sources\":[]}");
+        QTRY_VERIFY(repository.document().settingsDiagnostics.isEmpty()); QVERIFY(repository.document().revision != revision);
+    }
+
     void readerAndFacade_data()
     {
         QTest::addColumn<QByteArray>("user");
@@ -128,6 +189,20 @@ private slots:
         QVERIFY(!broken.bundleValid);
         QVERIFY(broken.diagnostics.join('\n').contains("cache.maxBytes"));
         QVERIFY(broken.diagnostics.join('\n').contains("language"));
+        QVERIFY(broken.defaultSources.isEmpty());
+        bool brokenBundle = false;
+        for (const auto &value : broken.settingsDiagnostics) brokenBundle |= value.toObject().value("code") == "BrokenBundle";
+        QVERIFY(brokenBundle);
+        defaults["cache"] = inherited.effective.value("cache"); defaults["language"] = inherited.effective.value("language");
+        auto descriptor = entry; descriptor["source"] = "https://replacement.test/new.json";
+        defaults["sources"] = QJsonArray{descriptor};
+        writeFile(bundle + "/Config/defaults.json", QJsonDocument(defaults).toJson());
+        const auto replaced = readConfig(paths);
+        QVERIFY(replaced.bundleValid);
+        QCOMPARE(replaced.defaultSources[0].toObject().value("source"), descriptor.value("source"));
+        QVERIFY(QFile::remove(bundle + "/Config/defaults.json"));
+        const auto missing = readConfig(paths);
+        QVERIFY(!missing.bundleValid); QVERIFY(missing.defaultSources.isEmpty());
     }
 
     void sourceEnablement_data()
@@ -280,7 +355,14 @@ private slots:
 
 int main(int argc, char **argv)
 {
+    const bool permissions = argc == 3 && QByteArray(argv[1]) == "--permissions";
+    if (permissions && !ordinaryReadPermissions()) return 1;
     QCoreApplication app(argc, argv);
+    if (permissions) {
+        ConfigTests tests; tests.source = QString::fromLocal8Bit(argv[2]); tests.permissionsChild = true;
+        char name[] = "permissionOnlyDiagnostics"; char *arguments[]{argv[0], name};
+        return QTest::qExec(&tests, 2, arguments);
+    }
     if (argc == 4 && QString::fromLocal8Bit(argv[1]) == "--read") {
         LocalConfig local;
         if (!local.load(QString::fromLocal8Bit(argv[2]), QString::fromLocal8Bit(argv[3]))) return 1;

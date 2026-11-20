@@ -153,6 +153,10 @@ bool PlannerState::saveJob(const QString &key, const QJsonObject &job)
     auto next = document;
     auto jobs = next.value("jobs").toObject();
     jobs[key] = job;
+    if (job.value("kind") == "automatic" || job.value("kind") == "refresh") {
+        const auto checked = std::max(next.value("lastCheck").toInteger(), job.value("checkedAt").toInteger());
+        if (checked > 0) next["lastCheck"] = checked;
+    }
     // Retain current jobs and one week of terminal receipts. This bounds old
     // bookkeeping without limiting accepted acquisition or the configured cache.
     for (auto it = jobs.begin(); it != jobs.end();) {

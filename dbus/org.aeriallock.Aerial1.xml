@@ -15,6 +15,13 @@
     <property name="MaxBytes" type="t" access="read"/>
     <property name="ReadyClips" type="u" access="read"/>
     <property name="NextCheck" type="t" access="read"/>
+    <property name="LastCheck" type="t" access="read"/>
+    <property name="SettingsDiagnostics" type="aa{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="Aerial::SourceList"/>
+    </property>
+    <property name="DefaultSources" type="aa{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="Aerial::SourceList"/>
+    </property>
     <property name="Paths" type="a{sv}" access="read">
       <annotation name="org.qtproject.QtDBus.QtTypeName" value="QVariantMap"/>
     </property>
