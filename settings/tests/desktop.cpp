@@ -124,6 +124,7 @@ public:
         else if (method == "GetUnitFileState") reply({units.value(a[0].toString()).value("fileState")});
         else if (method == "GetUnit" && config["idleUnloaded"].toBool() && a[0].toString() == "aerial-idle.service") bus.send(m.createErrorReply("org.freedesktop.systemd1.NoSuchUnit", "Idle not loaded"));
         else if (method == "GetUnit" && config["trayLookupError"].toBool() && a[0].toString() == "aerial-tray.service") bus.send(m.createErrorReply(QDBusError::AccessDenied, "lookup denied"));
+        else if (method == "GetUnit" && config["trayCollected"].toBool() && a[0].toString() == "aerial-tray.service") bus.send(m.createErrorReply("org.freedesktop.systemd1.NoSuchUnit", "Unit aerial-tray.service not loaded."));
         else if (method == "GetUnit") { auto unit = a[0].toString(); unit.replace("-", "_2d"); unit.replace(".", "_2e"); reply({QVariant::fromValue(QDBusObjectPath("/org/freedesktop/systemd1/unit/" + unit))}); }
         else if (method == "EnableUnitFiles" || method == "DisableUnitFiles") {
             const auto list = qdbus_cast<QStringList>(a[0]);
@@ -146,8 +147,9 @@ public:
             const auto unit = a[0].toString(); const uint number = ++serial;
             const auto job = QDBusObjectPath("/org/freedesktop/systemd1/job/" + QString::number(number));
             const auto done = [this, unit, job, number] {
-                units[unit]["ActiveState"] = config["failJob"].toBool() ? "failed" : config["inactiveAfterJob"].toBool() ? "inactive" : "active";
+                units[unit]["ActiveState"] = config["failJob"].toBool() ? "failed" : config["inactiveAfterJob"].toBool() || (unit == "aerial-tray.service" && config["trayForward"].toBool()) ? "inactive" : "active";
                 if (!config["noNewInvocation"].toBool()) units[unit]["InvocationID"] = QByteArray::number(number + 1);
+                units[unit]["Result"] = "success"; units[unit]["ExecMainStatus"] = 0;
                 auto signal = QDBusMessage::createSignal("/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "JobRemoved");
                 signal << number << QVariant::fromValue(job) << unit << (config["failJob"].toBool() ? QString("failed") : QString("done")); bus.send(signal);
             };
@@ -232,9 +234,11 @@ private slots:
         manager.operate("aerial-idle.service", "restart"); QTRY_COMPARE(operations.size(), 1); QVERIFY(!operations.takeFirst()[2].toBool());
         QVERIFY(!manager.error().isEmpty());
         peer.configure({}); manager.operate("aerial-tray.service", "enableStart"); QTRY_COMPARE(operations.size(), 1); QVERIFY(operations.takeFirst()[2].toBool());
-        peer.configure({{"trayLookupError", true}}); manager.operate("aerial-tray.service", "start"); QTRY_COMPARE(operations.size(), 1); QVERIFY(!operations.takeFirst()[2].toBool());
+        peer.configure({{"trayForward", true}}); manager.operate("aerial-tray.service", "start"); QTRY_COMPARE(operations.size(), 1); QVERIFY(operations.takeFirst()[2].toBool());
+        peer.configure({{"trayForward", true}, {"trayCollected", true}}); manager.operate("aerial-tray.service", "start"); QTRY_COMPARE(operations.size(), 1); QVERIFY(operations.takeFirst()[2].toBool());
+        peer.configure({{"trayForward", true}, {"trayLookupError", true}}); manager.operate("aerial-tray.service", "start"); QTRY_COMPARE(operations.size(), 1); QVERIFY(!operations.takeFirst()[2].toBool());
         QVERIFY(manager.error().contains("AccessDenied"));
-        peer.configure({});
+        peer.configure({{"failJob", true}, {"trayCollected", true}}); manager.operate("aerial-tray.service", "start"); QTRY_COMPARE(operations.size(), 1); QVERIFY(!operations.takeFirst()[2].toBool());
         manager.operate("aerial-tray.service", "disable"); QTRY_COMPARE(operations.size(), 1); QVERIFY(operations.takeFirst()[2].toBool());
         QVERIFY(!peer.calls().contains("StopUnit"));
         for (const auto &file : {"linked", "linked-runtime"}) {

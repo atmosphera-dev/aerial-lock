@@ -16,6 +16,30 @@ TestCase {
     About { id: about; anchors.fill: parent; visible: test.currentPage === 3; controller: Harness }
     SourceSheet { id: sheet; sources: Harness.sources; parent: test }
     CleanupSheet { id: cleanupSheet; cache: Harness.cache; parent: test }
+    SignalSpy { id: trayIntent; target: Harness; signalName: "trayChangeRequested" }
+    function test_aboutTrayIntentAndNoHost() {
+        currentPage = 3;
+        const toggle = findChild(about, "about-tray");
+        verify(!toggle.visible);
+        Harness.configureTray(true, false);
+        verify(waitForPolish(test.Window.window));
+        verify(toggle.visible);
+        trayIntent.clear(); mouseClick(toggle);
+        compare(trayIntent.count, 1); compare(trayIntent.signalArguments[0][0], true);
+        Harness.configureTray(true, true);
+        verify(waitForPolish(test.Window.window));
+        trayIntent.clear(); mouseClick(toggle);
+        compare(trayIntent.count, 1); compare(trayIntent.signalArguments[0][0], false);
+        Harness.configureTray(false, false);
+        verify(waitForPolish(test.Window.window)); verify(!toggle.visible);
+        Harness.configureTray(false, true);
+        verify(waitForPolish(test.Window.window)); verify(toggle.visible);
+        trayIntent.clear(); mouseClick(toggle); compare(trayIntent.count, 1); compare(trayIntent.signalArguments[0][0], false);
+        Harness.configureTray(false, false, true);
+        verify(waitForPolish(test.Window.window)); verify(toggle.visible);
+        trayIntent.clear(); mouseClick(toggle); compare(trayIntent.count, 1); compare(trayIntent.signalArguments[0][0], false);
+        Harness.configureTray(false, false);
+    }
     function test_allPagesConstruct() {
         for (let i = 0; i < 4; ++i) {
             currentPage = i;

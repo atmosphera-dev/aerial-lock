@@ -1,5 +1,6 @@
 #include "settings-controller.h"
 #include "window-controller.h"
+#include "tray-controller.h"
 #include "native/shell-dir.h"
 #include <QApplication>
 #include <QDBusConnectionInterface>
@@ -74,9 +75,15 @@ int main(int argc, char **argv)
     Aerial::Settings::SettingsController settings(service);
     Aerial::Settings::WindowController window(settings);
     Aerial::Settings::ApplicationActivation activation(window, profile);
+    Aerial::Settings::TrayController tray(settings, bus);
     if (!bus.registerObject("/org/aeriallock/AerialSettings", &activation, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllProperties)) return 1;
-    QObject::connect(&window, &Aerial::Settings::WindowController::closed, &app, &QApplication::quit);
+    const auto quitIfUnused = [&] { if (!window.hasWindow() && !tray.keepsAlive()) app.quit(); };
+    QObject::connect(&window, &Aerial::Settings::WindowController::closed, &app, quitIfUnused);
+    QObject::connect(&tray, &Aerial::Settings::TrayController::changed, &app, quitIfUnused);
+    QObject::connect(&tray, &Aerial::Settings::TrayController::openRequested, &window, [&](int page, const QVariantMap &platform) { window.open(platform, page); });
+    QObject::connect(&activation, &Aerial::Settings::ApplicationActivation::trayRequested, &tray, &Aerial::Settings::TrayController::show);
     service.start();
     if (args.isEmpty()) { window.open(platform); if (!window.hasWindow()) return 1; }
+    else tray.show();
     return app.exec();
 }

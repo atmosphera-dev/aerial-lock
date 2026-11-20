@@ -241,16 +241,16 @@ def main():
             result = prepare(args)
         elif args.case in ("cold-load", "visuals"):
             result = native(args)
-        elif args.case in ("controls", "failure-recovery", "portals"):
+        elif args.case in ("controls", "failure-recovery", "portals", "tray", "units"):
             owned = OwnedInstance(args.vm_record, args.root); owned.check(require_binaries=True)
             environment = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
             environment.pop("QT_QPA_PLATFORM", None)
             owned.check_session(owned.record["session"], environment)
             output = args.root / "results" / ("settings-" + args.case + "-" + str(time.time_ns())); output.mkdir(mode=0o700)
-            if args.case == "portals":
+            if args.case in ("portals", "tray", "units"):
                 from importlib.machinery import SourceFileLoader
-                module = SourceFileLoader("settings_native_portals", str(owned.paths["source"] / "Tests/settings-native-portals.py")).load_module()
-                result = module.portals(owned, output)
+                module = SourceFileLoader("settings_native_" + args.case, str(owned.paths["source"] / ("Tests/settings-native-" + args.case + ".py"))).load_module()
+                result = getattr(module, args.case)(owned, output)
             else:
                 # Native QuickTest drives the actual production controls and
                 # checks CLI readback, source drag, drafts, outage and repair.

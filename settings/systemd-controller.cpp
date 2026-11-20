@@ -106,7 +106,17 @@ void SystemdController::sample(const QString &unit)
                     state["invocation"] = QString::fromLatin1(p.value("InvocationID").toByteArray().toHex());
                     state["started"] = p.value("ActiveEnterTimestampMonotonic"); state["path"] = path;
                 }
-                states[unit] = state; checkOperation(unit); emit changed();
+                states[unit] = state;
+                if (unit == "aerial-tray.service" && !reply.isError()) {
+                    auto serviceCall = Client::propertyCall(owner, path, "org.freedesktop.systemd1.Service");
+                    watch(this, bus.asyncCall(serviceCall, 5000), [this, unit, serial, epoch](const QDBusMessage &message) {
+                        if (epoch != generation || samples.value(unit) != serial) return;
+                        const QDBusPendingReply<QVariantMap> reply(message); auto state = states.value(unit).toMap();
+                        if (reply.isError()) { state.remove("result"); state.remove("exitStatus"); state["error"] = reply.error().name().section('.', -1); retrySample(unit, serial); }
+                        else { const auto p = Client::unpack(reply.value()).toMap(); state["result"] = p.value("Result"); state["exitStatus"] = p.value("ExecMainStatus"); }
+                        states[unit] = state; checkOperation(unit); emit changed();
+                    });
+                } else { checkOperation(unit); emit changed(); }
             });
         });
     });
@@ -210,6 +220,14 @@ void SystemdController::checkOperation(const QString &unit)
     if (!state.value("error").toString().isEmpty()) { finish(unit, false, state.value("error").toString()); return; }
     if (op.kind == "disable") { finish(unit, !enabled(state.value("fileState").toString()), "The unit is still enabled."); return; }
     const auto invocation = state.value("invocation").toString();
+    // Type=exec can finish successfully after forwarding --tray to a window
+    // owner. It need not remain active or own the original owner's cgroup.
+    if (unit == "aerial-tray.service" && state.value("active") == "inactive"
+        && state.value("result") == "success" && state.contains("exitStatus") && state.value("exitStatus").toInt() == 0
+        && !invocation.isEmpty() && invocation != op.beforeInvocation) { finish(unit, true); return; }
+    // A forwarding run can also exit before this sample and be unloaded. A
+    // completed job whose unit is gone exited cleanly: failed units stay loaded.
+    if (unit == "aerial-tray.service" && state.value("path").toString().isEmpty() && state.value("active") == "inactive") { finish(unit, true); return; }
     if (state.value("active") != "active") { finish(unit, false, "The job finished but the unit is not active."); return; }
     if (unit == "aerial-idle.service") {
         if (invocation.isEmpty() || (op.kind == "restart" && invocation == op.beforeInvocation)) { finish(unit, false, "No new idle invocation was observed."); return; }

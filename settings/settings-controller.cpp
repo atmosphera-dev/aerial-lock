@@ -146,7 +146,6 @@ QString StatusFormatter::summary(const Client::ServiceConnection::Snapshot &snap
     const auto reason = snapshot.properties.value("DeferReason").toString();
     if (reason == "StorageError") return "Cache needs attention";
     if (reason == "InvalidConfig") return "Settings need attention";
-    if (!leaf(snapshot.effective, "acquisition.automatic.enabled").toBool()) return "Paused";
     for (const auto &entry : snapshot.jobs) {
         const auto job = entry.toMap();
         if (!job.value("Cancellable").toBool() || job.value("State").toString() != "downloading") continue;
@@ -156,12 +155,14 @@ QString StatusFormatter::summary(const Client::ServiceConnection::Snapshot &snap
         if (job.value("TotalKnown").toBool() && total) text += ", " + QString::number(int(qMin(100.L, 100.L * job.value("ReceivedBytes").toULongLong() / total))) + "%";
         return text;
     }
+    if (!leaf(snapshot.effective, "acquisition.automatic.enabled").toBool()) return "Paused";
     const QMap<QString, QString> reasons{{"Metered", "metered connection"}, {"ConnectionTypeDisallowed", "connection not allowed"},
         {"PowerDisallowed", "power source not allowed"}, {"Offline", "offline"}, {"Initializing", "checking connections"},
         {"NoAllowedResolution", "no quality allowed"}, {"NoRemoteSources", "no online sources"}, {"CacheFull", "cache full"}, {"PlaybackProtected", "videos in use"}};
     if (!reason.isEmpty() && reason != "None") return "Waiting: " + reasons.value(reason, reason);
-    return QString::number(snapshot.properties.value("ReadyClips").toUInt()) + " videos ready";
+    return "Up to date, " + ready(snapshot.properties.value("ReadyClips").toULongLong());
 }
+QString StatusFormatter::ready(qulonglong count) { return QString::number(count) + (count == 1 ? " video ready" : " videos ready"); }
 QString SettingsController::status() const { return service.ready() ? StatusFormatter::summary(service.snapshot()) : "Service not running"; }
 QString SettingsController::connectionObservation() const
 {

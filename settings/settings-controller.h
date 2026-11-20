@@ -23,6 +23,7 @@ class SettingsController : public QObject {
     Q_PROPERTY(Aerial::Settings::PortalClient *portal READ portal CONSTANT)
     Q_PROPERTY(Aerial::Settings::SystemdController *systemd READ systemd CONSTANT)
     Q_PROPERTY(QVariantMap about READ about NOTIFY changed)
+    Q_PROPERTY(QVariantMap tray READ tray NOTIFY trayChanged)
 public:
     explicit SettingsController(Client::ServiceConnection &service, QObject *parent = nullptr);
     QVariantMap controls() const;
@@ -37,6 +38,10 @@ public:
     PortalClient *portal() { return &portalClient; }
     SystemdController *systemd() { return &systemdController; }
     QVariantMap about() const;
+    QVariantMap tray() const { return trayState; }
+    QVariantMap serviceProperties() const { return service.snapshot().properties; }
+    void setTrayState(const QVariantMap &state) { if (trayState != state) { trayState = state; emit trayChanged(); } }
+    Q_INVOKABLE void showTray(bool on) { emit trayChangeRequested(on); }
     Q_INVOKABLE void setColor(const QString &color);
     Q_INVOKABLE QString canonicalColor(const QString &color) const;
     Q_INVOKABLE void openSettingsFolder();
@@ -46,6 +51,8 @@ public:
     Q_INVOKABLE void retry();
 signals:
     void changed();
+    void trayChanged();
+    void trayChangeRequested(bool on);
 private:
     struct Intent { QString key; QVariant value; bool finished = false; QString revision; };
     void sampled();
@@ -63,10 +70,12 @@ private:
     QMap<QString, QVariant> queued;
     QStringList editOrder;
     QString editOwner;
+    QVariantMap trayState{{"available", false}, {"on", false}, {"persistent", false}, {"message", "No desktop tray was found."}};
 };
 class StatusFormatter {
 public:
     static QString summary(const Client::ServiceConnection::Snapshot &snapshot);
+    static QString ready(qulonglong count);
 };
 void registerTypes();
 }

@@ -40,6 +40,24 @@ class CleanupTest(unittest.TestCase):
         self.assertIs(caught.exception, original)
         self.assertIn("cleanup failed: fixture: retirement failed", output.getvalue())
 
+    def test_units_launcher_cleanup_does_not_terminate_quickshell(self):
+        spec = importlib.util.spec_from_file_location("units", Path(__file__).with_name("settings-native-units.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        host, first, last = Mock(), Mock(), Mock()
+        cleanup = Cleanup(); cleanup("host wait", lambda: (_ for _ in ()).throw(RuntimeError("stalled host")))
+        with patch.object(module, "stop_process") as stop:
+            module.retire_launchers(cleanup, [first, host, last], host)
+        self.assertEqual([call.args[0] for call in stop.call_args_list], [last, first])
+        with self.assertRaisesRegex(RuntimeError, "host wait: stalled host"): cleanup.finish()
+
+    def test_missing_unit_executable_replaces_the_encoded_argument(self):
+        spec = importlib.util.spec_from_file_location("units", Path(__file__).with_name("settings-native-units.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        binary, missing = Path('/workspace %z/real "app"'), Path('/workspace %z/missing "app"')
+        text = "[Service]\nExecStart=" + module.unit_argument(binary) + " --tray\n"
+        changed = module.missing_executable_unit(text, binary, missing)
+        self.assertNotIn(module.unit_argument(binary), changed)
+        self.assertIn(module.unit_argument(missing) + " --tray", changed)
     def test_desktop_exec_preserves_literal_profile_characters(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); target = root / 'literal %z "quote" \\ $cash `tick`'
@@ -70,6 +88,12 @@ class CleanupTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ambiguous"):
             module.new_chooser([old, new, dict(id=3, title=old["title"])], {1}, old["title"])
 
+    def test_native_timestamp_keeps_raw_microseconds(self):
+        spec = importlib.util.spec_from_file_location("units", Path(__file__).with_name("settings-native-units.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        run = Mock(side_effect=[Mock(stdout='o "/org/freedesktop/systemd1/unit/idle"'), Mock(stdout='t 1000750')])
+        self.assertEqual(module.unit_start_usec(run, "aerial-idle.service"), 1000750)
+        self.assertIn("get-property", run.call_args_list[1].args[0])
 
     def test_client_wrapper_rejects_failures_under_optimization(self):
         wrapper = Path(__file__).with_name("test-settings-client.py")
@@ -241,6 +265,39 @@ class CleanupTest(unittest.TestCase):
             module.restore_mime_override(file, original, "fixture.desktop")
             self.assertEqual(file.read_text(), "[Default Applications]\nx-scheme-handler/https=new.desktop;\n")
 
+    def test_transfer_timeout_and_missing_menu_are_not_success(self):
+        spec = importlib.util.spec_from_file_location("tray", Path(__file__).with_name("settings-native-tray.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        event, failures = Mock(), []
+        event.wait.return_value = False
+        self.assertFalse(module.release_transfer(event, failures, "dark", .01))
+        self.assertEqual(failures, ["transfer gate timed out: dark"])
+        event.wait.return_value = True
+        self.assertTrue(module.release_transfer(event, failures, "dark", .01))
+        self.assertFalse(module.menu_stopped({}))
+        self.assertFalse(module.menu_stopped({"count": 1, "entries": []}))
+        self.assertTrue(module.menu_stopped({"count": 1, "entries": [{"text": "Fetch now"}] * 7}))
+        self.assertFalse(module.menu_stopped({"count": 1, "entries": [{"text": "Stop download"}] * 7}))
+
+    def test_transfer_retirement_observes_late_handler_failures(self):
+        spec = importlib.util.spec_from_file_location("tray", Path(__file__).with_name("settings-native-tray.py"))
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        entered, release, retired = threading.Event(), threading.Event(), threading.Event()
+        failures = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                entered.set(); release.wait(5); failures.append("late gate failure")
+                self.send_response(200); self.end_headers(); retired.set()
+            def log_message(self, *_): pass
+        server = module.FixtureHttpServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        client = socket.create_connection(server.server_address, timeout=5)
+        try:
+            client.sendall(b"GET / HTTP/1.0\r\n\r\n"); self.assertTrue(entered.wait(5))
+            module.retire_http(server, thread, [release])
+            self.assertTrue(retired.is_set()); self.assertEqual(failures, ["late gate failure"])
+        finally:
+            client.close(); module.retire_http(server, thread, [release])
 
 
 if __name__ == "__main__":

@@ -425,6 +425,13 @@ install: all
 	install -m 644 Config/i18n/en.json $(DESTDIR)$(I18NDIR)/
 	install -m 755 aerial-lock $(DESTDIR)$(BINDIR)/aerial-lock
 	install -m 755 cli/aerialctl $(DESTDIR)$(BINDIR)/aerialctl
+	install -m 755 settings/aerial-settings $(DESTDIR)$(BINDIR)/aerial-settings
+	install -d $(DESTDIR)$(PREFIX)/share/applications
+	install -m 644 data/org.aeriallock.AerialSettings.desktop $(DESTDIR)$(PREFIX)/share/applications/
+	for size in 16 24 32 48 64 128 256; do \
+		install -d $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps; \
+		install -m 644 settings/assets/icons/$$size.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/org.aeriallock.AerialSettings.png; \
+	done
 	install -m 755 Scripts/aerial-lock-fetch $(DESTDIR)$(BINDIR)/aerial-lock-fetch
 	install -m 755 recovery/aerial-unlock $(DESTDIR)$(BINDIR)/aerial-unlock
 	install -m 755 supervisor/aerial-lock-supervisor $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
@@ -432,6 +439,8 @@ install: all
 	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user $(DESTDIR)$(DATADIR)/examples
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-idle.service.in > $(OBJDIR)/aerial-idle.service
 	install -m 644 $(OBJDIR)/aerial-idle.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
+	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-tray.service.in > $(OBJDIR)/aerial-tray.service
+	install -m 644 $(OBJDIR)/aerial-tray.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial.service.in > $(OBJDIR)/aerial.service
 	install -m 644 $(OBJDIR)/aerial.service $(DESTDIR)$(PREFIX)/lib/systemd/user/
 	install -d $(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants
@@ -446,6 +455,8 @@ install: all
 	install -d $(DESTDIR)$(PREFIX)/share/dbus-1/services
 	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.Aerial1.service.in > $(OBJDIR)/org.aeriallock.Aerial1.service
 	install -m 644 $(OBJDIR)/org.aeriallock.Aerial1.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/
+	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.AerialSettings.service.in > $(OBJDIR)/org.aeriallock.AerialSettings.service
+	install -m 644 $(OBJDIR)/org.aeriallock.AerialSettings.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/
 	install -m 644 dbus/org.aeriallock.Aerial1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 644 dbus/org.aeriallock.Aerial1.Job1.xml $(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/
 	install -m 755 emergency/aerial-lock-emergency $(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency
@@ -462,6 +473,9 @@ uninstall:
 	rm -rf $(DESTDIR)$(DATADIR)
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock
 	rm -f $(DESTDIR)$(BINDIR)/aerialctl
+	rm -f $(DESTDIR)$(BINDIR)/aerial-settings $(DESTDIR)$(PREFIX)/share/applications/org.aeriallock.AerialSettings.desktop
+	for size in 16 24 32 48 64 128 256; do rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/org.aeriallock.AerialSettings.png; done
+	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/user/aerial-tray.service $(DESTDIR)$(PREFIX)/share/dbus-1/services/org.aeriallock.AerialSettings.service
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-fetch
 	rm -f $(DESTDIR)$(BINDIR)/aerial-unlock
 	rm -f $(DESTDIR)$(BINDIR)/aerial-lock-supervisor
