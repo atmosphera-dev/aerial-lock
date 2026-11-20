@@ -2,8 +2,28 @@
 import os
 from pathlib import Path
 import tempfile
+from xml.etree.ElementTree import Element, SubElement, tostring
+from urllib.parse import quote_from_bytes
 
 SOCKET_PATH_LIMIT = 107  # Linux sockaddr_un.sun_path, excluding the final NUL.
+
+
+def bus_address(socket):
+    return "unix:path=" + quote_from_bytes(os.fsencode(socket), safe="/._-").replace("~", "%7E")
+
+
+def bus_config(socket, services=()):
+    """Serialize private bus addresses and directories without XML interpolation."""
+    root = Element("busconfig")
+    SubElement(root, "type").text = "session"
+    SubElement(root, "listen").text = bus_address(socket)
+    SubElement(root, "auth").text = "EXTERNAL"
+    for directory in services:
+        SubElement(root, "servicedir").text = str(directory)
+    policy = SubElement(root, "policy", context="default")
+    for key in ("user", "send_destination", "receive_sender", "own"):
+        SubElement(policy, "allow", {key: "*"})
+    return tostring(root, encoding="unicode")
 
 
 def assert_socket_paths(*paths):

@@ -89,17 +89,21 @@ def paths(fixture, runtime):
         "local-config.o", "config-document.o", "config-repository.o",
         "local-content.o", "companion-hint.o", "owned-directory.o", "content-snapshot.o",
         "aerial-main.o", "aerial-service.o", "companion_adaptor.o", "policy-monitor.o",
-        "job-object.o", "job_adaptor.o", "aerialctl.o", "companion_client.o",
+        "job-object.o", "job_adaptor.o", "aerialctl.o",
         "media-probe.o",
         "source-resolver.o", "cache-store.o", "http-operation.o", "manifest-store.o", "local-probe.o",
         "transfer.o", "planner-state.o", "acquisition-planner.o", "transfer-queue.o",
         "emergency-main.o", "emergency-wayland.o", "emergency-render.o", "emergency-input.o", "emergency-proto.o"
     }, objects
+    client_archive = tree / "build/client/libaerial-client.a"
+    assert client_archive.is_file(), "shared client archive missing"
+    client_before = client_archive.stat().st_mtime_ns
     (root / "objects.json").write_text(json.dumps([p.name for p in objects]))
     before = [p.stat().st_mtime_ns for p in objects]
     make(b, "install", "PAMDIR=" + str(root / "pam"))
     after = [p.stat().st_mtime_ns for p in objects]
     assert all(new > old for old, new in zip(before, after)), "install-path changes reused native objects"
+    assert client_archive.stat().st_mtime_ns == client_before, "path-only changes rebuilt path-independent client"
 
     marker = root / "runner-args.json"
     runner = b / "libexec/aerial-lock/aerial-lock-run"

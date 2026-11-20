@@ -259,6 +259,17 @@ successful retry within the same clock tick. Injected-clock planner tests retain
 terminal jobs for seven days without discarding active jobs or refreshing the
 actual check timestamp on prune/history cleanup.
 
+`settings-client` links the production QtCore/QtDBus-only `aerial-client`
+archive, shared with `aerialctl`. Separate-process private peers exercise dirty
+bootstrap resampling, invalidated properties, duplicate and early job signals,
+expired jobs, nested uint64 values, failed reads, owner/profile replacement
+during reads, profile checks and mutations, timeout without replay, and bus loss.
+The actual service proves revisioned writes, stale conflicts, external edits and
+durable job reconnection. A harmless private activation marker proves custom
+profiles never activate and only the ordinary installed profile may do so.
+No generated synchronous property getter or nested event loop is used by the
+asynchronous connection; blocking helpers are reserved for CLI boundaries.
+
 ### Installed companion acceptance
 
 `companion-package.py` consumes a current `companion-vm.py --case prepare`

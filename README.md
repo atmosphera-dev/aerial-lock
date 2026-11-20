@@ -34,9 +34,10 @@ Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
 `aerialctl` and the compatible `aerial-lock-fetch` command use that service;
 they do not require curl, Python or tar. Python remains test tooling.
 
-Building requires a C/C++ compiler, Make, pkg-config, Qt6 Core/Gui/DBus/Quick
-development files, PAM headers, wayland-client and wayland-protocols (including
-`wayland-scanner`). On Arch these are provided by `base-devel`, `qt6-base`,
+Building requires a C/C++ compiler, Make, CMake, Ninja, pkg-config, Qt6
+Core/Gui/DBus/Quick development files, PAM headers, wayland-client and
+wayland-protocols (including `wayland-scanner`). On Arch these are provided by
+`base-devel`, `cmake`, `ninja`, `qt6-base`,
 `qt6-declarative`, `pam`, `wayland`,
 `wayland-protocols`, `libxkbcommon`, `libarchive` and `ffmpeg`; Git is needed
 to build from a clone. Arch's `qdbusxml2cpp` is supplied by `qt6-base`.

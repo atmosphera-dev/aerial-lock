@@ -37,7 +37,21 @@ PROBE_OBJS := $(OBJDIR)/media-probe.o
 IDLE_OBJS := $(OBJDIR)/aerial-idle-main.o $(OBJDIR)/aerial-idle-proto.o $(CONFIG_OBJS)
 COMPANION_CONTENT_OBJS := $(CONTENT_OBJS) $(OBJDIR)/http-operation.o $(OBJDIR)/manifest-store.o $(OBJDIR)/local-probe.o $(OBJDIR)/transfer.o $(OBJDIR)/planner-state.o $(OBJDIR)/acquisition-planner.o $(OBJDIR)/transfer-queue.o
 COMPANION_OBJS := $(OBJDIR)/aerial-main.o $(OBJDIR)/config-repository.o $(OBJDIR)/aerial-service.o $(OBJDIR)/companion_adaptor.o $(OBJDIR)/job-object.o $(OBJDIR)/job_adaptor.o $(OBJDIR)/policy-monitor.o $(CONFIG_OBJS) $(COMPANION_CONTENT_OBJS)
-CLI_OBJS := $(OBJDIR)/aerialctl.o $(OBJDIR)/companion_client.o $(CONFIG_OBJS)
+CLIENT_BUILD := $(OBJDIR)/client
+empty :=
+space := $(empty) $(empty)
+# Keep the actual compiler stable when a launcher is added to CXX. Changing
+# CMAKE_CXX_COMPILER to the wrapper resets CMake's cache and drops its arguments.
+# CXX is a program chain followed by compiler options. The final program is
+# the compiler; preceding programs are launchers, not compiler arguments.
+cxx_programs = $(if $(strip $(1)),$(if $(filter -%,$(firstword $(1))),,$(firstword $(1)) $(call cxx_programs,$(wordlist 2,$(words $(1)),$(1)))))
+cxx_arguments = $(if $(strip $(1)),$(if $(filter -%,$(firstword $(1))),$(1),$(call cxx_arguments,$(wordlist 2,$(words $(1)),$(1)))))
+CMAKE_CXX_PROGRAMS = $(strip $(call cxx_programs,$(CXX)))
+CMAKE_CXX_COMPILER = $(lastword $(CMAKE_CXX_PROGRAMS))
+CMAKE_CXX_LAUNCHER = $(subst $(space),;,$(filter-out $(CMAKE_CXX_COMPILER),$(CMAKE_CXX_PROGRAMS)))
+CMAKE_CXX_ARGUMENTS = $(call cxx_arguments,$(CXX))
+CLIENT_ARCHIVE := $(CLIENT_BUILD)/libaerial-client.a
+CLI_OBJS := $(OBJDIR)/aerialctl.o
 AUTH_OBJS := $(OBJDIR)/aerial-lock-auth.o
 EMERGENCY_OBJS := $(OBJDIR)/emergency-main.o $(OBJDIR)/emergency-wayland.o $(OBJDIR)/emergency-render.o $(OBJDIR)/emergency-input.o $(OBJDIR)/emergency-proto.o $(OBJDIR)/auth-client.o
 INPUT_OBJS := $(OBJDIR)/surface-input.o $(OBJDIR)/auth-context.o $(OBJDIR)/auth-client.o $(OBJDIR)/power-actions.o $(OBJDIR)/local-config.o $(OBJDIR)/local-content.o $(OBJDIR)/companion-hint.o $(OBJDIR)/owned-directory.o $(OBJDIR)/content-snapshot.o $(CONFIG_OBJS)
@@ -285,23 +299,15 @@ $(OBJDIR)/job_adaptor.o: $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJ
 $(OBJDIR)/job-object.o: companion/job-object.cpp companion/job-object.h $(OBJDIR)/job_adaptor.h $(OBJDIR)/job-object.moc
 	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c companion/job-object.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
 
-$(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h &: dbus/org.aeriallock.Aerial1.xml common/dbus-types.h | $(OBJDIR)
-	/usr/lib/qt6/bin/qdbusxml2cpp -m -N -c CompanionClient -p $(OBJDIR)/companion_client -i common/dbus-types.h $<
+$(CLIENT_ARCHIVE): common/client/CMakeLists.txt $(wildcard common/client/*.cpp common/client/*.h) common/config-document.cpp common/config-document.h common/dbus-types.h dbus/org.aeriallock.Aerial1.xml dbus/org.aeriallock.Aerial1.Job1.xml $(OBJDIR)/native-config
+	cmake -S common/client -B "$(CLIENT_BUILD)" -G Ninja -DCMAKE_CXX_COMPILER="$(CMAKE_CXX_COMPILER)" -DCMAKE_CXX_COMPILER_LAUNCHER="$(CMAKE_CXX_LAUNCHER)" -DCMAKE_CXX_FLAGS="$(CMAKE_CXX_ARGUMENTS) $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS)"
+	cmake --build "$(CLIENT_BUILD)" -j2
 
-$(OBJDIR)/moc_companion_client.cpp: $(OBJDIR)/companion_client.h
-	/usr/lib/qt6/moc $< -o $@
+$(OBJDIR)/aerialctl.o: cli/aerialctl.cpp $(CLIENT_ARCHIVE) common/config-document.h common/dbus-types.h native/shell-dir.h
+	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I"$(CLIENT_BUILD)" -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c cli/aerialctl.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
 
-$(OBJDIR)/companion_client.o: $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp common/dbus-types.h
-	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -c $< $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
-
-$(OBJDIR)/aerialctl.moc: cli/aerialctl.cpp | $(OBJDIR)
-	/usr/lib/qt6/moc $< -o $@
-
-$(OBJDIR)/aerialctl.o: cli/aerialctl.cpp $(OBJDIR)/aerialctl.moc $(OBJDIR)/companion_client.h common/config-document.h common/dbus-types.h native/shell-dir.h
-	$(CXX) -std=c++17 $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS) -I. -I$(OBJDIR) -DAERIAL_COMPANION_DATADIR='"$(DATADIR)"' -c cli/aerialctl.cpp $$(pkg-config --cflags Qt6Core Qt6DBus) -o $@
-
-cli/aerialctl: $(CLI_OBJS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(CLI_OBJS) $$(pkg-config --libs Qt6Core Qt6DBus)
+cli/aerialctl: $(CLI_OBJS) $(CLIENT_ARCHIVE)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(CLI_OBJS) $(CLIENT_ARCHIVE) $$(pkg-config --libs Qt6Core Qt6DBus)
 
 $(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
 	/usr/lib/qt6/moc $< -o $@
@@ -467,6 +473,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/LICENSE $(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/third-party-notices.md
 
 clean:
+	$(if $(wildcard $(CLIENT_BUILD)/build.ninja),cmake --build "$(CLIENT_BUILD)" --target clean, :)
 	rm -f gen-pam-limits.tmp Config/pam-limits.json Config/build-flags.json
 	rm -f recovery/aerial-unlock recovery/ext-session-lock-v1-client.h recovery/ext-session-lock-v1-protocol.c
 	rm -f supervisor/aerial-lock-supervisor supervisor/aerial-lock-supervisor.moc supervisor/ext-session-lock-v1-client.h supervisor/ext-session-lock-v1-protocol.c
@@ -481,7 +488,7 @@ clean:
 	rm -f $(OBJDIR)/aerial.service $(OBJDIR)/org.aeriallock.Aerial1.service
 	rm -f companion/aerial $(COMPANION_OBJS) $(OBJDIR)/local-config.o $(OBJDIR)/local-config.moc $(OBJDIR)/config-repository.moc $(OBJDIR)/service.moc $(OBJDIR)/companion_adaptor.cpp $(OBJDIR)/companion_adaptor.h $(OBJDIR)/moc_companion_adaptor.cpp
 	rm -f companion/aerial-media-probe $(CONTENT_OBJS) $(PROBE_OBJS)
-	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp
+	rm -f cli/aerialctl $(CLI_OBJS) $(OBJDIR)/aerialctl.moc $(OBJDIR)/job-object.moc $(OBJDIR)/job_adaptor.cpp $(OBJDIR)/job_adaptor.h $(OBJDIR)/moc_job_adaptor.cpp $(OBJDIR)/companion_client.o $(OBJDIR)/companion_client.cpp $(OBJDIR)/companion_client.h $(OBJDIR)/moc_companion_client.cpp
 	rm -f $(OBJDIR)/local-content.o $(OBJDIR)/local-content.moc
 	rm -f $(OBJDIR)/companion-hint.o $(OBJDIR)/companion-client.moc
 	rm -f $(addprefix $(OBJDIR)/,http-operation.moc manifest-store.moc local-probe.moc transfer.moc transfer-queue.moc policy-monitor.moc)
