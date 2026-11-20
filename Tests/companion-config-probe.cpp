@@ -112,6 +112,8 @@ private slots:
         const auto entry = inherited.effective.value("sources").toArray().at(0).toObject();
         QCOMPARE(entry.value("safeName").toString(), "Apple-TV");
         QVERIFY(!entry.value("id").toString().isEmpty());
+        QCOMPARE(entry.value("enabled"), QJsonValue(true));
+        QVERIFY(!inherited.user.contains("sources"));
         writeFile(paths.config, R"({"sources":[]})");
         QVERIFY(readConfig(paths).effective.value("sources").toArray().isEmpty());
         writeFile(paths.config, R"({"video":"/my/file"})");
@@ -126,6 +128,54 @@ private slots:
         QVERIFY(!broken.bundleValid);
         QVERIFY(broken.diagnostics.join('\n').contains("cache.maxBytes"));
         QVERIFY(broken.diagnostics.join('\n').contains("language"));
+    }
+
+    void sourceEnablement_data()
+    {
+        QTest::addColumn<QString>("type"); QTest::addColumn<QJsonValue>("enabled");
+        for (const auto *type : {"apple", "community", "folder", "file"}) {
+            for (const auto &value : {QJsonValue(QJsonValue::Undefined), QJsonValue(true), QJsonValue(false),
+                     QJsonValue("false"), QJsonValue(0), QJsonValue(QJsonValue::Null), QJsonValue(QJsonObject{})})
+                QTest::newRow(qPrintable(QString(type) + '-' + QString::number(value.type()) + '-' + value.toVariant().toString())) << QString(type) << value;
+        }
+    }
+
+    void sourceEnablement()
+    {
+        QFETCH(QString, type); QFETCH(QJsonValue, enabled);
+        QTemporaryDir root;
+        auto paths = ConfigPaths::environment(source); paths.config = root.path() + "/config.json";
+        QJsonObject entry{{"type", type}, {"name", "Source"}, {"source", "https://example.test/pack.json"},
+            {"extra", QJsonObject{{"future", 7}}}, {"minResolution", 1080}, {"maxResolution", 2160}};
+        if (!enabled.isUndefined()) entry["enabled"] = enabled;
+        const bool valid = enabled.isUndefined() || enabled.isBool();
+        const auto raw = QJsonDocument(QJsonObject{{"sources", QJsonArray{entry}}}).toJson();
+        writeFile(paths.config, raw);
+        const auto doc = readConfig(paths);
+        const auto normalized = doc.effective.value("sources").toArray();
+        QCOMPARE(normalized.size(), valid ? 1 : 0);
+        if (valid) {
+            const auto item = normalized[0].toObject();
+            QCOMPARE(item.value("enabled"), QJsonValue(enabled.toBool(true)));
+            QCOMPARE(item.value("extra"), entry.value("extra"));
+            QCOMPARE(item.value("minResolution"), entry.value("minResolution"));
+            QCOMPARE(item.value("maxResolution"), entry.value("maxResolution"));
+            QCOMPARE(doc.user.value("sources").toArray()[0].toObject().contains("enabled"), !enabled.isUndefined());
+            entry["enabled"] = !enabled.toBool(true);
+        }
+        ConfigRepository repository(paths);
+        const auto transaction = repository.update(repository.document().revision, {{"sources", QJsonArray{entry}}, {"language", "fr"}});
+        QCOMPARE(transaction.ok(), valid);
+        if (valid) {
+            const auto saved = repository.document().user.value("sources").toArray()[0].toObject();
+            QCOMPARE(saved.value("id"), normalized[0].toObject().value("id"));
+            QCOMPARE(saved.value("extra"), entry.value("extra"));
+            QVERIFY(!saved.contains("safeName"));
+        } else {
+            QCOMPARE(transaction.error, "InvalidSetting");
+            QFile file(paths.config); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), raw);
+            QVERIFY(!repository.document().user.contains("language"));
+        }
     }
 
     void transactions()

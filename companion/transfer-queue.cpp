@@ -121,20 +121,22 @@ void TransferQueue::evaluate()
     if (!running) return;
     // Every evaluation owns a future wakeup, including storage-error exits.
     const auto wakeup = qScopeGuard([this] { armCheck(); emit changed(); });
+    const auto settings = config.document().effective;
+    QSet<QString> playable;
+    for (const auto &value : settings.value("sources").toArray()) {
+        const auto source = value.toObject();
+        if (sourceEnabled(source) && (source.value("type") == "apple" || source.value("type") == "community")) playable.insert(source.value("id").toString());
+    }
+    // Protection is a configuration fact, not a successful-maintenance fact.
+    // Even an early storage failure must leave later manual plans this filter.
+    cache.setPlaybackSources(playable);
     if (!transfer && !cache.valid() && !cache.recover()) { publishState("error", "StorageError"); return; }
     if (!state.valid() || !state.initializeRotation()) { publishState("error", "StorageError"); return; }
     if (!transfer && state.permanentlyFailed(state.rotation().value("replacement").toString()) && !abandonRotation()) {
         publishState("error", "StorageError"); return;
     }
-    const auto settings = config.document().effective;
     const auto limits = settings.value("cache").toObject();
     cache.configure(limits.value("maxBytes").toInteger(), limits.value("minFreeBytes").toInteger());
-    QSet<QString> configured;
-    for (const auto &value : settings.value("sources").toArray()) {
-        const auto source = value.toObject();
-        if (source.value("type") == "apple" || source.value("type") == "community") configured.insert(source.value("id").toString());
-    }
-    cache.setSources(configured);
     const auto usage = cache.usage();
     if (!transfer && usage.safe && usage.bytes > quint64(limits.value("maxBytes").toInteger())) {
         const auto maintenance = cache.prune(false, {}, usage.bytes - quint64(limits.value("maxBytes").toInteger()));
@@ -157,6 +159,7 @@ void TransferQueue::armCheck()
         if (retry > clock()) next = std::min(next, retry);
     }
     for (const auto &value : settings.value("sources").toArray()) {
+        if (!sourceEnabled(value.toObject())) continue;
         const auto retry = state.nextAttempt(manifestKey(value.toObject()));
         if (retry > clock()) next = std::min(next, retry);
     }
@@ -279,6 +282,7 @@ void TransferQueue::plan()
     const auto requested = ids(current);
     for (const auto &value : doc.effective.value("sources").toArray()) {
         const auto source = value.toObject();
+        if (!sourceEnabled(source)) continue;
         if (source.value("type") != "apple" && source.value("type") != "community") continue;
         if (requested.isEmpty() || requested.contains(source.value("id").toString())) sources.append(source);
     }
@@ -442,7 +446,10 @@ void TransferQueue::nextTransfer()
     });
     if (candidate == plan.candidates.end()) {
         QSet<QString> configured, useful;
-        for (const auto &value : settings.value("sources").toArray()) configured.insert(value.toObject().value("id").toString());
+        for (const auto &value : settings.value("sources").toArray()) {
+            const auto source = value.toObject();
+            if (sourceEnabled(source)) configured.insert(source.value("id").toString());
+        }
         for (const auto &value : cache.entries()) {
             const auto entry = value.toObject();
             if (configured.contains(entry.value("sourceId").toString())) useful.insert(entry.value("key").toString());

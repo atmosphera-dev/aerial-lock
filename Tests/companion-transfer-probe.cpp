@@ -633,6 +633,55 @@ private slots:
         QCOMPARE(cache.entries().size(), 1); QCOMPARE(cache.entries()[0].toObject().value("assetId").toString(), "new");
         QCOMPARE(countOldGets(), initialOldGets); // Includes the bounded range size probe, not a second payload retry.
     }
+    void queueDisabledSourceCannotProtectFallback_data()
+    {
+        QTest::addColumn<QString>("operation");
+        QTest::addColumn<bool>("disabledRecent");
+        for (const auto *operation : {"admission", "prune", "lower-cap", "storage-failure"})
+            for (bool recent : {false, true}) QTest::newRow(qPrintable(QString(operation) + (recent ? "-disabled-newer" : "-disabled-older"))) << QString(operation) << recent;
+    }
+    void queueDisabledSourceCannotProtectFallback()
+    {
+        QFETCH(QString, operation); QFETCH(bool, disabledRecent);
+        QTemporaryDir directory; HttpFixture server;
+        auto disabledSource = source(server, "disabled"); disabledSource["enabled"] = false;
+        const auto paths = queueConfig(directory.path(), {source(server), disabledSource});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); cache.configure(1000000, 0);
+        auto enabled = rep(server.url("/enabled.mp4")), disabled = rep(server.url("/disabled.mp4"));
+        disabled.sourceId = "disabled";
+        const auto seed = [&](const Representation &item, qint64 time) {
+            const int fd = cache.openPartial(item.key, true);
+            if (fd < 0) return false;
+            const bool written = cache.reserve(media.size()) && cache.append(fd, media);
+            close(fd);
+            return written && cache.complete(item, {{"initialFrameDecoded", true}}, time);
+        };
+        QVERIFY(seed(enabled, disabledRecent ? 1 : 2)); QVERIFY(seed(disabled, disabledRecent ? 2 : 1));
+        HttpTransport network; PlannerState state(paths.state, [] { return 123; }, [] { return 0; });
+        const auto blockedState = paths.state + "/planner-v1.json";
+        if (operation == "storage-failure") QVERIFY(QDir().mkdir(blockedState));
+        const auto restoreState = qScopeGuard([&] { if (operation == "storage-failure") QDir().rmdir(blockedState); });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 123; }); queue.start();
+        if (operation == "storage-failure") QCOMPARE(queue.deferReason(), QString("StorageError"));
+        QCOMPARE(cache.entries().size(), 2); // Disabling alone retains owned bytes.
+        if (operation == "admission") {
+            auto next = rep(server.url("/next.mp4"));
+            QVERIFY(!cache.canAcquire(next, enabled.key));
+            QVERIFY(cache.canAcquire(next, disabled.key));
+            return;
+        }
+        if (operation == "lower-cap") QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", 0}}}}).ok());
+        else {
+            QCOMPARE(cache.prune(true).value("removedBytes").toInteger(), media.size());
+            QCOMPARE(cache.entries().size(), 2);
+            QCOMPARE(cache.prune(false).value("removedBytes").toInteger(), media.size());
+        }
+        QVERIFY(cache.contains(enabled.key)); QVERIFY(!cache.contains(disabled.key));
+        ContentSnapshot snapshot(cache.path()); QVERIFY(snapshot.valid());
+        const auto playable = snapshot.forSources(config.document().effective.value("sources").toArray());
+        QCOMPARE(playable.size(), 1); QCOMPARE(playable.first().toObject().value("key").toString(), enabled.key);
+        QVERIFY(server.requests.isEmpty());
+    }
     void manifestsAndSmallestDiscovery()
     {
         QTemporaryDir directory; CacheStore cache(directory.path() + "/cache"); QVERIFY(cache.valid()); cache.configure(1000000, 0);
@@ -656,6 +705,27 @@ private slots:
         QCOMPARE(store.cached(source).size(), 2);
         auto edited = source; edited["source"] = server.url("/changed.json").toString();
         QVERIFY(store.cached(edited).isEmpty());
+    }
+    void queueManualReclaimsDisabledCache()
+    {
+        QTemporaryDir directory; HttpFixture server; server.media = media + QByteArray(32768, 0);
+        server.bodies["/fixture.json"] = manifest({"new"}); server.bodies["/new.mp4"] = server.media;
+        auto disabledSource = source(server, "disabled"); disabledSource["enabled"] = false;
+        const auto paths = queueConfig(directory.path(), {source(server), disabledSource});
+        ConfigRepository config(paths); CacheStore cache(paths.cache); cache.configure(1000000, 0);
+        const auto enabled = rep(server.url("/enabled.mp4")); auto disabled = rep(server.url("/disabled.mp4")); disabled.sourceId = "disabled";
+        const auto seed = [&](const Representation &item, const QByteArray &payload) {
+            const int fd = cache.openPartial(item.key, true); if (fd < 0) return false;
+            const bool written = cache.reserve(payload.size()) && cache.append(fd, payload); close(fd);
+            return written && cache.complete(item, {{"initialFrameDecoded", true}}, 1);
+        };
+        QVERIFY(seed(enabled, media)); QVERIFY(seed(disabled, media + QByteArray(65536, 0)));
+        QVERIFY(config.update(config.document().revision, {{"cache", QJsonObject{{"maxBytes", qint64(cache.usage().bytes + 16384)}}}}).ok());
+        HttpTransport network; PlannerState state(paths.state, [] { return 123; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 123; }); queue.start();
+        const auto job = queue.acquire({}, 1); QTRY_VERIFY_WITH_TIMEOUT(ended(queue, job), 20000);
+        QCOMPARE(queue.job(job).value("state").toString(), QString("succeeded"));
+        QVERIFY(cache.contains(enabled.key)); QVERIFY(!cache.contains(disabled.key)); QCOMPARE(cache.entries().size(), 2);
     }
     void queueManualSmallestAndDurableJobs()
     {
@@ -689,6 +759,88 @@ private slots:
         for (const auto &request : server.requests) if (request.startsWith("GET ") && !request.contains(".json ")) ++mediaGets;
         QCOMPARE(mediaGets, 1); // --limit counts already verified eligible media.
     }
+    void queueDisableSource_data()
+    {
+        QTest::addColumn<QString>("stage"); QTest::addColumn<bool>("automatic"); QTest::addColumn<QString>("type");
+        for (const auto *type : {"apple", "community"})
+            for (bool automatic : {false, true})
+                for (const auto *stage : {"queued", "manifest", "sizing", "transfer"})
+                    QTest::newRow(qPrintable(QString(type) + '-' + (automatic ? "automatic-" : "manual-") + stage))
+                        << QString(stage) << automatic << QString(type);
+    }
+
+    void queueDisableSource()
+    {
+        QFETCH(QString, stage); QFETCH(bool, automatic); QFETCH(QString, type);
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        server.bodies["/fixture.json"] = manifest({"clip"});
+        auto selectedSource = source(server); selectedSource["type"] = type;
+        if (stage == "manifest") server.modes["/fixture.json"] = "hold-all";
+        if (stage == "sizing") server.modes["/clip.mp4"] = "hold-all";
+        if (stage == "transfer") server.modes["/clip.mp4"] = "hold-partial";
+        const auto paths = queueConfig(directory.path(), {selectedSource}, automatic);
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
+        PlannerState state(paths.state, [] { return 100000; }, [] { return 0; });
+        TransferQueue queue(config, cache, state, network, probe, {}, [] { return 100000; });
+        queue.start();
+        QString id;
+        if (automatic) {
+            const auto jobs = queue.jobs(); QVERIFY(!jobs.isEmpty()); id = jobs.begin().key();
+        } else id = queue.acquire({"fixture"});
+        QVERIFY(!id.isEmpty());
+        if (stage == "manifest") QTRY_VERIFY(!server.requests.isEmpty());
+        if (stage == "sizing") QTRY_VERIFY(std::any_of(server.requests.begin(), server.requests.end(), [](const QByteArray &r) { return r.startsWith("HEAD /clip.mp4"); }));
+        const auto parsed = SourceResolver::parse(selectedSource, server.url("/fixture.json"), server.bodies["/fixture.json"]);
+        QCOMPARE(parsed.representations.size(), 1); const auto key = parsed.representations[0].key;
+        if (stage == "transfer") {
+            QTRY_VERIFY(cache.files().read("partials/" + key + ".part", 1000000).size() == media.size() / 2);
+        }
+        // A queued second manual request also has to consult the new selection.
+        const auto queued = queue.acquire({"fixture"}); QVERIFY(!queued.isEmpty());
+        selectedSource["enabled"] = false;
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{selectedSource}}}).ok());
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, id) && ended(queue, queued), 10000);
+        QCOMPARE(queue.job(id).value("errorCode"), "NoRemoteSources");
+        QCOMPARE(queue.job(queued).value("errorCode"), "NoRemoteSources");
+        QVERIFY(cache.entries().isEmpty());
+        if (stage == "queued") QVERIFY(server.requests.isEmpty());
+        const auto count = server.requests.size();
+        // Explicit IDs and manual bypass do not bypass source enablement.
+        const auto refresh = queue.refresh({"fixture"}), fetch = queue.acquire({"fixture"});
+        QTRY_VERIFY(ended(queue, refresh) && ended(queue, fetch));
+        QCOMPARE(queue.job(refresh).value("errorCode"), "NoRemoteSources");
+        QCOMPARE(server.requests.size(), count);
+        if (stage == "transfer") {
+            QCOMPARE(cache.files().read("partials/" + key + ".part", 1000000), media.left(media.size() / 2));
+            QCOMPARE(cache.metadata("partials/" + key + ".json").value("received").toInteger(), qint64(media.size() / 2));
+        }
+        server.modes.clear(); server.modes["/clip.mp4"] = "206";
+        selectedSource["enabled"] = true;
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{selectedSource}}}).ok());
+        const auto enabled = queue.acquire({"fixture"}, 1);
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, enabled), 20000);
+        QCOMPARE(cache.entries().size(), 1);
+        if (stage == "transfer") QVERIFY(std::any_of(server.requests.begin(), server.requests.end(), [](const QByteArray &r) { return r.contains("Range: bytes="); }));
+        CompanionService service(config, QDBusConnection::sessionBus()); service.bind(&state, &cache, &queue, nullptr);
+        QCOMPARE(service.readyClips(), uint(1));
+        const auto before = cache.entries();
+        selectedSource["enabled"] = false;
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{selectedSource}}}).ok());
+        QCOMPARE(service.readyClips(), uint(0));
+        const auto disabled = service.ListSources(); QCOMPARE(disabled.size(), 1);
+        QCOMPARE(disabled[0].value("enabled").toBool(), false); QCOMPARE(disabled[0].value("state").toString(), "disabled");
+        QCOMPARE(disabled[0].value("readyClips").toUInt(), uint(1)); QCOMPARE(cache.entries(), before);
+        selectedSource["enabled"] = true;
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{selectedSource}}}).ok());
+        const auto reused = queue.acquire({"fixture"}, 1);
+        const auto payloads = [](const QList<QByteArray> &requests) {
+            return std::count_if(requests.begin(), requests.end(), [](const QByteArray &r) { return r.startsWith("GET /clip.mp4"); });
+        };
+        const auto oldGets = payloads(server.requests);
+        QTRY_VERIFY_WITH_TIMEOUT(ended(queue, reused), 20000);
+        QCOMPARE(payloads(server.requests), oldGets); QCOMPARE(cache.entries(), before);
+    }
+
     void inheritedDefaultAcquisition()
     {
         // Use the ordinary shipped descriptor without rewriting it or adding a
@@ -1310,6 +1462,14 @@ private slots:
         result = cli(environment, {"cache", "prune", "--dry-run", "--json"}); QCOMPARE(result.code, 0);
         result = cli(environment, {"jobs", "--watch", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("prune"));
         QVERIFY(result.out.contains("removedBytes")); // Nested a{sv} details survive JSON output.
+        selectedSource["enabled"] = false;
+        QCOMPARE(cli(environment, {"config", "set", "sources", QString::fromUtf8(QJsonDocument(QJsonArray{selectedSource}).toJson(QJsonDocument::Compact))}).code, 0);
+        const auto requestsBeforeDisable = server.requests.size();
+        QCOMPARE(cli(environment, {"fetch", "fixture", "--wait"}).code, 1);
+        QCOMPARE(cli(environment, {"content", "refresh", "fixture"}).code, 0); // accepted, terminal failure is durable
+        result = cli(environment, {"jobs", "--watch", "--json"}); QCOMPARE(result.code, 0); QVERIFY(result.out.contains("NoRemoteSources"));
+        QCOMPARE(server.requests.size(), requestsBeforeDisable);
+        result = cli(environment, {"status", "--json"}); QCOMPARE(QJsonDocument::fromJson(result.out).object().value("ReadyClips").toInt(), 0);
         QCOMPARE(cli(environment, {"config", "set", "sources", "[]"}).code, 0);
         QCOMPARE(cli(environment, {"fetch", "--wait"}).code, 1);
         result = cli(environment, {"status", "--json"}); QCOMPARE(QJsonDocument::fromJson(result.out).object().value("ReadyClips").toInt(), 0);

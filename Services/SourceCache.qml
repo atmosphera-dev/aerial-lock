@@ -44,7 +44,9 @@ Scope {
         return home ? home + "/.cache/aerial-lock" : ""
     }
 
-    readonly property var sources: config.data.sources || []
+    // One selection feeds delegates, metadata, managed/legacy fallback and all
+    // indexing. Disabled sources never instantiate a scanner or manifest reader.
+    readonly property var sources: enabledSources(config.data.sources || [])
     readonly property var vidFilters: ["*.mp4", "*.mkv", "*.webm", "*.mov"]
 
     LocalContent { id: managed }
@@ -59,6 +61,10 @@ Scope {
     // Parsed manifests per remote source (safeName → parsed entries.json),
     // filled by nonblocking reads. lookup() reads this at runtime.
     property var _manifests: ({})
+
+    function enabledSources(inventory) {
+        return inventory.filter(function (source) { return source.enabled !== false })
+    }
 
     function expandHome(p) {
         var home = Quickshell.env("HOME")

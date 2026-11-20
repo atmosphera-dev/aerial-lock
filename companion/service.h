@@ -71,7 +71,7 @@ private:
     QDBusObjectPath jobPath(const QString &id);
     QDBusObjectPath acceptedJob(const QString &id);
     bool available();
-    QJsonArray configuredEntries() const;
+    QJsonArray configuredEntries(bool enabledOnly = false) const;
     ConfigRepository &config;
     QDBusConnection bus;
     PlannerState *state = nullptr;
