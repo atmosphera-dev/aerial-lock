@@ -1687,6 +1687,69 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(ended(*queue, next), 10000);
         ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid()); QVERIFY(!snapshot.entries().isEmpty());
     }
+    void queueDelayedRotationEligibility_data()
+    {
+        QTest::addColumn<QString>("change");
+        for (const auto *change : {"eligible", "source-removed", "source-band", "restart-source-removed", "last-fallback"})
+            QTest::newRow(change) << QString(change);
+    }
+    void queueDelayedRotationEligibility()
+    {
+        QFETCH(QString, change);
+        QTemporaryDir directory; HttpFixture server; server.media = media;
+        const auto fallback = source(server, "fallback"), replacement = source(server, "replacement");
+        const int fallbackCount = change == "last-fallback" ? 1 : 2;
+        server.bodies["/fallback.json"] = manifest(fallbackCount == 1 ? QStringList{"old"} : QStringList{"old", "sibling"});
+        server.bodies["/replacement.json"] = manifest({"new"});
+        const auto paths = queueConfig(directory.path(), {fallback}, true);
+        ConfigRepository config(paths); CacheStore cache(paths.cache); HttpTransport network;
+        qint64 now = 100000;
+        PlannerState state(paths.state, [&now] { return now; }, [] { return 0; });
+        auto queue = std::make_unique<TransferQueue>(config, cache, state, network, probe, QByteArray{}, [&now] { return now; });
+        queue->start(); QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), fallbackCount, 20000);
+        QTRY_COMPARE(queue->status(), "idle");
+        QSet<QString> fallbacks;
+        for (const auto &entry : cache.entries()) fallbacks.insert(entry.toObject().value("key").toString());
+        auto reader = std::make_unique<ContentSnapshot>(paths.cache); QVERIFY(reader->valid());
+        now += 7 * 86400;
+        QVERIFY(config.update(config.document().revision, {{"sources", QJsonArray{fallback, replacement}}}).ok());
+        QTRY_COMPARE_WITH_TIMEOUT(cache.entries().size(), fallbackCount + 1, 20000);
+        QTRY_COMPARE(queue->deferReason(), "PlaybackProtected");
+        const auto old = state.rotation().value("victim").toString();
+        QVERIFY(fallbacks.contains(old));
+        const auto bound = state.rotation().value("replacement").toString();
+        QVERIFY(!bound.isEmpty()); QVERIFY(cache.contains(bound)); QVERIFY(cache.contains(old));
+        QCOMPARE(state.lastRotation(), qint64(100000));
+        if (change != "eligible") {
+            QJsonArray sources{fallback};
+            if (change == "source-band") {
+                auto excluded = replacement; excluded["minResolution"] = 2160;
+                sources.append(excluded);
+            }
+            if (change.startsWith("restart")) queue.reset();
+            QVERIFY(config.update(config.document().revision, {{"sources", sources}}).ok());
+            if (!queue) {
+                queue = std::make_unique<TransferQueue>(config, cache, state, network, probe, QByteArray{}, [&now] { return now; });
+                queue->start();
+            }
+        }
+        reader.reset(); now += 3600; queue->evaluate();
+        QTRY_VERIFY_WITH_TIMEOUT(state.rotation().isEmpty(), 20000);
+        QTRY_COMPARE(queue->status(), "idle");
+        ContentSnapshot snapshot(paths.cache); QVERIFY(snapshot.valid());
+        QSet<QString> visible;
+        for (const auto &entry : snapshot.entries()) visible.insert(entry.toObject().value("key").toString());
+        QVERIFY(visible.contains(bound));
+        for (const auto &key : fallbacks) if (key != old) QVERIFY(visible.contains(key));
+        if (change == "eligible") {
+            QVERIFY(!visible.contains(old)); QVERIFY(state.retired(old)); QCOMPARE(state.lastRotation(), now);
+        } else {
+            // The old configured clip is still the playback fallback. Completed
+            // bytes from an excluded replacement cannot authorize its eviction.
+            QVERIFY(visible.contains(old)); QVERIFY(!state.retired(old)); QCOMPARE(state.lastRotation(), qint64(100000));
+        }
+        QCOMPARE(cache.usage().reserved, quint64(0));
+    }
     void queueRotationCadenceAndPins()
     {
         QTemporaryDir directory; HttpFixture server; server.media = media;

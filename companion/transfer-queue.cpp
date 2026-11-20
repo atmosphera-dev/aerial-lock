@@ -378,6 +378,13 @@ QString TransferQueue::finalizeRotation()
     const auto rotation = state.rotation();
     if (rotation.isEmpty()) return {};
     const auto victim = rotation.value("victim").toString(), replacement = rotation.value("replacement").toString();
+    // Publication can wait behind a reader across settings edits or restart.
+    // Revalidate the binding here, before completed bytes authorize eviction.
+    const auto eligible = selected();
+    const bool configured = std::any_of(eligible.begin(), eligible.end(), [&](const Representation &rep) {
+        return rep.key == replacement;
+    });
+    if (!configured || state.permanentlyFailed(replacement)) return abandonRotation() ? QString() : "StorageError";
     if (!cache.contains(replacement)) return {};
     if (cache.contains(victim) && !cache.evict(victim)) return cache.valid() ? "PlaybackProtected" : "StorageError";
     if (!state.finishRotation()) return "StorageError";
@@ -417,17 +424,7 @@ void TransferQueue::nextTransfer()
     const auto rotationError = finalizeRotation();
     if (!rotationError.isEmpty()) { finish(rotationError); return; }
     const auto limit = current.value("limit").toInt();
-    auto pendingRotation = state.rotation();
-    if (!pendingRotation.isEmpty()) {
-        const auto eligible = selected();
-        const bool configured = std::any_of(eligible.begin(), eligible.end(), [&](const Representation &rep) {
-            return rep.key == pendingRotation.value("replacement").toString();
-        });
-        if (!configured || state.permanentlyFailed(pendingRotation.value("replacement").toString())) {
-            if (!abandonRotation()) { finish("StorageError"); return; }
-            pendingRotation = {};
-        }
-    }
+    const auto pendingRotation = state.rotation();
     // Releasing a binding may retire a removed victim. Plan only after those
     // durable facts are updated, so the victim is not immediately re-fetched.
     auto plan = AcquisitionPlanner::evaluate(settings, catalogue, cache.entries(), state, clock(),
