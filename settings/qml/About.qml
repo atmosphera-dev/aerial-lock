@@ -21,7 +21,18 @@ UI.Page {
     UI.Section {
         Layout.fillWidth: true
         title: "Tray icon"
-        description: "The optional tray keeps status and quick actions available when the window is closed."
+        description: root.controller.tray.message
+        UI.Group {
+            Layout.fillWidth: true
+            visible: root.controller.tray.available || root.controller.tray.on || root.controller.tray.persistent
+            UI.SettingRow {
+                Layout.fillWidth: true
+                title: "Show tray icon"
+                description: "Status and quick actions when the window is closed."
+                UI.Toggle { objectName: "about-tray"; text: "Show tray icon"; observed: root.controller.tray.on || root.controller.tray.persistent; onRequested: value => root.controller.showTray(value) }
+            }
+        }
+        UI.Label { Layout.fillWidth: true; visible: text.length > 0; text: root.controller.systemd.error; wrapMode: Text.WordWrap }
     }
     UI.Section {
         Layout.fillWidth: true

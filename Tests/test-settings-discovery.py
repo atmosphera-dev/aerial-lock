@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix="settings-discovery-") as temporary:
             log.flush(); log.seek(0)
             assert address.startswith('unix:'), address + log.read()
             env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=address, DBUS_SYSTEM_BUS_ADDRESS=address, AERIAL_TEST_DISCOVERY_CONFIG=str(config))
-            result = subprocess.run([sys.argv[1], 'discoveryRetriesWithoutOwnerChange'], env=env, capture_output=True, text=True, timeout=30)
+            result = subprocess.run([sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else 'discoveryRetriesWithoutOwnerChange'], env=env, capture_output=True, text=True, timeout=30)
             print(result.stdout, end=''); print(result.stderr, end='', file=sys.stderr)
             assert result.returncode == 0 and 'QWARN' not in result.stdout + result.stderr, 'discovery probe failed'
         finally:

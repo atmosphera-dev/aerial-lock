@@ -72,6 +72,7 @@ UI.Page {
                 description: root.controller.systemd.idle.message
                 glyph: "info"
                 UI.Button {
+                    objectName: "idle-action"
                     visible: root.controller.systemd.idle.action.length > 0
                     primary: true
                     text: root.controller.systemd.idle.actionLabel
@@ -139,7 +140,7 @@ UI.Page {
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }
             UI.Button { text: "Cancel"; onClicked: idleSheet.close() }
-            UI.Button { text: "Turn on"; primary: true; onClicked: { root.controller.systemd.operate("aerial-idle.service", "enableStart"); idleSheet.close(); } }
+            UI.Button { objectName: "idle-turn-on"; text: "Turn on"; primary: true; onClicked: { root.controller.systemd.operate("aerial-idle.service", "enableStart"); idleSheet.close(); } }
         }
     }
 }

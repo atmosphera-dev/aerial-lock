@@ -17,6 +17,10 @@ Module {
         Property { name: "portal"; type: "Aerial::Settings::PortalClient"; isPointer: true; isReadonly: true }
         Property { name: "systemd"; type: "Aerial::Settings::SystemdController"; isPointer: true; isReadonly: true }
         Property { name: "about"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "tray"; type: "QVariantMap"; isReadonly: true }
+        Signal { name: "trayChanged" }
+        Signal { name: "trayChangeRequested"; Parameter { name: "on"; type: "bool" } }
+        Method { name: "showTray"; Parameter { name: "on"; type: "bool" } }
         Method { name: "setColor"; Parameter { name: "color"; type: "QString" } }
         Method { name: "canonicalColor"; type: "QString"; Parameter { name: "color"; type: "QString" } }
         Method { name: "openSettingsFolder" }

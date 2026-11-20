@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Aerial
+Type=Application
+Exec=aerial-settings
+Icon=org.aeriallock.AerialSettings
+Terminal=false
+DBusActivatable=true
+Categories=Settings;DesktopSettings;

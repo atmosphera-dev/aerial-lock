@@ -68,7 +68,7 @@ QVariantMap CacheController::facts() const
         {"source", details.value("sourceName").toString()}, {"progressKnown", current.value("TotalKnown").toBool() && total > 0},
         {"progress", total ? double(qMin(1.L, static_cast<long double>(received) / total)) : 0.0},
         {"received", bytes(received)}, {"total", current.value("TotalKnown").toBool() ? bytes(total) : "unknown size"},
-        {"ready", p.value("ReadyClips", 0).toString() + " videos ready"}, {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))}, {"lastCheck", "Last check: " + localTime(p.value("LastCheck"))},
+        {"ready", StatusFormatter::ready(p.value("ReadyClips", 0).toULongLong())}, {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))}, {"lastCheck", "Last check: " + localTime(p.value("LastCheck"))},
         {"usage", known ? bytes(managed + partial) + " of " + bytes(limit) + " used" : "Cache usage unavailable"},
         {"free", known ? (used > limit ? bytes(qulonglong(used - limit)) + " over limit" : bytes(free) + " free") : ""},
         {"segments", known ? segments : QVariantList{}}, {"legend", known ? legend : QVariantList{}},

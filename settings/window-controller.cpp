@@ -9,8 +9,12 @@ WindowController::~WindowController() = default;
 bool WindowController::hasWindow() const { return engine && !engine->rootObjects().isEmpty(); }
 QString WindowController::panel() const { return settings.panel(); }
 QString WindowController::intervalText() const { return hasWindow() ? engine->rootObjects().first()->property("intervalText").toString() : QString(); }
-void WindowController::open(const QVariantMap &platform)
+int WindowController::page() const { return hasWindow() ? engine->rootObjects().first()->property("page").toInt() : -1; }
+void WindowController::open(const QVariantMap &platform, int page)
 {
+    // A launch arriving between close and deferred disposal must get a fresh
+    // engine, not a briefly resurrected window that the old timer destroys.
+    if (closing) { ++generation; qDeleteAll(engine->rootObjects()); engine.reset(); closing = false; }
     if (!engine) {
         engine = std::make_unique<QQmlApplicationEngine>();
         engine->setInitialProperties({{"controller", QVariant::fromValue(&settings)}});
@@ -18,10 +22,17 @@ void WindowController::open(const QVariantMap &platform)
         if (engine->rootObjects().isEmpty()) { engine.reset(); emit closed(); return; }
         auto *window = qobject_cast<QQuickWindow *>(engine->rootObjects().first());
         connect(window, &QQuickWindow::closing, this, [this] {
-            QTimer::singleShot(0, this, [this] { engine.reset(); emit closed(); });
+            closing = true; const auto epoch = ++generation;
+            QTimer::singleShot(0, this, [this, epoch] {
+                if (epoch != generation) return;
+                if (engine) { qDeleteAll(engine->rootObjects()); engine.reset(); }
+                closing = false;
+                emit closed();
+            });
         });
     }
     auto *window = qobject_cast<QQuickWindow *>(engine->rootObjects().first());
+    if (page >= 0) window->setProperty("page", page);
     const auto token = platform.value("activation-token").toString();
     if (!token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token.toUtf8());
     window->setWindowStates(window->windowStates() & ~Qt::WindowMinimized);

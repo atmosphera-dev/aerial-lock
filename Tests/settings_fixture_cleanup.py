@@ -2,6 +2,34 @@
 from pathlib import Path
 import subprocess
 import sys
+import threading
+
+
+class HostLease:
+    """Renew a task host during caller work; no renewal permits natural expiry.
+
+    The callback has a 10-second IPC timeout. A 20-second renewal period keeps
+    the maximum normal gap below the host's 90-second inactivity watchdog,
+    regardless of the number of native waits or captures in a test path.
+    """
+    def __init__(self, process, renew, interval=20):
+        self.process, self.renew, self.interval = process, renew, interval
+        self.stop = threading.Event(); self.failure = None
+        renew()
+        self.thread = threading.Thread(target=self.run, daemon=True); self.thread.start()
+
+    def run(self):
+        while not self.stop.wait(self.interval):
+            if self.process.poll() is not None: return
+            try: self.renew()
+            except Exception as error:
+                if self.process.poll() is None: self.failure = error
+                return
+
+    def finish(self):
+        self.stop.set(); self.thread.join(timeout=11)
+        if self.thread.is_alive(): raise RuntimeError("host lease did not retire")
+        if self.failure is not None: raise RuntimeError("host lease renewal failed: " + str(self.failure))
 
 
 class Cleanup:

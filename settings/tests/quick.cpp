@@ -42,6 +42,7 @@ public:
         return value.toVariant();
     }
     Q_INVOKABLE void externalEdit(const QString &key, const QString &json) { fixture.cli({"config", "set", key, json}); }
+    Q_INVOKABLE void configureTray(bool available, bool on, bool persistent = false) { setTrayState({{"available", available}, {"on", on}, {"persistent", persistent}, {"message", "Desktop tray fixture"}}); }
     Q_INVOKABLE void stopService() { fixture.daemon.terminate(); if (!fixture.daemon.waitForFinished(5000)) qFatal("fixture did not stop"); }
     Q_INVOKABLE void startService() { fixture.daemon.start(QString(AERIAL_SETTINGS_TEST_SOURCE) + "/companion/aerial", {}); if (!fixture.daemon.waitForStarted()) qFatal("fixture did not start"); }
     Q_INVOKABLE void breakConfig()

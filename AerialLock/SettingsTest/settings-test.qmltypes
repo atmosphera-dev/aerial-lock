@@ -10,6 +10,8 @@ Module {
         Method { name: "observeTouch"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
         Method { name: "saved"; type: "QVariant"; Parameter { name: "key"; type: "QString" } }
         Method { name: "externalEdit"; Parameter { name: "key"; type: "QString" } Parameter { name: "json"; type: "QString" } }
+        Method { name: "configureTray"; Parameter { name: "available"; type: "bool" } Parameter { name: "on"; type: "bool" } }
+        Method { name: "configureTray"; Parameter { name: "available"; type: "bool" } Parameter { name: "on"; type: "bool" } Parameter { name: "persistent"; type: "bool" } }
         Method { name: "stopService" }
         Method { name: "startService" }
         Method { name: "breakConfig" }
