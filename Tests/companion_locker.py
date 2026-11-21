@@ -271,6 +271,83 @@ def fixture_locker(args, installed_session):
         assert not companion.played.exists(), "removed sources resurrected cached footage"
         session.unlock(6)
         result["observations"]["removedSourcesStaySolid"] = True
+        # Source selection at the actual rendered consumer, including personal,
+        # managed and name-based compatibility inventory. Test themes are a
+        # supported user extension; the installed bundle/auth are unchanged.
+        themes = companion.config.parent / "themes"
+        themes.mkdir()
+        theme = (session.root / "src/aerial-lock/Tests/resource-theme.qml").read_text()
+        theme = theme.replace('import "../Services"', 'import "root:/Services"')
+        theme = theme.replace('import "../Modules/Lock"', 'import "root:/Modules/Lock"')
+        publish(themes / "SourceSelectionProbe.qml", theme)
+        personal = session.output / "personal"
+        personal.mkdir()
+        (personal / "disabled.mp4").write_bytes(small)
+        enabled_file = session.output / "enabled.mp4"
+        enabled_file.write_bytes(small)
+        disabled_sources = [dict(source, enabled=False),
+                            dict(id="apple-off", name="Apple Off", type="apple", source=source["source"], enabled=False),
+                            dict(id="folder-off", name="Folder Off", type="folder", source=str(personal), enabled=False),
+                            dict(id="file-off", name="File Off", type="file", source=str(personal / "disabled.mp4"), enabled=False)]
+        for name in ("Fixture", "Apple-Off"):
+            legacy = companion.root / ("cache/aerial-lock/" + name)
+            (legacy / "videos").mkdir(parents=True)
+            (legacy / "videos/legacy.mp4").write_bytes(small)
+            (legacy / "videos/legacy.mp4.done").touch()
+            publish(legacy / "entries.json", '{"assets":[{"id":"legacy","title":"Mountain"}]}')
+        selected = dict(id="enabled-file", name="Enabled", type="file", source=str(enabled_file))
+        companion.cli("config", "set", "theme", '"SourceSelectionProbe.qml"')
+        companion.cli("config", "set", "sources", json.dumps(disabled_sources + [selected]))
+        companion.forget_playback("disabled-managed")
+        publish(companion.played, json.dumps({"version": 1, "key": entries[0]["key"], "playedAt": 0}))
+
+        def observed_media(expected, after=0):
+            observed = None
+
+            def match(line):
+                nonlocal observed
+                if "RESOURCE_MEDIA " not in line:
+                    return False
+                observed = json.loads(line.split("RESOURCE_MEDIA ", 1)[1])
+                return observed["path"] == expected and (not expected or observed["hasVideo"] and observed["position"] > 0)
+
+            assert session.locker.wait_for(match, 20, after=after), "rendered source selection not observed"
+            return observed
+
+        launch_episode(driver, session, 7)
+        result["observations"]["enabledPersonalOnly"] = observed_media(str(enabled_file))
+        selected["enabled"] = False
+        companion.cli("config", "set", "sources", json.dumps(disabled_sources + [selected]))
+        # Observe a later decoded frame after the config transaction, not a
+        # buffered pre-change line, to prove this episode remains frozen.
+        result["observations"]["runningEpisodeUnchanged"] = observed_media(str(enabled_file), after=time.monotonic_ns())
+        session.unlock(7)
+        launch_episode(driver, session, 8)
+        # SourceCache's inventory deadline is two seconds. A startup placeholder
+        # before that deadline does not prove exclusion at the final consumer.
+        time.sleep(3)
+        result["observations"]["allDisabledSolid"] = observed_media("", after=time.monotonic_ns())
+        assert read_json(companion.played)["playedAt"] == 0, "disabled last-played source was resurrected"
+        session.unlock(8)
+        broken = session.output / "broken.mp4"
+        broken.write_bytes(b"not a video")
+        companion.cli("config", "set", "sources", json.dumps(disabled_sources + [
+            dict(id="broken", name="Broken", type="file", source=str(broken))]))
+        launch_episode(driver, session, 9)
+        failed_at = session.locker.wait_line(lambda line: "video background failed:" in line)
+        result["observations"]["disabledFallbackSolid"] = observed_media("", after=failed_at)
+        session.unlock(9)
+        payload_count = lambda: sum(row["method"] == "GET" and row["path"].endswith(".mp4") for row in requests)
+        before_reenable = payload_count()
+        companion.cli("config", "set", "sources", json.dumps([dict(source, enabled=True)]))
+        companion.stop()  # prove retained completed files, not acquisition
+        companion.forget_playback("reenable")
+        launch_episode(driver, session, 10)
+        played = wait(lambda: read_json(companion.played), "reenabled managed decoded frame")
+        entry = next(entry for entry in companion.inventory()["entries"] if entry["key"] == played["key"])
+        result["observations"]["reenabledManaged"] = observed_media(str(companion.cache / entry["path"]))
+        assert payload_count() == before_reenable, "reenabling fetched already verified media"
+        session.unlock(10)
         result["exit"] = 0
     except (RuntimeError, subprocess.SubprocessError, OSError, AssertionError, ValueError) as error:
         result["error"] = str(error)

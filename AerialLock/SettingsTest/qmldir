@@ -1,0 +1,3 @@
+module AerialLock.SettingsTest
+depends AerialLock.Settings 1.0
+typeinfo settings-test.qmltypes

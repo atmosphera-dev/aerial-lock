@@ -66,7 +66,15 @@ int main(int argc, char **argv) {
     fflush(stdout);
     char command[256];
     while (fgets(command, sizeof(command), stdin)) {
-        if (!strncmp(command, "map ", 4)) {
+        if (!strncmp(command, "move ", 5)) {
+            unsigned x, y, width, height;
+            if (sscanf(command + 5, "%u %u %u %u", &x, &y, &width, &height) != 4 || !width || !height || x > width || y > height) return 2;
+            zwlr_virtual_pointer_v1_motion_absolute(pointer, 4, x, y, width, height);
+            zwlr_virtual_pointer_v1_frame(pointer);
+            if (wl_display_roundtrip(display) < 0) return 2;
+            puts("VIRTUAL_POINTER_MOVED");
+            fflush(stdout);
+        } else if (!strncmp(command, "map ", 4)) {
             char *newline = strchr(command + 4, '\n');
             if (newline) *newline = 0;
             if (wl_display_roundtrip(display) < 0) return 2;
@@ -92,9 +100,10 @@ int main(int argc, char **argv) {
             puts("VIRTUAL_POINTER_UNMAPPED");
             fflush(stdout);
         } else if (!strncmp(command, "click", 5)) {
-            zwlr_virtual_pointer_v1_button(pointer, 2, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+            const uint32_t button = !strncmp(command, "click right", 11) ? 0x111 : 0x110;
+            zwlr_virtual_pointer_v1_button(pointer, 2, button, WL_POINTER_BUTTON_STATE_PRESSED);
             zwlr_virtual_pointer_v1_frame(pointer);
-            zwlr_virtual_pointer_v1_button(pointer, 3, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+            zwlr_virtual_pointer_v1_button(pointer, 3, button, WL_POINTER_BUTTON_STATE_RELEASED);
             zwlr_virtual_pointer_v1_frame(pointer);
             if (wl_display_roundtrip(display) < 0) return 2;
             puts("VIRTUAL_POINTER_CLICKED");

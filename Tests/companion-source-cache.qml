@@ -5,19 +5,22 @@ import "../Services" as Services
 Scope {
     id: fixture
     property bool begun: false
+    property bool reported: false
     Services.ConfigStore { id: fixtureConfig }
     Services.SourceCache { id: content; config: fixtureConfig; topics: ["mountain"] }
     Timer {
         interval: 20
         repeat: true
-        running: true
+        running: !fixture.reported
         onTriggered: {
+            if (fixture.reported) return
             if (!fixtureConfig.ready) return
             if (!fixture.begun) {
                 fixture.begun = true
                 content.begin()
             }
             if (!content.resolved) return
+            fixture.reported = true
             var result = { playlist: content.playlist, metadata: [] }
             for (var i = 0; i < content.playlist.length; i++) {
                 var path = content.playlist[i].path

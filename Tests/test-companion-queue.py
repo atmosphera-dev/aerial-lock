@@ -137,7 +137,24 @@ with tempfile.TemporaryDirectory(prefix="companion-queue-") as temporary:
         time.sleep(0.2)
         assert len(requests) == before, requests[before:]
         stop(process)
-        print("COMPANION_QUEUE_PROCESS_PASS zero_cap no_implicit_source smallest_first decoded_index restart_no_refetch external_config")
+        process, profile, config = start("disabled", [dict(source, enabled=False)], 1000000)
+        disabled_jobs = profile / "state/aerial-lock/planner-v1.json"
+        wait(lambda: any(job.get("errorCode") == "NoRemoteSources" for job in read(disabled_jobs).get("jobs", {}).values()),
+             "all-disabled terminal selection", process)
+        assert len(requests) == before, requests[before:]
+        publish(config, json.dumps({"sources": [dict(source, enabled=True)], "cache": {"maxBytes": 1000000}}))
+        cache = profile / "cache/aerial-lock/managed-v1"
+        wait(lambda: len(inventory().get("entries", [])) == 2, "external source reenable", process)
+        restored = inventory()
+        wait(lambda: any(job.get("state") == "succeeded" for job in read(disabled_jobs).get("jobs", {}).values()),
+             "reenabled durable completion", process)
+        old_jobs = set(read(disabled_jobs)["jobs"])
+        publish(config, json.dumps({"sources": [dict(source, enabled=False)], "cache": {"maxBytes": 1000000}}))
+        wait(lambda: any(key not in old_jobs and job.get("errorCode") == "NoRemoteSources"
+                         for key, job in read(disabled_jobs).get("jobs", {}).items()), "external source disable", process)
+        assert inventory() == restored, "disabling is not cache deletion"
+        stop(process)
+        print("COMPANION_QUEUE_PROCESS_PASS zero_cap no_implicit_source smallest_first decoded_index restart_no_refetch external_config source_enablement")
     finally:
         for process, log in processes:
             if process.poll() is None:

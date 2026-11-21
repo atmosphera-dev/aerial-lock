@@ -15,11 +15,20 @@
 #include <QJsonArray>
 
 namespace Aerial {
+namespace {
+SourceList maps(const QJsonArray &values)
+{
+    SourceList result;
+    for (const auto &value : values) result.append(value.toObject().toVariantMap());
+    return result;
+}
+}
 CompanionService::CompanionService(ConfigRepository &repository, QDBusConnection connection, QObject *parent)
     : QObject(parent), config(repository), bus(std::move(connection))
 {
     registerBusTypes();
     new Aerial1Adaptor(this);
+    connect(&config, &ConfigRepository::diagnosticsChanged, this, &CompanionService::notify);
     connect(&config, &ConfigRepository::changed, this, [this](const QString &revision, const QStringList &paths) {
         emit SettingsChanged(revision, paths);
         notify();
@@ -83,10 +92,11 @@ qulonglong CompanionService::partialBytes() const { return cache && usageKnown()
 qulonglong CompanionService::reservedBytes() const { return cache && usageKnown() ? cache->usage().reserved : 0; }
 qulonglong CompanionService::maxBytes() const { return config.document().effective.value("cache").toObject().value("maxBytes").toInteger(); }
 qulonglong CompanionService::nextCheck() const { return queue ? std::max<qint64>(0, queue->nextCheck()) : 0; }
-QJsonArray CompanionService::configuredEntries() const
+QJsonArray CompanionService::configuredEntries(bool enabledOnly) const
 {
     QSet<QString> configured;
-    for (const auto &source : config.document().effective.value("sources").toArray()) configured.insert(source.toObject().value("id").toString());
+    for (const auto &source : config.document().effective.value("sources").toArray())
+        if (!enabledOnly || sourceEnabled(source.toObject())) configured.insert(source.toObject().value("id").toString());
     QJsonArray result;
     if (cache) {
         const auto visible = cache->valid() ? cache->entries() : ContentSnapshot(cache->path()).entries();
@@ -95,20 +105,25 @@ QJsonArray CompanionService::configuredEntries() const
     }
     return result;
 }
-uint CompanionService::readyClips() const { return uint(configuredEntries().size()); }
+uint CompanionService::readyClips() const { return uint(configuredEntries(true).size()); }
 QVariantMap CompanionService::paths() const
 {
     const auto &paths = config.document().paths;
     return {{"bundle", paths.bundle}, {"config", paths.config}, {"cache", paths.cache}, {"state", paths.state}, {"runtime", paths.runtime}};
 }
 QVariantMap CompanionService::observations() const { return policy ? policy->observations().toVariantMap() : QVariantMap{}; }
+SourceList CompanionService::settingsDiagnostics() const { return maps(config.document().settingsDiagnostics); }
+SourceList CompanionService::defaultSources() const { return maps(config.document().defaultSources); }
+qulonglong CompanionService::lastCheck() const { return state ? std::max<qint64>(0, state->lastCheck()) : 0; }
 
 void CompanionService::notify()
 {
     const QVariantMap properties{{"ConfigRevision", revision()}, {"State", status()}, {"DeferReason", deferReason()},
         {"ManagedBytes", QVariant::fromValue(managedBytes())}, {"UsageKnown", usageKnown()}, {"PartialBytes", QVariant::fromValue(partialBytes())},
         {"ReservedBytes", QVariant::fromValue(reservedBytes())}, {"MaxBytes", QVariant::fromValue(maxBytes())},
-        {"ReadyClips", readyClips()}, {"NextCheck", QVariant::fromValue(nextCheck())}, {"Observations", observations()}};
+        {"ReadyClips", readyClips()}, {"NextCheck", QVariant::fromValue(nextCheck())}, {"Observations", observations()},
+        {"SettingsDiagnostics", QVariant::fromValue(settingsDiagnostics())}, {"DefaultSources", QVariant::fromValue(defaultSources())},
+        {"LastCheck", QVariant::fromValue(lastCheck())}};
     QVariantMap changed;
     for (auto it = properties.begin(); it != properties.end(); ++it)
         if (lastProperties.value(it.key()) != it.value()) changed.insert(it.key(), it.value());
@@ -187,20 +202,31 @@ SourceList CompanionService::ListSources()
     for (const auto &value : config.document().effective.value("sources").toArray()) {
         const auto source = value.toObject(); uint count = 0;
         for (const auto &entry : configuredEntries()) if (entry.toObject().value("sourceId") == source.value("id")) ++count;
-        QString diagnostic; qint64 latest = -1;
+        QString diagnostic, legacyDiagnostic; qint64 latest = -1, legacyLatest = -1, checkedAt = 0; int httpStatus = 0; uint downloads = 0;
         const auto records = queue ? queue->jobs() : state ? state->jobs() : QJsonObject{};
         for (const auto &value : records) {
             const auto record = value.toObject();
-            const auto created = record.value("createdAt").toInteger();
-            if (created >= latest && record.value("errors").toObject().contains(source.value("id").toString())) {
-                latest = created; diagnostic = record.value("errors").toObject().value(source.value("id").toString()).toString();
+            const auto oldError = record.value("errors").toObject().value(source.value("id").toString());
+            if (oldError.isString() && record.value("createdAt").toInteger() >= legacyLatest) {
+                legacyLatest = record.value("createdAt").toInteger(); legacyDiagnostic = oldError.toString();
+            }
+            if (record.value("state") == "downloading" && record.value("sourceId") == source.value("id")) ++downloads;
+            const auto outcome = record.value("sourceResults").toObject().value(source.value("id").toString()).toObject();
+            const auto sequence = outcome.value("sequence").toInteger();
+            if (!outcome.isEmpty() && sequence > latest) {
+                latest = sequence; checkedAt = outcome.value("checkedAt").toInteger();
+                diagnostic = outcome.value("code").toString();
+                if (diagnostic == "Success") diagnostic.clear();
+                httpStatus = outcome.value("httpStatus").toInt();
             }
         }
+        if (latest < 0) diagnostic = legacyDiagnostic;
         const bool remote = source.value("type") == "apple" || source.value("type") == "community";
         // URL/path disclosure is restricted to explicit GetSettings inspection.
         result.append({{"id", source.value("id").toString()}, {"name", source.value("name").toString()},
-            {"type", source.value("type").toString()}, {"readyClips", count}, {"errorCode", diagnostic},
-            {"state", !remote ? QString("unmanaged") : count ? QString("ready") : diagnostic.isEmpty() ? status() : QString("error")}});
+            {"type", source.value("type").toString()}, {"enabled", sourceEnabled(source)}, {"readyClips", count}, {"errorCode", diagnostic},
+            {"httpStatus", httpStatus}, {"checkedAt", QVariant::fromValue(qulonglong(std::max<qint64>(0, checkedAt)))}, {"activeDownloads", downloads},
+            {"state", !sourceEnabled(source) ? QString("disabled") : !remote ? QString("unmanaged") : count ? QString("ready") : diagnostic.isEmpty() ? status() : QString("error")}});
     }
     return result;
 }

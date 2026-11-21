@@ -1,0 +1,111 @@
+import QtQuick.tooling 1.2
+Module {
+    Component {
+        name: "Aerial::Settings::SettingsController"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/SettingsController 1.0"]
+        isCreatable: false
+        Property { name: "controls"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "panel"; type: "QString"; isReadonly: true }
+        Property { name: "diagnostic"; type: "QString"; isReadonly: true }
+        Property { name: "status"; type: "QString"; isReadonly: true }
+        Property { name: "connectionObservation"; type: "QString"; isReadonly: true }
+        Property { name: "powerObservation"; type: "QString"; isReadonly: true }
+        Property { name: "sources"; type: "Aerial::Settings::SourcesController"; isPointer: true; isReadonly: true }
+        Property { name: "cache"; type: "Aerial::Settings::CacheController"; isPointer: true; isReadonly: true }
+        Property { name: "themes"; type: "Aerial::Settings::ThemeCatalog"; isPointer: true; isReadonly: true }
+        Property { name: "portal"; type: "Aerial::Settings::PortalClient"; isPointer: true; isReadonly: true }
+        Property { name: "systemd"; type: "Aerial::Settings::SystemdController"; isPointer: true; isReadonly: true }
+        Property { name: "about"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "tray"; type: "QVariantMap"; isReadonly: true }
+        Signal { name: "trayChanged" }
+        Signal { name: "trayChangeRequested"; Parameter { name: "on"; type: "bool" } }
+        Method { name: "showTray"; Parameter { name: "on"; type: "bool" } }
+        Method { name: "setColor"; Parameter { name: "color"; type: "QString" } }
+        Method { name: "canonicalColor"; type: "QString"; Parameter { name: "color"; type: "QString" } }
+        Method { name: "openSettingsFolder" }
+        Method { name: "openCacheFolder" }
+        Signal { name: "changed" }
+        Method {
+            name: "edit"
+            Parameter { name: "key"; type: "QString" }
+            Parameter { name: "value"; type: "QVariant" }
+        }
+        Method { name: "retry" }
+        Method {
+            name: "choose"
+            Parameter { name: "key"; type: "QString" }
+            Parameter { name: "token"; type: "QString" }
+        }
+    }
+    Component {
+        name: "Aerial::Settings::SourcesController"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/SourcesController 1.0"]
+        isCreatable: false
+        Property { name: "rows"; type: "QVariantList"; isReadonly: true }
+        Property { name: "draft"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "sheetOpen"; type: "bool"; isReadonly: true }
+        Property { name: "appleAvailable"; type: "bool"; isReadonly: true }
+        Property { name: "error"; type: "QString"; isReadonly: true }
+        Property { name: "busy"; type: "bool"; isReadonly: true }
+        Signal { name: "changed" }
+        Signal { name: "rowsChanged" }
+        Method { name: "begin"; Parameter { name: "id"; type: "QString" } }
+        Method { name: "field"; Parameter { name: "key"; type: "QString" } Parameter { name: "value"; type: "QVariant" } }
+        Method { name: "dismiss" }
+        Method { name: "save" }
+        Method { name: "choosePath" }
+        Method { name: "toggle"; Parameter { name: "id"; type: "QString" } Parameter { name: "enabled"; type: "bool" } }
+        Method { name: "remove"; Parameter { name: "id"; type: "QString" } }
+        Method { name: "retry"; Parameter { name: "id"; type: "QString" } }
+        Method { name: "beginReorder"; Parameter { name: "id"; type: "QString" } }
+        Method { name: "dropBefore"; Parameter { name: "id"; type: "QString" } }
+    }
+    Component {
+        name: "Aerial::Settings::CacheController"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/CacheController 1.0"]
+        isCreatable: false
+        Property { name: "facts"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "activity"; type: "QVariantList"; isReadonly: true }
+        Property { name: "cleanup"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "error"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method { name: "fetchOrStop" }
+        Method { name: "prepareCleanup" }
+        Method { name: "confirmCleanup" }
+        Method { name: "dismissCleanup" }
+    }
+    Component {
+        name: "Aerial::Settings::ThemeCatalog"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/ThemeCatalog 1.0"]
+        isCreatable: false
+        Property { name: "rows"; type: "QVariantList"; isReadonly: true }
+        Signal { name: "changed" }
+    }
+    Component {
+        name: "Aerial::Settings::PortalClient"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/PortalClient 1.0"]
+        isCreatable: false
+        Property { name: "error"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method { name: "openFolder"; Parameter { name: "path"; type: "QString" } }
+        Method { name: "openLink"; Parameter { name: "url"; type: "QString" } }
+    }
+    Component {
+        name: "Aerial::Settings::SystemdController"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/SystemdController 1.0"]
+        isCreatable: false
+        Property { name: "available"; type: "bool"; isReadonly: true }
+        Property { name: "units"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "idle"; type: "QVariantMap"; isReadonly: true }
+        Property { name: "error"; type: "QString"; isReadonly: true }
+        Signal { name: "changed" }
+        Method { name: "operate"; Parameter { name: "unit"; type: "QString" } Parameter { name: "operation"; type: "QString" } }
+        Method { name: "refresh" }
+    }
+}

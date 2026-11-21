@@ -14,6 +14,46 @@ make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 
 ## Portable checks
 
+The settings tests link the production shared client, controller and QML types.
+Settings fixture helpers use Python 3.9 APIs (`Path.is_relative_to`), not a
+Python 3.11 exception-API requirement. Cleanup preserves the original exception
+and prints retirement diagnostics when native exception notes are unavailable.
+`settings-model` checks Downloads transactions against a real private-bus service
+and CLI, including custom values, stale revisions and malformed-file recovery.
+`settings-single-instance` exercises `org.freedesktop.Application` from separate
+processes, including profile isolation. `settings-qml` uses its own QuickTest
+runner and `settings/tests/` input, not the generic locker QML runner. Its wrapper
+rejects warnings from the complete construction-to-teardown log.
+
+For native settings checks, `Tests/settings-vm.py` accepts `--root`, `--vm-record`,
+`--host-receipt` (prepare only), and `--case` with `prepare`, `cold-load`,
+`controls`, `failure-recovery`, `portals`, `tray`, `units`, `install` or `visuals`.
+After delivery and test-build configuration, run `python3 Tests/settings-build.py
+<guest-workspace>` inside the owned guest with its disk-backed TMPDIR. The builder
+checks the source freeze before and after compiling and records output hashes in
+`run/settings-build.json`. Prepare verifies that existing build receipt; refreshing
+the source freeze without rebuilding cannot relabel stale binaries. It then
+binds source hashes, binaries and the actual niri session to the fork receipt;
+it never creates PAM fixtures. Cold-load and visuals use a private service
+profile, confirm a single actual window and token-assisted focus from another
+owned window, compare a CLI-edited frame, and close naturally while the service
+stays alive. Controls and failure-recovery drive production QML/controllers in test
+harnesses with service/CLI readback; portals, tray and units exercise their real
+desktop consumers or user manager. Visuals also renders the production window
+with deterministic injected dark/light palettes in a test-only harness. This
+proves build-tree behavior; installed-payload qualification is separate. All run
+inside the owned VM with
+TMPDIR on its disk-backed workspace, never on a physical host.
+
+The `install` case builds a labelled exact-tree package using the retained AUR
+recipe with CMake/Ninja added as build tools, without changing runtime
+dependencies or the release recipe. It validates the scalable icons, theme
+previews, desktop/D-Bus/unit payload and actual installed preview reads. A
+disposable account has empty sources before its user manager starts. Installed
+desktop activation uses one window; install/reinstall starts no tray/idle,
+preserves user enablement and does not restart the content service. It never
+unmasks the desktop account's content service.
+
 The `Checks` GitHub workflow runs on pushes and PRs to master, using Blacksmith
 `blacksmith-8vcpu-ubuntu-2404` x64 VMs (8 vCPU, 32 GB RAM, 160 GB disk).
 The image-build and test container caps remain 4 GB RAM and two CPUs;
@@ -236,6 +276,39 @@ private-bus ownership conflicts, fresh zero-cap status, bus-loss retirement and
 honest storage-error/unknown-usage reporting without adopting foreign files.
 `UsageKnown=false` means byte totals are unavailable, not an empty managed cache.
 These checks do not replace installed activation or rendered-lock acceptance.
+
+Source enablement coverage includes all four source types and sparse defaults
+in `companion-config`, provider/planner/snapshot filtering, and automatic/manual
+queue invalidation during queued, manifest, sizing and transfer work. Disabled
+IDs cannot force a fetch/refresh; partials and completed objects survive for
+reenabling. `companion-source-cache.py` cold-loads the actual selection owner
+with managed, all-disabled, mixed and reenabled inventories. The installed
+`companion-vm.py --case locker --backend niri` also observes decoded personal
+and managed frames, unchanged running episodes after disablement, and solid
+all-disabled/exhausted fallback episodes, with ordinary PAM unlock each time.
+
+Presentation-contract tests cover structured parse locations, diagnostic
+permission transitions without byte/revision changes, external recovery and
+bundled descriptors independent of effective sources. Root CI permission probes
+drop only their own DAC bypass capabilities (including inheritance across their
+service child), never change accounts or file ownership. `companion-api` checks
+the actual diagnostic property signal as well as generated proxy reads.
+Queue tests retain names/counts across downloading restart and disabled-source
+invalidation, distinguish downloaded from already-ready clips, and test 404 then
+successful retry within the same clock tick. Injected-clock planner tests retain
+terminal jobs for seven days without discarding active jobs or refreshing the
+actual check timestamp on prune/history cleanup.
+
+`settings-client` links the production QtCore/QtDBus-only `aerial-client`
+archive, shared with `aerialctl`. Separate-process private peers exercise dirty
+bootstrap resampling, invalidated properties, duplicate and early job signals,
+expired jobs, nested uint64 values, failed reads, owner/profile replacement
+during reads, profile checks and mutations, timeout without replay, and bus loss.
+The actual service proves revisioned writes, stale conflicts, external edits and
+durable job reconnection. A harmless private activation marker proves custom
+profiles never activate and only the ordinary installed profile may do so.
+No generated synchronous property getter or nested event loop is used by the
+asynchronous connection; blocking helpers are reserved for CLI boundaries.
 
 ### Installed companion acceptance
 

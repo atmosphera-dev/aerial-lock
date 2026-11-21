@@ -170,6 +170,20 @@ private slots:
         QCOMPARE(cache.entries().size(), 1);
     }
 
+    void pruneReportsRemovedMediaWhenReceiptCleanupFails()
+    {
+        QTemporaryDir root; const auto path = root.path() + "/cache"; bool removed = false;
+        CacheStore cache(path, std::nullopt, [&](const QString &stage) {
+            if (stage != "removed") return;
+            removed = true; QVERIFY(QFile::remove(path + "/pending.json")); QVERIFY(QDir().mkdir(path + "/pending.json"));
+        });
+        cache.configure(1000000, 0); QVERIFY(publish(cache, representation("first"), 1)); QVERIFY(publish(cache, representation("second"), 2));
+        const auto media = path + '/' + cache.entries().first().toObject().value("path").toString(); QVERIFY(QFileInfo::exists(media));
+        const auto preview = cache.prune(true); QCOMPARE(preview.value("removedFiles").toInt(), 1); QCOMPARE(preview.value("removedBytes").toInteger(), 4096);
+        QVERIFY(QFileInfo::exists(media)); QVERIFY(!removed);
+        const auto result = cache.prune(false); QVERIFY(removed); QVERIFY(!QFileInfo::exists(media));
+        QCOMPARE(result.value("removedFiles").toInt(), 1); QCOMPARE(result.value("removedBytes").toInteger(), 4096); QCOMPARE(result.value("error").toString(), QString("StorageError"));
+    }
     void metadataReadWriteLimit()
     {
         QTemporaryDir root; CacheStore cache(root.path() + "/cache"); cache.configure(100000000, 0);
@@ -225,6 +239,9 @@ private slots:
         QVERIFY(SourceResolver::select(manifest.representations, source, 0, {}, false).isEmpty());
         const auto manual = SourceResolver::select(manifest.representations, source, 2160, {}, true);
         QCOMPARE(manual[1].height, 2160);
+        auto disabled = source; disabled["enabled"] = false;
+        QVERIFY(SourceResolver::select(manifest.representations, disabled, 2160, {1080}, false).isEmpty());
+        QVERIFY(SourceResolver::select(manifest.representations, disabled, 2160, {}, true).isEmpty());
         auto band = source; band["maxResolution"] = 1080;
         for (const auto &rep : SourceResolver::select(manifest.representations, band, 2160, {}, true)) QCOMPARE(rep.height, 1080);
         const auto meta = automatic[0].metadata;
@@ -317,6 +334,9 @@ private slots:
         QVERIFY(cache->prune(false).value("protected").toBool());
         const QJsonArray sources{QJsonObject{{"id", "fixture"}, {"type", "community"}, {"name", "Renamed"}}};
         QCOMPARE(snapshot->forSources(sources).at(0).toObject().value("sourceName").toString(), "Renamed");
+        auto disabled = sources[0].toObject(); disabled["enabled"] = false;
+        QVERIFY(snapshot->forSources({disabled}).isEmpty());
+        QCOMPARE(snapshot->entries().size(), 1); // Selection is not ownership.
         QVERIFY(snapshot->forSources({}).isEmpty());
         snapshot.reset();
         // The respawned client also pins the original generation until exit.
@@ -359,6 +379,14 @@ private slots:
         const auto last = cache.path() + "/objects/" + representation("last").key + ".media";
         const auto other = cache.path() + "/objects/" + representation("other").key + ".media";
         QCOMPARE(content.lastPlayedPath(), last);
+        auto disabledSource = sources[0].toMap(); disabledSource["enabled"] = false;
+        LocalContent disabled;
+        disabled.freeze(cache.path(), state, {disabledSource});
+        QVERIFY(disabled.forSource("fixture").isEmpty());
+        QCOMPARE(disabled.lastPlayedPath(), QString());
+        // A later source change cannot rewrite an already-frozen consumer.
+        content.freeze(cache.path(), state, {disabledSource});
+        QCOMPARE(content.forSource("fixture").size(), 2);
         QVERIFY(content.available(last)); QVERIFY(content.available(other));
         QSignalSpy recency(&content, &LocalContent::changed);
         content.reportPlayback(other);
@@ -580,6 +608,24 @@ private slots:
         QVERIFY(QFileInfo::exists(linked)); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), "personal bytes");
     }
 
+    void plannerReceiptRetention()
+    {
+        QTemporaryDir root; qint64 now = 100000;
+        const auto old = representation("old-job").key, active = representation("active-job").key, fresh = representation("fresh-job").key;
+        {
+            PlannerState state(root.path(), [&] { return now; }, [] { return 0; });
+            QVERIFY(state.saveJob(old, {{"state", "succeeded"}, {"finishedAt", now}, {"kind", "refresh"}, {"checkedAt", now}}));
+            QVERIFY(state.saveJob(active, {{"state", "downloading"}, {"createdAt", now}, {"downloaded", 2}, {"assetTitle", "Saved title"}}));
+            now += 7 * 86400;
+        }
+        PlannerState restarted(root.path(), [&] { return now; }, [] { return 0; });
+        QCOMPARE(restarted.lastCheck(), qint64(100000)); QCOMPARE(restarted.jobs().value(active).toObject().value("downloaded").toInt(), 2);
+        QVERIFY(restarted.saveJob(fresh, {{"state", "queued"}})); QVERIFY(restarted.jobs().contains(old));
+        now += 1; QVERIFY(restarted.saveJob(fresh, {{"state", "queued"}}));
+        QVERIFY(!restarted.jobs().contains(old)); QVERIFY(restarted.jobs().contains(active));
+        QCOMPARE(restarted.lastCheck(), qint64(100000)); // history pruning does not invent a fresh check
+    }
+
     void plannerDurability()
     {
         QTemporaryDir root; QVERIFY(root.isValid());
@@ -661,6 +707,14 @@ private slots:
         QCOMPARE(AcquisitionPlanner::evaluate(settings, catalogue, {}, *state, now, true).candidates.size(), 3);
         auto band = source; band["minResolution"] = 2160; settings["sources"] = QJsonArray{band};
         QVERIFY(AcquisitionPlanner::evaluate(settings, catalogue, {}, *state, now, true).candidates.isEmpty());
+        auto disabled = source; disabled["enabled"] = false; settings["sources"] = QJsonArray{disabled};
+        for (bool manual : {false, true}) {
+            auto enabledAutomatic = settings.value("acquisition").toObject();
+            auto policy = enabledAutomatic.value("automatic").toObject(); policy["enabled"] = true;
+            policy["allowedResolutions"] = QJsonArray{1080}; enabledAutomatic["automatic"] = policy; settings["acquisition"] = enabledAutomatic;
+            const auto off = AcquisitionPlanner::evaluate(settings, catalogue, complete, *state, now, manual, {"fixture"});
+            QVERIFY(off.candidates.isEmpty()); QVERIFY(off.rotationVictim.isEmpty()); QCOMPARE(off.deferReason, "NoRemoteSources");
+        }
         settings["sources"] = QJsonArray{};
         QCOMPARE(AcquisitionPlanner::evaluate(settings, catalogue, {}, *state, now, true).deferReason, "NoRemoteSources");
     }

@@ -164,6 +164,37 @@ missing production owner. Start a matching companion explicitly on a private
 bus, with the same bundle and XDG roots for every client. The API rejects a
 different profile rather than importing the caller's environment or paths.
 
+## Aerial settings app and tray
+
+The Aerial app changes user units only when you click. Neither the tray nor
+aerial-idle is enabled by installation or by opening the window; the content
+service keeps the startup behavior described above.
+
+| # | Click | User-manager change |
+|---|---|---|
+| 1 | About > Show tray icon on | Shows the icon now, then `enable` + `start` of `aerial-tray.service` for later graphical logins. If the window is already open, that unit run hands the tray to the window's process and exits. |
+| 2 | Show tray icon off, or Hide tray icon in the tray menu | `disable` of `aerial-tray.service`; the icon goes away, an open window stays open |
+| 3 | Lock screen > Idle Turn on | `enable --now aerial-idle.service` |
+| 4 | Lock screen > Restart aerial-idle | `restart aerial-idle.service`, when saved idle settings need applying or startup freshness is uncertain |
+| 5 | Start service (service unavailable panel) | `start aerial.service`; a masked unit stays masked until you run `systemctl --user unmask aerial.service` |
+
+aerial-idle reads its settings when it starts, so saving an idle setting never
+restarts it: the page offers Restart instead. Keep one idle owner; turn off
+swayidle, hypridle or a shell's own idle locking yourself before Turn on (see
+[Choose one idle/session owner](#choose-one-idlesession-owner)). The app never
+edits other daemons or desktop configuration.
+
+Without a systemd user manager the app still saves settings and controls
+downloads, but cannot arrange autostart. Start these from your
+compositor's autostart instead, for example on niri:
+
+```kdl
+spawn-at-startup "aerial"
+spawn-at-startup "aerial-settings" "--tray"
+```
+
+Add `aerial-idle` only if it is your single idle owner.
+
 ## Atmosphera (Noctalia v4-derived)
 
 In **Settings > Lock Screen > Appearance**, choose the external lock style and

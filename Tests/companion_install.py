@@ -42,7 +42,7 @@ def check_layout(stage, prefix, libexec, bindir=None):
     unit = systemd / "aerial.service"
     assert section(unit, "Service") == {
         "Type": "dbus", "BusName": "org.aeriallock.Aerial1",
-        "ExecStart": str(bindir / "aerial"), "Restart": "on-failure",
+        "ExecStart": '"' + str(bindir / "aerial") + '"', "Restart": "on-failure",
         "RestartSec": "5", "UMask": "0077"}
     assert section(unit, "Install") == {"WantedBy": "default.target"}
     assert "After=" not in unit.read_text() and "Requires=" not in unit.read_text()
@@ -56,7 +56,7 @@ def check_layout(stage, prefix, libexec, bindir=None):
     assert binary.is_file() and binary.stat().st_mode & 0o777 == 0o755
     assert not (stage / libexec.relative_to("/") / "aerial").exists()
     assert section(descriptor, "D-BUS Service") == {
-        "Name": "org.aeriallock.Aerial1", "Exec": str(bindir / "aerial"),
+        "Name": "org.aeriallock.Aerial1", "Exec": '"' + str(bindir / "aerial") + '"',
         "SystemdService": "aerial.service"}
     for path in (unit, descriptor):
         assert "@BINDIR@" not in path.read_text()
@@ -69,4 +69,48 @@ def check_layout(stage, prefix, libexec, bindir=None):
     text = notice.read_text()
     assert "MIT License" in text and "2015-present Guillaume Louel, and contributors" in text
     assert "THE SOFTWARE IS PROVIDED" in text and "SOFTWARE." in text
+    check_settings_layout(stage, prefix, bindir)
     return descriptor
+
+
+THEMES = ("Macintosh", "Windows7", "MaterialYou", "Enfield", "Clockwork")
+
+
+def check_settings_layout(stage, prefix, bindir):
+    """Desktop app payload; the tray is installed but never enabled or autostarted."""
+    stage, prefix, bindir = map(Path, (stage, prefix, bindir))
+    share = stage / prefix.relative_to("/") / "share"
+    binary = stage / bindir.relative_to("/") / "aerial-settings"
+    assert binary.is_file() and not binary.is_symlink() and binary.stat().st_mode & 0o777 == 0o755, binary
+    assert section(share / "applications/org.aeriallock.AerialSettings.desktop", "Desktop Entry") == {
+        "Name": "Aerial", "Type": "Application", "Exec": "aerial-settings", "Icon": "org.aeriallock.AerialSettings",
+        "Terminal": "false", "DBusActivatable": "true", "Categories": "Settings;DesktopSettings;"}
+    activation = share / "dbus-1/services/org.aeriallock.AerialSettings.service"
+    assert section(activation, "D-BUS Service") == {"Name": "org.aeriallock.AerialSettings", "Exec": '"' + str(bindir / "aerial-settings") + '"'}
+    unit = stage / prefix.relative_to("/") / "lib/systemd/user/aerial-tray.service"
+    assert section(unit, "Unit") == {"Description": "Aerial tray icon", "PartOf": "graphical-session.target",
+                                     "After": "graphical-session.target", "ConditionEnvironment": "WAYLAND_DISPLAY"}
+    assert section(unit, "Service") == {"Type": "exec", "ExecStart": '"' + str(bindir / "aerial-settings") + '" --tray', "Restart": "on-failure"}
+    assert section(unit, "Install") == {"WantedBy": "graphical-session.target"}
+    for path in (activation, unit):
+        assert "@BINDIR@" not in path.read_text()
+        if stage != Path("/"):
+            assert str(stage) not in path.read_text()
+    # Only the content service has a vendor wants link; no tray/idle startup.
+    vendor = [unit.parent, stage / "etc/systemd/user"]
+    links = sorted(str(p.relative_to(stage)) for directory in vendor for p in directory.glob("*.wants/*")
+                   if p.name.startswith("aerial") or p.name.startswith("org.aeriallock"))
+    assert links == [str((unit.parent / "default.target.wants/aerial.service").relative_to(stage))], links
+    autostart = [stage / "etc/xdg/autostart", share / "autostart"]
+    assert not [p for directory in autostart for p in directory.glob("*") if "aerial" in p.name.lower()]
+    if stage != Path("/"):
+        assert not [p for p in stage.rglob("*") if p.name == "autostart" or p.suffix == ".desktop" and p.parent.name != "applications"]
+    icons = share / "icons/hicolor/scalable"
+    for icon in (icons / "apps/org.aeriallock.AerialSettings.svg", icons / "status/org.aeriallock.AerialSettings-symbolic.svg"):
+        assert icon.is_file() and icon.stat().st_mode & 0o777 == 0o644 and icon.read_bytes().startswith(b"<svg"), icon
+    owned_icons = sorted(str(p.relative_to(icons.parent)) for p in (share / "icons/hicolor").glob("*/*/org.aeriallock.*"))
+    assert owned_icons == ["scalable/apps/org.aeriallock.AerialSettings.svg", "scalable/status/org.aeriallock.AerialSettings-symbolic.svg"], owned_icons
+    previews = share / "aerial-lock/Themes/previews"
+    assert sorted(p.name for p in previews.iterdir()) == sorted(name + ".png" for name in THEMES), previews
+    for preview in previews.iterdir():
+        assert preview.stat().st_mode & 0o777 == 0o644 and preview.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), preview

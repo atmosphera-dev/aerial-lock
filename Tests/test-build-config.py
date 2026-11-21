@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 from private_runtime import PrivateRuntime
 from companion_install import check_layout
@@ -75,11 +77,37 @@ def helper_path(plugin, expected, unexpected):
     assert str(unexpected).encode(encoding) not in payload, f"stale helper path in {plugin}: {unexpected}"
 
 
+def embedded(binary, expected, unexpected):
+    payload = binary.read_bytes()
+    assert str(expected).encode() in payload, f"path missing from {binary}: {expected}"
+    assert str(unexpected).encode() not in payload, f"stale path in {binary}: {unexpected}"
+
+
+def touch_after_outputs(header, *outputs):
+    """Establish a newer prerequisite even on coarse inode timestamp clocks."""
+    baseline = max(path.stat().st_mtime_ns for path in outputs)
+    deadline = time.monotonic() + 5
+    while True:
+        header.touch()
+        if header.stat().st_mtime_ns > baseline:
+            return
+        assert time.monotonic() < deadline, "filesystem did not advance the header timestamp"
+        time.sleep(.01)
+
+
+FOREIGN = ("share/applications/foreign.desktop", "share/icons/hicolor/scalable/apps/foreign.svg",
+           "share/icons/hicolor/scalable/status/foreign-symbolic.svg", "share/dbus-1/services/org.example.Foreign.service",
+           "lib/systemd/user/foreign.service")
+
+
 def paths(fixture, runtime):
     root, tree, a, b = fixture.locations()
     make = fixture.make
     make(a, "clean")
     make(a)
+    settings = tree / "settings/aerial-settings"
+    embedded(settings, a / "share/aerial-lock", b / "share/aerial-lock")
+    settings_before = settings.stat().st_mtime_ns
     objects = fixture.objects()
     assert {p.name for p in objects} == {
         "aerial-unlock-main.o", "aerial-unlock-proto.o",
@@ -89,17 +117,25 @@ def paths(fixture, runtime):
         "local-config.o", "config-document.o", "config-repository.o",
         "local-content.o", "companion-hint.o", "owned-directory.o", "content-snapshot.o",
         "aerial-main.o", "aerial-service.o", "companion_adaptor.o", "policy-monitor.o",
-        "job-object.o", "job_adaptor.o", "aerialctl.o", "companion_client.o",
+        "job-object.o", "job_adaptor.o", "aerialctl.o",
         "media-probe.o",
         "source-resolver.o", "cache-store.o", "http-operation.o", "manifest-store.o", "local-probe.o",
         "transfer.o", "planner-state.o", "acquisition-planner.o", "transfer-queue.o",
         "emergency-main.o", "emergency-wayland.o", "emergency-render.o", "emergency-input.o", "emergency-proto.o"
     }, objects
+    client_archive = tree / "build/client/libaerial-client.a"
+    assert client_archive.is_file(), "shared client archive missing"
+    client_before = client_archive.stat().st_mtime_ns
     (root / "objects.json").write_text(json.dumps([p.name for p in objects]))
     before = [p.stat().st_mtime_ns for p in objects]
     make(b, "install", "PAMDIR=" + str(root / "pam"))
     after = [p.stat().st_mtime_ns for p in objects]
     assert all(new > old for old, new in zip(before, after)), "install-path changes reused native objects"
+    assert client_archive.stat().st_mtime_ns == client_before, "path-only changes rebuilt path-independent client"
+    assert settings.stat().st_mtime_ns > settings_before, "install-path change reused the settings app"
+    embedded(settings, b / "share/aerial-lock", a / "share/aerial-lock")
+    embedded(b / "bin/aerial-settings", b / "share/aerial-lock", a / "share/aerial-lock")
+    settings_after = settings.stat().st_mtime_ns
 
     marker = root / "runner-args.json"
     runner = b / "libexec/aerial-lock/aerial-lock-run"
@@ -124,15 +160,33 @@ def paths(fixture, runtime):
     listener.close()
     make(b)
     assert after == [p.stat().st_mtime_ns for p in objects], "unchanged configuration rebuilt native objects"
+    assert settings.stat().st_mtime_ns == settings_after, "unchanged configuration rebuilt the settings app"
     # Registration embeds LocalConfig/ConfigDocument's layout; it must rebuild
     # for a transitive header edit, including one not named in its manual rule.
     registration = tree / "build/surface-input.o"
     before_registration = registration.stat().st_mtime_ns
     header = tree / "common/config-document.h"
-    header.touch()
+    touch_after_outputs(header, registration)
     make(b)
     assert registration.stat().st_mtime_ns > before_registration, "transitive config layout left stale QML registration"
     assert "common/config-document.h" in (tree / "build/surface-input.d").read_text()
+    nested_settings = tree / "build/settings/aerial-settings"
+    settings_object = tree / "build/settings/CMakeFiles/aerial-settings.dir/main.cpp.o"
+    settings_before = nested_settings.stat().st_mtime_ns
+    object_before = settings_object.stat().st_mtime_ns
+    touch_after_outputs(tree / "native/shell-dir.h", settings, nested_settings, settings_object)
+    make(b, "settings/aerial-settings")
+    assert nested_settings.stat().st_mtime_ns > settings_before, "external shell-dir header left the nested settings app stale"
+    assert settings_object.stat().st_mtime_ns > object_before, "external shell-dir header did not recompile its consumer"
+    wrapper = root / "cxx-wrapper"
+    calls = root / "wrapper-calls.log"
+    calls.unlink(missing_ok=True)
+    wrapper.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shlex.quote(str(calls)) + "\nexec \"$@\"\n")
+    wrapper.chmod(0o700)
+    with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
+        make(b, "settings/aerial-settings", "CXX=" + wrapper.name + " g++")
+    assert "main.cpp" in calls.read_text(), "compiler wrapper did not build settings sources"
+    assert "service-connection.cpp" in calls.read_text(), "compiler wrapper did not build the shared client"
 
 
 def dev(fixture, runtime):
@@ -175,6 +229,22 @@ def flags(fixture, runtime):
     after = [p.stat().st_mtime_ns for p in objects]
     make(b, "CXXFLAGS=-O1 -frecord-gcc-switches")
     assert all(p.stat().st_mtime_ns > old for p, old in zip(objects, after)), "changed flags reused native objects"
+    # CMake-built consumers take the same flags: the recorded compiler command
+    # lines in both the shared client and the settings app carry the change.
+    for artifact in (tree / "build/client/libaerial-client.a", tree / "settings/aerial-settings"):
+        recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
+        # The section exists only with -frecord-gcc-switches; every unit has -O1.
+        lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]
+        assert recorded.returncode == 0 and lines and all(" -O1 " in line + " " for line in lines), (artifact, recorded.stdout[-2000:], recorded.stderr)
+    launcher = root / "ccache"
+    launcher.write_text('#!/bin/sh\nexec "$@"\n'); launcher.chmod(0o700)
+    for command, cxxflags in (("g++ -O2", "-frecord-gcc-switches"), (str(launcher) + " g++ -O2", "-frecord-gcc-switches"),
+                              (str(launcher) + " g++", "-O2 -frecord-gcc-switches")):
+        make(b, "CXX=" + command, "CXXFLAGS=" + cxxflags)
+        for artifact in (tree / "build/client/libaerial-client.a", tree / "settings/aerial-settings"):
+            recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
+            lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]
+            assert recorded.returncode == 0 and lines and all(" -O2 " in line + " " for line in lines), (command, artifact, recorded.stdout[-2000:], recorded.stderr)
 
 
 def install(fixture, runtime):
@@ -183,15 +253,21 @@ def install(fixture, runtime):
     dev_helper = tree / "native/aerial-lock-auth"
     for label, prefix, bindir in (("default", Path("/usr"), Path("/usr/bin")),
                                   ("prefix", Path("/usr/local"), Path("/usr/local/bin")),
-                                  ("bindir", Path("/usr/local"), Path("/opt/aerial/bin"))):
-        stage = root / (label + "-stage")
+                                  ("bindir", Path("/usr/local"), Path("/opt/aerial/bin")),
+                                  ("spaces", root / "prefix with spaces", root / "bin with spaces")):
+        stage = root / (label + " stage")
         options = ["DESTDIR=" + str(stage)]
-        if label == "bindir":
+        # Shared desktop directories may already hold other packages' files.
+        foreign = {stage / prefix.relative_to("/") / name for name in FOREIGN}
+        for path in foreign:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("foreign\n")
+        if label in ("bindir", "spaces"):
             options.append("BINDIR=" + str(bindir))
         make(prefix, "install", *options)
         unit = stage / prefix.relative_to("/") / "lib/systemd/user/aerial-idle.service"
         commands = [line for line in unit.read_text().splitlines() if line.startswith("ExecStart=")]
-        assert commands == [f"ExecStart={bindir}/aerial-idle"], (label, commands)
+        assert len(commands) == 1 and shlex.split(commands[0].removeprefix("ExecStart=")) == [str(bindir / "aerial-idle")], (label, commands)
         assert unit.stat().st_mode & 0o777 == 0o644, (label, oct(unit.stat().st_mode))
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
         check_layout(stage, prefix, prefix / "libexec/aerial-lock", bindir)
@@ -207,7 +283,8 @@ def install(fixture, runtime):
                     stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency")
         print(f"UNIT_INSTALL_PASS {label} {commands[0]} mode=644", flush=True)
         make(prefix, "uninstall", *options)
-        assert not any(p.is_file() for p in stage.rglob("*")), f"{label} uninstall left installed files"
+        remaining = {p for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
+        assert remaining == foreign and all(p.read_text() == "foreign\n" for p in foreign), f"{label} uninstall: {remaining ^ foreign}"
 
     arch_stage = root / "arch-stage"
     make("/usr", "install", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")

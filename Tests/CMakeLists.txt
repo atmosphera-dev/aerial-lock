@@ -6,7 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(AERIAL_LOCK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
     "aerial-lock source tree used by the test fixtures")
+get_filename_component(AERIAL_LOCK_SOURCE "${AERIAL_LOCK_SOURCE}" ABSOLUTE)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Test DBus Network)
+add_subdirectory("${AERIAL_LOCK_SOURCE}/common/client" "${CMAKE_CURRENT_BINARY_DIR}/client")
+add_subdirectory("${AERIAL_LOCK_SOURCE}/settings" "${CMAKE_CURRENT_BINARY_DIR}/settings")
 
 add_executable(native-input-probe native-input-probe.cpp)
 target_link_libraries(native-input-probe PRIVATE
@@ -31,17 +34,12 @@ target_include_directories(companion-config-probe PRIVATE "${CMAKE_CURRENT_BINAR
 target_link_libraries(companion-config-probe PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
 add_test(NAME companion-config COMMAND companion-config-probe "${AERIAL_LOCK_SOURCE}")
 find_program(QDBUSXML2CPP qdbusxml2cpp PATHS /usr/lib/qt6/bin REQUIRED)
-add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h"
-    COMMAND "${QDBUSXML2CPP}" -m -N -c CompanionClient -p "${CMAKE_CURRENT_BINARY_DIR}/companion_client" -i common/dbus-types.h "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Aerial1.xml"
-    DEPENDS "${AERIAL_LOCK_SOURCE}/dbus/org.aeriallock.Aerial1.xml")
-add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
-    COMMAND Qt6::moc "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h" -o "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp"
-    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/companion_client.h")
-add_executable(companion-api-probe companion-api-probe.cpp
-    "${CMAKE_CURRENT_BINARY_DIR}/companion_client.cpp" "${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp")
-set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/moc_companion_client.cpp" PROPERTIES HEADER_FILE_ONLY TRUE)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc"
+    COMMAND Qt6::moc "${CMAKE_CURRENT_SOURCE_DIR}/companion-api-probe.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc"
+    DEPENDS companion-api-probe.cpp)
+add_executable(companion-api-probe companion-api-probe.cpp "${CMAKE_CURRENT_BINARY_DIR}/companion-api-probe.moc")
 target_include_directories(companion-api-probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${AERIAL_LOCK_SOURCE}")
-target_link_libraries(companion-api-probe PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
+target_link_libraries(companion-api-probe PRIVATE aerial-client Qt6::Test)
 add_test(NAME companion-api COMMAND dbus-run-session -- "$<TARGET_FILE:companion-api-probe>"
     "${AERIAL_LOCK_SOURCE}/companion/aerial" "${AERIAL_LOCK_SOURCE}")
 foreach(stem IN ITEMS companion-client companion-hint-probe)
@@ -121,6 +119,37 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(settings-client-probe settings-client-probe.cpp)
+set_target_properties(settings-client-probe PROPERTIES AUTOMOC ON)
+target_link_libraries(settings-client-probe PRIVATE aerial-client Qt6::Test)
+add_test(NAME settings-client COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-client.py"
+    "$<TARGET_FILE:settings-client-probe>" "${AERIAL_LOCK_SOURCE}/companion/aerial" "${AERIAL_LOCK_SOURCE}")
+find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+foreach(probe IN ITEMS model quick pages desktop)
+    add_executable(settings-${probe}-probe "${AERIAL_LOCK_SOURCE}/settings/tests/${probe}.cpp")
+    set_target_properties(settings-${probe}-probe PROPERTIES AUTOMOC ON)
+    target_link_libraries(settings-${probe}-probe PRIVATE aerial-settings-core Qt6::Test)
+    target_compile_definitions(settings-${probe}-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+endforeach()
+target_link_libraries(settings-quick-probe PRIVATE Qt6::QuickTest)
+add_executable(settings-visual-probe "${AERIAL_LOCK_SOURCE}/settings/tests/visual.cpp")
+target_link_libraries(settings-visual-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
+target_compile_definitions(settings-visual-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-model COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-model-probe>")
+add_dependencies(settings-model-probe settings-client-probe)
+add_test(NAME settings-pages COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-pages-probe>")
+add_test(NAME settings-portals COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-desktop-probe>" portals missingPortal)
+add_test(NAME settings-systemd COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-desktop-probe>" systemd enablingRunningIdleDoesNotConfirmSettings missingManager)
+add_test(NAME settings-single-instance COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-single-instance.py" "$<TARGET_FILE:aerial-settings>" "${AERIAL_LOCK_SOURCE}" "$<TARGET_FILE:settings-units-probe>")
+add_executable(settings-tray-probe "${AERIAL_LOCK_SOURCE}/settings/tests/tray.cpp")
+set_target_properties(settings-tray-probe PROPERTIES AUTOMOC ON)
+target_link_libraries(settings-tray-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
+target_compile_definitions(settings-tray-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-tray COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-tray-probe>")
+add_executable(settings-units-probe "${AERIAL_LOCK_SOURCE}/settings/tests/units.cpp")
+target_link_libraries(settings-units-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
+add_test(NAME settings-qml COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-quick-probe>" -input "${AERIAL_LOCK_SOURCE}/settings/tests" -import "${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-fixture-cleanup COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-fixture-cleanup.py")
 add_test(NAME auth-handoff-driver
     COMMAND "${Python3_EXECUTABLE}" "${AERIAL_LOCK_SOURCE}/Tests/test-auth-handoff-driver.py")
 add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"
@@ -163,9 +192,10 @@ target_include_directories(companion-content-probe PRIVATE "${CMAKE_CURRENT_BINA
 target_compile_definitions(companion-content-probe PRIVATE AERIAL_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 target_link_libraries(companion-content-probe PRIVATE Qt6::Core Qt6::Test PkgConfig::ARCHIVE)
 add_test(NAME companion-provider COMMAND companion-content-probe resolver selectedTarMember)
+add_test(NAME companion-prune-report COMMAND companion-content-probe pruneReportsRemovedMediaWhenReceiptCleanupFails)
 add_test(NAME companion-cache COMMAND companion-content-probe directoryDurability uncertainCacheCommit cacheAccountingAndOwnership loweredCapReclamation corruptPointerRecovery crashTransactions reconciliationOwnership recoveryReaderProtection persistedIdentitySurvivesMountDeviceChange metadataReadWriteLimit)
 add_test(NAME companion-snapshot COMMAND companion-content-probe snapshotPinningAndRestart nonblockingAndCorruption nativeEpisodeGeneration localFallbackInventory)
-add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerSelectionAndCadence plannerReadWriteLimit)
+add_test(NAME companion-planner COMMAND companion-content-probe plannerStorageRecovery plannerDurability plannerReceiptRetention plannerSelectionAndCadence plannerReadWriteLimit)
 # Explicit VM acceptance only: needs a dedicated small loop-mounted filesystem.
 # It must not fill the caller's normal workspace or the CI container filesystem.
 add_executable(companion-disk-probe companion-disk-probe.cpp

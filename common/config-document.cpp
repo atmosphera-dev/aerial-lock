@@ -23,18 +23,40 @@ QString homePath(const char *variable, const QString &fallback)
     return QDir::cleanPath(value.isEmpty() ? QDir::homePath() + fallback : value);
 }
 
-bool objectFile(const QString &path, QByteArray &bytes, QJsonObject &object, QStringList &errors)
+struct Diagnostics {
+    QStringList &text;
+    QJsonArray &structured;
+    QString file;
+    void append(const QString &message, const QString &code, const QString &settingPath = {},
+                qint64 offset = -1, const QByteArray &bytes = {})
+    {
+        text.append(message);
+        QJsonObject diagnostic{{"code", code}, {"severity", code == "InvalidField" || code == "InvalidSource" ? "warning" : "error"}, {"file", file}};
+        if (!settingPath.isEmpty()) diagnostic["settingPath"] = settingPath;
+        if (offset >= 0 && offset <= bytes.size()) {
+            const auto prefix = bytes.left(offset);
+            diagnostic["byteOffset"] = offset;
+            diagnostic["line"] = prefix.count('\n') + 1;
+            diagnostic["column"] = QString::fromUtf8(prefix.mid(prefix.lastIndexOf('\n') + 1)).toUcs4().size() + 1;
+        }
+        structured.append(diagnostic);
+    }
+};
+
+bool objectFile(const QString &path, QByteArray &bytes, QJsonObject &object, Diagnostics &errors)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        errors.append(path + ": cannot read object");
+        errors.append(path + ": cannot read object", "UnreadableFile");
         return false;
     }
     bytes = file.readAll();
     QJsonParseError error;
     const auto doc = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-        errors.append(path + ": invalid JSON object");
+        if (error.error != QJsonParseError::NoError)
+            errors.append(path + ": invalid JSON object", "MalformedJson", {}, error.offset, bytes);
+        else errors.append(path + ": invalid JSON object", "NonObject");
         return false;
     }
     object = doc.object();
@@ -69,16 +91,16 @@ bool matches(const QJsonValue &value, const QJsonObject &spec)
 }
 
 // A bad object reports each affected leaf, preserving existing diagnostics.
-void invalidLeaves(const QJsonObject &spec, const QString &path, QStringList &errors)
+void invalidLeaves(const QJsonObject &spec, const QString &path, Diagnostics &errors)
 {
     const auto properties = spec.value("properties").toObject();
-    if (properties.isEmpty()) errors.append(path + " invalid; using default");
+    if (properties.isEmpty()) errors.append(path + " invalid; using default", "InvalidField", path);
     else for (auto it = properties.begin(); it != properties.end(); ++it)
         invalidLeaves(it.value().toObject(), path.isEmpty() ? it.key() : path + "." + it.key(), errors);
 }
 
 QJsonObject normalize(QJsonObject candidate, const QJsonObject &defaults, const QJsonObject &spec,
-                      const QString &prefix, QStringList &errors)
+                      const QString &prefix, Diagnostics &errors)
 {
     const auto properties = spec.value("properties").toObject();
     for (auto it = properties.begin(); it != properties.end(); ++it) {
@@ -113,7 +135,7 @@ bool completeValue(const QJsonValue &value, const QJsonObject &spec)
     return true;
 }
 
-QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, QStringList &errors)
+QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, Diagnostics &errors)
 {
     QJsonArray result;
     QSet<QString> names, identities;
@@ -124,14 +146,13 @@ QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, QSt
         const auto name = source.value("name").toString();
         const auto url = source.value("source").toString();
         QString reason;
-        if (!completeValue(list.at(i), spec)) reason = " has invalid type/name/source/id/resolution fields";
+        if (!completeValue(list.at(i), spec)) reason = " has invalid type/name/source/id/enabled/resolution fields";
         if (source.contains("minResolution") && source.contains("maxResolution")
             && source.value("minResolution").toDouble() > source.value("maxResolution").toDouble())
             reason = " has an inverted resolution band";
         if (type == "apple" || type == "community") {
             const QUrl remote(url);
-            if (!remote.isValid() || (remote.scheme() != "https" && remote.scheme() != "http")
-                || remote.host().isEmpty()) reason = ".source must be an HTTP(S) URL";
+            if (!remoteContentUrl(remote)) reason = ".source must be an HTTP(S) URL without user-info or fragments";
         }
         auto safe = name;
         safe.replace(' ', '-');
@@ -146,11 +167,12 @@ QJsonArray normalizeSources(const QJsonArray &list, const QJsonObject &spec, QSt
         const auto id = sourceIdentity(source);
         if (identities.contains(id)) reason = " duplicates source identity";
         if (!reason.isEmpty()) {
-            errors.append(path + reason + "; entry dropped");
+            errors.append(path + reason + "; entry dropped", "InvalidSource", path);
             continue;
         }
         source["safeName"] = filtered;
         source["id"] = id;
+        source["enabled"] = sourceEnabled(source);
         names.insert(filtered);
         identities.insert(id);
         result.append(source);
@@ -170,7 +192,9 @@ void patchErrors(const QJsonObject &patch, const QJsonObject &spec, const QStrin
         if (field.value("type") == "object") patchErrors(it.value().toObject(), field, path, errors);
         if (path == "sources") {
             QStringList sourceErrors;
-            normalizeSources(it.value().toArray(), field.value("sourceItem").toObject(), sourceErrors);
+            QJsonArray structured;
+            Diagnostics diagnostics{sourceErrors, structured, {}};
+            normalizeSources(it.value().toArray(), field.value("sourceItem").toObject(), diagnostics);
             errors.append(sourceErrors);
         }
     }
@@ -219,8 +243,11 @@ ConfigDocument readConfig(const ConfigPaths &paths)
     result.paths = paths;
     QByteArray defaultsBytes, schemaBytes;
     QJsonObject defaults;
-    const bool readDefaults = objectFile(paths.bundle + "/Config/defaults.json", defaultsBytes, defaults, result.diagnostics);
-    const bool readSchema = objectFile(paths.bundle + "/Config/settings-schema.json", schemaBytes, result.schema, result.diagnostics);
+    Diagnostics bundled{result.diagnostics, result.settingsDiagnostics, paths.bundle + "/Config/defaults.json"};
+    Diagnostics schema{result.diagnostics, result.settingsDiagnostics, paths.bundle + "/Config/settings-schema.json"};
+    Diagnostics user{result.diagnostics, result.settingsDiagnostics, paths.config};
+    const bool readDefaults = objectFile(bundled.file, defaultsBytes, defaults, bundled);
+    const bool readSchema = objectFile(schema.file, schemaBytes, result.schema, schema);
     const auto idleSpec = result.schema.value("properties").toObject().value("idle").toObject();
     const auto idleFields = idleSpec.value("properties").toObject();
     const QJsonObject idleTypes{{"timeoutSeconds", "integer"}, {"respectInhibitors", "boolean"},
@@ -232,16 +259,19 @@ ConfigDocument readConfig(const ConfigPaths &paths)
     for (auto it = idleTypes.begin(); it != idleTypes.end(); ++it)
         if (!defaults.value("idle").toObject().contains(it.key())
             || idleFields.value(it.key()).toObject().value("type") != it.value()) result.idleBundleValid = false;
-    if (!result.idleBundleValid) result.diagnostics.append("idle: incomplete or invalid bundled policy/schema");
+    if (!result.idleBundleValid) bundled.append("idle: incomplete or invalid bundled policy/schema", "BrokenBundle", "idle");
+    QJsonArray defaultSources;
     if (readDefaults && readSchema) {
         const auto before = result.diagnostics.size();
-        normalize(defaults, {}, result.schema, {}, result.diagnostics);
-        normalizeSources(defaults.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), result.diagnostics);
+        normalize(defaults, {}, result.schema, {}, bundled);
+        defaultSources = normalizeSources(defaults.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), bundled);
         result.bundleValid = result.idleBundleValid && result.diagnostics.size() == before;
     }
+    if (result.bundleValid) result.defaultSources = defaultSources;
+    else bundled.append("bundle: incomplete or invalid defaults/schema", "BrokenBundle");
     const auto info = QFileInfo(paths.config);
     result.present = info.exists() || info.isSymLink();
-    if (result.present) result.userValid = objectFile(paths.config, result.raw, result.user, result.diagnostics);
+    if (result.present) result.userValid = objectFile(paths.config, result.raw, result.user, user);
     result.projectedUser = result.user;
     if (!result.user.contains("sources") && (result.user.contains("video") || result.user.contains("videoDir") || result.user.contains("apple"))) {
         QJsonArray sources;
@@ -258,16 +288,16 @@ ConfigDocument readConfig(const ConfigPaths &paths)
     }
     result.sourcesValid = !result.user.contains("sources") || result.user.value("sources").isArray();
     if (result.bundleValid) {
-        result.effective = normalize(mergeObjects(defaults, result.projectedUser), defaults, result.schema, {}, result.diagnostics);
+        result.effective = normalize(mergeObjects(defaults, result.projectedUser), defaults, result.schema, {}, user);
         if (!result.userValid || !result.sourcesValid) result.effective["sources"] = QJsonArray{};
-        result.effective["sources"] = normalizeSources(result.effective.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), result.diagnostics);
+        result.effective["sources"] = normalizeSources(result.effective.value("sources").toArray(), result.schema.value("properties").toObject().value("sources").toObject().value("sourceItem").toObject(), user);
     } else if (result.idleBundleValid) {
         // Content validation cannot disable the independent idle/suspend daemon.
         const QJsonObject idleDefaults{{"idle", defaults.value("idle")}};
         QJsonObject overrides;
         if (result.projectedUser.contains("idle")) overrides["idle"] = result.projectedUser.value("idle");
         result.effective = normalize(mergeObjects(idleDefaults, overrides), idleDefaults,
-            {{"type", "object"}, {"properties", QJsonObject{{"idle", idleSpec}}}}, {}, result.diagnostics);
+            {{"type", "object"}, {"properties", QJsonObject{{"idle", idleSpec}}}}, {}, user);
     }
     const auto identity = QJsonDocument(QJsonArray{paths.bundle, paths.config, paths.cache, paths.state, paths.runtime,
                                                   digest(defaultsBytes), digest(schemaBytes)}).toJson(QJsonDocument::Compact);

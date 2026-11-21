@@ -65,7 +65,7 @@ QString TransferQueue::submit(const QString &kind, const QStringList &sourceIds,
     const auto id = contentDigest(QUuid::createUuid().toByteArray());
     const QJsonObject record{{"kind", kind}, {"sources", QJsonArray::fromStringList(sourceIds)}, {"limit", limit},
         {"dryRun", dryRun}, {"createdAt", clock()}, {"state", "queued"}, {"received", 0}, {"totalKnown", false},
-        {"total", 0}, {"ready", 0}, {"errors", QJsonObject{}}};
+        {"total", 0}, {"ready", 0}, {"downloaded", 0}, {"errors", QJsonObject{}}, {"sourceResults", QJsonObject{}}};
     if (!state.saveJob(id, record)) { publishState("error", "StorageError"); return {}; }
     pending.append(id); emit jobAdded(id); schedule(); return id;
 }
@@ -129,12 +129,12 @@ void TransferQueue::evaluate()
     const auto settings = config.document().effective;
     const auto limits = settings.value("cache").toObject();
     cache.configure(limits.value("maxBytes").toInteger(), limits.value("minFreeBytes").toInteger());
-    QSet<QString> configured;
+    QSet<QString> playable;
     for (const auto &value : settings.value("sources").toArray()) {
         const auto source = value.toObject();
-        if (source.value("type") == "apple" || source.value("type") == "community") configured.insert(source.value("id").toString());
+        if (sourceEnabled(source) && (source.value("type") == "apple" || source.value("type") == "community")) playable.insert(source.value("id").toString());
     }
-    cache.setSources(configured);
+    cache.setPlaybackSources(playable);
     const auto usage = cache.usage();
     if (!transfer && usage.safe && usage.bytes > quint64(limits.value("maxBytes").toInteger())) {
         const auto maintenance = cache.prune(false, {}, usage.bytes - quint64(limits.value("maxBytes").toInteger()));
@@ -157,6 +157,7 @@ void TransferQueue::armCheck()
         if (retry > clock()) next = std::min(next, retry);
     }
     for (const auto &value : settings.value("sources").toArray()) {
+        if (!sourceEnabled(value.toObject())) continue;
         const auto retry = state.nextAttempt(manifestKey(value.toObject()));
         if (retry > clock()) next = std::min(next, retry);
     }
@@ -266,6 +267,10 @@ void TransferQueue::pump()
 void TransferQueue::plan()
 {
     publishState("planning");
+    // A crash may occur after cache publication but before the job receipt.
+    // Only that job's selected object can count as a recovered download.
+    const auto selectedKey = current.value("assetKey").toString();
+    if (!selectedKey.isEmpty() && cache.contains(selectedKey)) recordDownload(selectedKey);
     const auto &doc = config.document();
     sources.clear(); catalogue.clear(); attempted.clear(); available.clear(); sourceIndex = 0;
     if (current.value("kind") == "prune") {
@@ -279,6 +284,7 @@ void TransferQueue::plan()
     const auto requested = ids(current);
     for (const auto &value : doc.effective.value("sources").toArray()) {
         const auto source = value.toObject();
+        if (!sourceEnabled(source)) continue;
         if (source.value("type") != "apple" && source.value("type") != "community") continue;
         if (requested.isEmpty() || requested.contains(source.value("id").toString())) sources.append(source);
     }
@@ -312,6 +318,8 @@ void TransferQueue::nextManifest()
         const auto result = manifest->result();
         manifest->deleteLater(); manifest = nullptr;
         if (invalidated) { schedule(); return; }
+        recordSourceResult(source.value("id").toString(), failure, response.status);
+        current["checkedAt"] = clock();
         if (failure.isEmpty()) { catalogue.append(result); state.clearFailure(key); }
         else {
             catalogue.append(cached);
@@ -442,7 +450,10 @@ void TransferQueue::nextTransfer()
     });
     if (candidate == plan.candidates.end()) {
         QSet<QString> configured, useful;
-        for (const auto &value : settings.value("sources").toArray()) configured.insert(value.toObject().value("id").toString());
+        for (const auto &value : settings.value("sources").toArray()) {
+            const auto source = value.toObject();
+            if (sourceEnabled(source)) configured.insert(source.value("id").toString());
+        }
         for (const auto &value : cache.entries()) {
             const auto entry = value.toObject();
             if (configured.contains(entry.value("sourceId").toString())) useful.insert(entry.value("key").toString());
@@ -475,6 +486,9 @@ void TransferQueue::nextTransfer()
     if (!victim.isEmpty() && state.rotation().isEmpty() && !state.beginRotation(victim, rep.key)) { finish("StorageError"); return; }
     attempted.insert(rep.key);
     current["sourceId"] = rep.sourceId; current["assetId"] = rep.assetId; current["assetKey"] = rep.key;
+    const auto label = rep.metadata.value("accessibilityLabel").toString(), title = rep.metadata.value("title").toString();
+    current["assetTitle"] = !label.isEmpty() ? label : !title.isEmpty() ? title : rep.assetId;
+    for (const auto &source : sources) if (source.value("id") == rep.sourceId) current["sourceName"] = source.value("name");
     current["state"] = "downloading"; current["totalKnown"] = rep.bytes >= 0; current["total"] = std::max<qint64>(0, rep.bytes);
     save([this, rep] { startTransfer(rep); });
 }
@@ -497,8 +511,11 @@ void TransferQueue::startTransfer(const Representation &rep)
         transfer->deleteLater(); transfer = nullptr;
         if (invalidated) { schedule(); return; }
         if (failure.isEmpty()) {
+            recordDownload(rep.key);
+            recordSourceResult(rep.sourceId, {}, http.status);
             state.clearFailure(rep.key); state.reintroduced(rep.key); ++available[rep.sourceId]; emit contentChanged();
         } else if (failure != "CacheFull" && failure != "Cancelled") {
+            recordSourceResult(rep.sourceId, failure, http.status);
             if (!state.failed(rep.key, failure, http.status, http.headers.value("retry-after"))) { finish("StorageError"); return; }
             if (state.permanentlyFailed(rep.key) && state.rotation().value("replacement") == rep.key && !abandonRotation()) {
                 finish("StorageError"); return;
@@ -515,6 +532,28 @@ void TransferQueue::startTransfer(const Representation &rep)
         });
     });
     transfer->start();
+}
+
+void TransferQueue::recordDownload(const QString &key)
+{
+    auto keys = current.value("downloadedKeys").toArray();
+    if (keys.contains(key)) return;
+    keys.append(key); current["downloadedKeys"] = keys;
+    current["downloaded"] = keys.size();
+}
+
+void TransferQueue::recordSourceResult(const QString &sourceId, const QString &code, int httpStatus)
+{
+    qint64 sequence = 0;
+    for (const auto &job : jobs())
+        for (const auto &value : job.toObject().value("sourceResults").toObject())
+            sequence = std::max(sequence, value.toObject().value("sequence").toInteger());
+    QJsonObject outcome{{"code", code.isEmpty() ? QString("Success") : code}, {"checkedAt", clock()}, {"sequence", sequence + 1}};
+    if (httpStatus > 0) outcome["httpStatus"] = httpStatus;
+    auto results = current.value("sourceResults").toObject(); results[sourceId] = outcome; current["sourceResults"] = results;
+    if (code.isEmpty()) {
+        auto errors = current.value("errors").toObject(); errors.remove(sourceId); current["errors"] = errors;
+    }
 }
 
 void TransferQueue::finish(const QString &error)

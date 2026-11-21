@@ -16,6 +16,14 @@ settings are rejected without applying valid siblings from the same transaction.
 Malformed/unreadable files are preserved and block acquisition and automatic
 writes; the locker can still use local/default presentation with no remote sources.
 
+`SettingsDiagnostics` exposes read-only codes (`UnreadableFile`, `MalformedJson`,
+`NonObject`, `InvalidField`, `InvalidSource`, `BrokenBundle`), severity and file,
+with a setting path or actual parse byte offset and 1-based line/column when
+available. It never includes JSON lines or configured URLs/tokens. Diagnostics
+update on permission changes too, even when bytes/revision are unchanged.
+Recovery is external editing/replacement; reading settings never repairs a
+broken file. Missing user configuration is valid inheritance, not an error.
+
 Your config is deep-merged onto the bundle defaults: a partial `panel` or
 `colors` object overrides only the fields it names, and omitted sibling
 fields keep their defaults. Arrays replace completely: an explicit `sources: []`
@@ -74,6 +82,19 @@ Each entry needs `type`, `name`, and `source` (all strings). `type` is one
 of `file`, `folder`, `apple`, `community`. A malformed or unknown entry is
 dropped with a startup warning naming its index (`sources[2].type`); the
 rest of the list is kept. `~` and `$HOME` expand in `file`/`folder` paths.
+Every source type accepts optional boolean `enabled`, defaulting to `true`.
+`false` excludes it from automatic and manual acquisition, manifest refresh and
+the next lock's playback/fallback. An already-running lock keeps its frozen
+episode. Disabling retains the entry, stable ID, cached clips and compatible
+partials; reenabling reuses them. It is not a removal or cleanup operation.
+All-off and explicit `[]` both select no footage, never inherited Apple.
+Invalid `enabled` values drop hand-written entries; API edits reject the entire
+transaction. The effective view includes the boolean; omitted user fields stay
+sparse.
+
+The service's read-only `DefaultSources` property contains validated bundled
+descriptors independently of your source list. An explicit empty list does not
+erase that descriptor or silently enable it.
 Remote sources (`apple`/`community`) may also carry `minResolution` /
 `maxResolution` (`1080` or `2160`) — the hard band fetch stays within (see
 "Resolution"). An invalid band value drops the source with a warning.
@@ -130,6 +151,10 @@ even across companion restarts. Lowering a cap below pinned usage stops growth
 and can leave reported over-budget bytes until readers release; it never deletes
 live playlist files to force numerical compliance. The last verified fallback
 is protected. The cap limits storage, not lifetime/monthly download traffic.
+
+In the app's meter, Stored data includes completed clips and managed metadata;
+partial downloads are its separate, non-overlapping segment. Reservations add
+only the bytes still to be received.
 
 Durable jobs, retries, rotation and playback recency use
 `$XDG_STATE_HOME/aerial-lock/` (default `~/.local/state/...`); runtime coordination
@@ -223,6 +248,14 @@ apply. Files are read once at startup, so edits apply on the next lock.
 
 ## Fetching remote sources
 
+Durable job `Details` includes `assetTitle`, `sourceName`, a cumulative
+`downloaded` count distinct from ready clips, and per-source `sourceResults`
+(stable code, optional HTTP status, check time and ordering sequence). A newer
+successful retry clears the source's old error. `ListSources` retains disabled
+sources, their cached counts, and active download counts. `LastCheck` records an
+actual automatic/refresh manifest attempt, not a manual fetch, prune or UI clock.
+Terminal receipts are retained for seven days; current jobs survive that window.
+
 The headless companion acquires configured remote sources automatically after
 user-manager startup. It chooses the smallest eligible known-size clip first,
 then fills under the cap. Unknown sizes come after known sizes and remain bounded
@@ -277,6 +310,13 @@ Bundled: `Macintosh.qml`, `Windows7.qml`, `MaterialYou.qml`, `Enfield.qml`,
 `Clockwork.qml`. See `docs/theming.md` for the authoring contract, the
 context object, and the topic-preference semantics that let a theme bias
 which of your configured clips play (Enfield prefers mountains).
+
+The Aerial app's Lock screen page shows a thumbnail for each theme from
+`previews/<Name>.png` next to the theme file (for example
+`/usr/share/aerial-lock/Themes/previews/Enfield.png` or
+`~/.config/aerial-lock/themes/previews/MyTheme.png`). It only reads these PNGs
+and never loads theme QML; a theme without one shows its name. Selecting a
+theme writes `theme` as usual.
 
 New managed clips play only after successful transfer, size/checksum checks when
 available, isolated initial-frame decoding, immutable publication and indexing.

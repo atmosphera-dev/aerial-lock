@@ -29,6 +29,9 @@ class CompanionService : public QObject, protected QDBusContext {
     Q_PROPERTY(qulonglong NextCheck READ nextCheck)
     Q_PROPERTY(QVariantMap Paths READ paths)
     Q_PROPERTY(QVariantMap Observations READ observations)
+    Q_PROPERTY(Aerial::SourceList SettingsDiagnostics READ settingsDiagnostics)
+    Q_PROPERTY(Aerial::SourceList DefaultSources READ defaultSources)
+    Q_PROPERTY(qulonglong LastCheck READ lastCheck)
 public:
     CompanionService(ConfigRepository &config, QDBusConnection bus, QObject *parent = nullptr);
     bool start();
@@ -48,6 +51,9 @@ public:
     qulonglong nextCheck() const;
     QVariantMap paths() const;
     QVariantMap observations() const;
+    SourceList settingsDiagnostics() const;
+    SourceList defaultSources() const;
+    qulonglong lastCheck() const;
 public slots:
     QString GetSettings(QString &effectiveJson, QString &revision);
     QString UpdateSettings(const QString &expectedRevision, const QString &mergePatchJson);
@@ -71,7 +77,7 @@ private:
     QDBusObjectPath jobPath(const QString &id);
     QDBusObjectPath acceptedJob(const QString &id);
     bool available();
-    QJsonArray configuredEntries() const;
+    QJsonArray configuredEntries(bool enabledOnly = false) const;
     ConfigRepository &config;
     QDBusConnection bus;
     PlannerState *state = nullptr;

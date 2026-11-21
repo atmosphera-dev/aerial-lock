@@ -1,4 +1,5 @@
 #include "content-snapshot.h"
+#include "config-document.h"
 #include "owned-directory.h"
 
 #include <QCryptographicHash>
@@ -81,6 +82,7 @@ QJsonArray ContentSnapshot::forSources(const QJsonArray &sources) const
     QJsonArray result;
     for (const auto &value : sources) {
         const auto source = value.toObject();
+        if (!sourceEnabled(source)) continue;
         if (source.value("type") != "apple" && source.value("type") != "community") continue;
         for (const auto &item : inventory) {
             auto entry = item.toObject();

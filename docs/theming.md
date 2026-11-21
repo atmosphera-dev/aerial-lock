@@ -50,6 +50,25 @@ progress and failure states. Unavailable actions and unimplemented user/session
 selectors are not drawn; the layout closes up. Login names are plain labels.
 Authentication submit controls (arrow/UNLOCK/ENTER KEY) use the shared input core.
 
+### Thumbnails in the Aerial app
+
+The Aerial app's Lock screen page lists the bundled and user theme files
+read-only, with a thumbnail from a `previews/` folder beside them:
+
+```
+~/.config/aerial-lock/themes/MyTheme.qml
+~/.config/aerial-lock/themes/previews/MyTheme.png
+```
+
+The app decodes only that local PNG (up to 8192 x 8192) and never loads or runs
+theme QML. The whole catalog shares an 8 MiB UTF-16 data URL budget, allowing
+about 3 MiB of PNG data in total. Earlier previews consume space available to
+later ones. A PNG larger than the remaining budget has no thumbnail even when
+its dimensions meet the limit; the theme still appears by name. Resize or
+recompress the PNG to retain its thumbnail. A user theme with a bundled
+name replaces the bundled entry, thumbnail included, exactly as at lock time.
+Adding, removing or replacing files updates the list while the window is open.
+
 ## Writing a theme
 
 A theme is a QML file whose root is a `FocusScope` taking the lock context:
