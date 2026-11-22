@@ -206,9 +206,15 @@ class DiskObservation(unittest.TestCase):
             self.assertEqual(meter.result()['minimum_free_bytes'], 600)
 
 
+class DownloadBody(io.BytesIO):
+    def __init__(self, body=b''):
+        super().__init__(body)
+        self.headers = {'Content-Length': str(len(body))}
+
+
 class FlakyArchive:
     """Local package server whose first request for every file is dropped unanswered."""
-    def __init__(self, files):
+    def __init__(self, files, truncate_first=False):
         self.files, self.requests = files, []
         owner = self
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -218,6 +224,11 @@ class FlakyArchive:
                 if body is None:
                     self.send_error(404)
                 elif owner.requests.count(self.path) == 1:
+                    if truncate_first:
+                        self.send_response(200)
+                        self.send_header('Content-Length', str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body[:len(body) // 2])
                     self.close_connection = True
                 else:
                     self.send_response(200)
@@ -305,18 +316,32 @@ sync_databases
 
     def test_failed_input_downloads_are_retried_and_partial_bytes_discarded(self):
         body = b'official image'
-        class Truncated(io.BytesIO):
+        class Truncated(DownloadBody):
             def read(self, size=-1):
                 raise platform.http.client.IncompleteRead(b'partial')
         expected = platform.hashlib.sha256(body).hexdigest()
         with tempfile.TemporaryDirectory() as directory, patch.object(platform.time, 'sleep') as sleep, \
                 patch.object(platform.urllib.request, 'urlopen', side_effect=[
-                    platform.urllib.error.URLError('reset'), Truncated(), io.BytesIO(body)]) as urlopen:
+                    platform.urllib.error.URLError('reset'), Truncated(), DownloadBody(body)]) as urlopen:
             destination = Path(directory) / 'official.qcow2'
             platform.download('https://mirror.example/image.qcow2', destination, expected)
             self.assertEqual(destination.read_bytes(), body)
             self.assertEqual(urlopen.call_count, 3)
             self.assertEqual(sleep.call_count, 2)
+            self.assertFalse(destination.with_suffix('.download').exists())
+
+    def test_silent_short_input_response_is_retried_before_promotion(self):
+        body = b'complete official image'
+        path = '/repos/2026/11/14/image.qcow2'
+        with tempfile.TemporaryDirectory() as directory, \
+                FlakyArchive({path: body}, truncate_first=True) as archive, \
+                patch.object(platform.time, 'sleep') as sleep:
+            destination = Path(directory) / 'official.qcow2'
+            platform.download(archive.prefix + 'image.qcow2', destination,
+                              platform.hashlib.sha256(body).hexdigest())
+            self.assertEqual(destination.read_bytes(), body)
+            self.assertEqual(archive.requests, [path, path])
+            sleep.assert_called_once_with(5)
             self.assertFalse(destination.with_suffix('.download').exists())
 
     def test_input_download_failure_is_bounded_and_mismatch_is_never_retried(self):
@@ -328,7 +353,7 @@ sync_databases
                 platform.download('https://mirror.example/image.qcow2', destination, '0' * 64)
             self.assertEqual(urlopen.call_count, platform.DOWNLOAD_ATTEMPTS)
             self.assertFalse(destination.exists())
-            with patch.object(platform.urllib.request, 'urlopen', return_value=io.BytesIO(b'other')) as urlopen, \
+            with patch.object(platform.urllib.request, 'urlopen', return_value=DownloadBody(b'other')) as urlopen, \
                     self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                 platform.download('https://mirror.example/image.qcow2', destination, '0' * 64)
             self.assertEqual(urlopen.call_count, 1)

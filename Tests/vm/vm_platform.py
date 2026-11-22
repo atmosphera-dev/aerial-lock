@@ -245,8 +245,13 @@ def download(url, destination, expected, attempts=DOWNLOAD_ATTEMPTS):
             pending.unlink(missing_ok=True)
             try:
                 with urllib.request.urlopen(url, timeout=60) as response, pending.open('xb') as output:
+                    expected_size = response.headers.get('Content-Length')
+                    received = 0
                     while chunk := response.read(1024 * 1024):
                         output.write(chunk)
+                        received += len(chunk)
+                    if expected_size is not None and received != int(expected_size):
+                        raise OSError(f'incomplete download: received {received} of {expected_size} bytes')
                 break
             except (OSError, http.client.HTTPException) as error:
                 if attempt == attempts:
