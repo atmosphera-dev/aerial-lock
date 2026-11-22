@@ -49,7 +49,16 @@ done
 file_list=$(mktemp)
 trap 'rm -f -- "$file_list"' EXIT
 find "${roots[@]}" -name '*.qml' -type f ! -path './.git/*' -print0 | sort -z > "$file_list"
-mapfile -d '' -t all_files < "$file_list"
+all_files=()
+while IFS= read -r -d '' file; do
+    # Vendored QML is qualified by its upstream project, not Aerial's source
+    # lint. Resolve each candidate so absolute roots and explicit files obey
+    # the same ownership boundary as a recursive '.' invocation.
+    case "$(realpath -- "$file")" in
+        "$REPO_ROOT"/third_party/*) continue ;;
+    esac
+    all_files+=("$file")
+done < "$file_list"
 
 [ ${#all_files[@]} -eq 0 ] && { echo "No QML files found"; exit 0; }
 

@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,30 @@ source = Path(sys.argv.pop(1)).resolve(strict=True)
 
 
 class LiteralArguments(unittest.TestCase):
+    def test_lint_covers_project_not_vendor(self):
+        with tempfile.TemporaryDirectory(prefix="aerial-lint-owner-") as d:
+            root = Path(d)
+            script = root / "Scripts/dev/qmllint.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copy2(source / "Scripts/dev/qmllint.sh", script)
+            (root / "Owned.qml").write_text("import QtQuick\nItem {}\n")
+            vendor = root / "third_party/library/Broken.qml"
+            vendor.parent.mkdir(parents=True)
+            vendor.write_text("this is not QML\n")
+            for operand in (".", str(root), "third_party", str(vendor)):
+                with self.subTest(operand=operand):
+                    result = subprocess.run(["bash", str(script), operand], cwd=root,
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("Linting 1 QML files" if operand in (".", str(root))
+                                  else "No QML files found", result.stdout)
+            # Project-owned diagnostics must still fail the gate.
+            (root / "Owned.qml").write_text("import QtQuick\nItem { unknownProperty: 1 }\n")
+            result = subprocess.run(["bash", str(script), "."], cwd=root,
+                                    capture_output=True, text=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unknownProperty", result.stderr)
+
     def test_lint_roots_are_literal(self):
         for name in ("-delete", "-exec", "(", "!", "space dir", "line\nbreak", "-one.qml"):
             with self.subTest(name=name), tempfile.TemporaryDirectory(prefix="aerial-args-") as d:
