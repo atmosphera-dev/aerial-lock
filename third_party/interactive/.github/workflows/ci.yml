@@ -1,0 +1,76 @@
+name: Build, lint and unit tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lint-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: archlinux:base-devel@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+    env:
+      TMPDIR: ${{ github.workspace }}/build/tmp
+    steps:
+      - name: Install build dependencies
+        run: |
+          mkdir -p "$TMPDIR"
+          pacman -Syu --noconfirm --needed git cmake ninja qt6-base qt6-declarative qt6-shadertools qt6-svg
+
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Record toolchain
+        run: |
+          mkdir -p "$TMPDIR" build/ci-logs
+          {
+            pacman -Q
+            c++ --version
+            cmake --version
+            ninja --version
+          } | tee build/ci-logs/toolchain.log
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DINTERACTIVE_BUILD_PLAYGROUND=ON -DINTERACTIVE_BUILD_TESTS=ON \
+            2>&1 | tee build/ci-logs/configure.log
+
+      - name: Build
+        run: cmake --build build --parallel 2 2>&1 | tee build/ci-logs/build.log
+
+      - name: Lint QML
+        run: cmake --build build --target all_qmllint --parallel 2 2>&1 | tee build/ci-logs/qmllint.log
+
+      - name: Run headless unit suites
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error \
+            -R '^interactive\.(color-edit-state|appearance|trace)$' \
+            2>&1 | tee build/ci-logs/unit.log
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: build-lint-unit-logs
+          path: |
+            build/ci-logs/
+            build/Testing/Temporary/LastTest.log

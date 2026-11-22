@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+cmake_minimum_required(VERSION 3.21)
+project(InterActive VERSION 0.1.1 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(INTERACTIVE_BUILD_PLAYGROUND "Build the visual playground" ON)
+option(INTERACTIVE_BUILD_TESTS "Build the library verification suite" ON)
+set(INTERACTIVE_VERIFY_QT_VERSION "" CACHE STRING "Exact Qt version required by a verification lane")
+
+# Qt 6.12.0 includes the native popup sizing fix (QTBUG-147847) on both axes.
+find_package(Qt6 6.12.0 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg ShaderTools)
+if(INTERACTIVE_VERIFY_QT_VERSION AND NOT Qt6_VERSION VERSION_EQUAL INTERACTIVE_VERIFY_QT_VERSION)
+    message(FATAL_ERROR "Expected Qt ${INTERACTIVE_VERIFY_QT_VERSION}, found ${Qt6_VERSION}")
+endif()
+qt_standard_project_setup(REQUIRES 6.12.0)
+set(QT_QML_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/qml")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
+include(GNUInstallDirs)
+
+add_subdirectory(src/foundation)
+add_subdirectory(src/controls)
+add_subdirectory(src/components)
+if(INTERACTIVE_BUILD_PLAYGROUND)
+    add_subdirectory(examples/playground)
+endif()
+if(INTERACTIVE_BUILD_TESTS)
+    find_package(Qt6 6.12.0 REQUIRED COMPONENTS Test QuickTest)
+    enable_testing()
+    add_subdirectory(tests/unit)
+    add_subdirectory(tests/quick)
+    add_subdirectory(tests/perf)
+endif()

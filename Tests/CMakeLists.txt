@@ -119,6 +119,7 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME interactive-vendor COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-update-interactive.py")
 add_executable(settings-client-probe settings-client-probe.cpp)
 set_target_properties(settings-client-probe PROPERTIES AUTOMOC ON)
 target_link_libraries(settings-client-probe PRIVATE aerial-client Qt6::Test)

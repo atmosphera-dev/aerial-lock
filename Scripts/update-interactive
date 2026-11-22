@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Refresh the complete, signed InterActive source release without fetching."""
+import argparse
+import hashlib
+import io
+import os
+from pathlib import Path, PurePosixPath
+import shutil
+import stat
+import subprocess
+import tarfile
+import tempfile
+
+
+def git(source, *args):
+    return subprocess.check_output(["git", "-C", str(source), *args])
+
+
+def archive_files(archive):
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for entry in tar:
+            path = PurePosixPath(entry.name)
+            if path.is_absolute() or ".." in path.parts or path.parts[0] == ".git":
+                raise ValueError(f"unsafe archive path: {entry.name}")
+            if entry.isdir():
+                continue
+            if not entry.isfile() or entry.name == "VENDOR.md":
+                raise ValueError(f"unsupported archive entry: {entry.name}")
+            # Git tracks the executable bit, not tar's configurable group-write
+            # mask. Materialize the canonical Git regular-file modes.
+            files[entry.name] = (0o755 if entry.mode & 0o111 else 0o644, tar.extractfile(entry).read())
+    if not files:
+        raise ValueError("empty source archive")
+    return files
+
+
+def inventory(root, *, include_notice=False):
+    if not stat.S_ISDIR(root.lstat().st_mode):
+        raise ValueError(f"vendor root is not a directory: {root}")
+    files = {}
+    def unreadable(error):
+        raise error
+
+    for directory, dirs, names in os.walk(root, onerror=unreadable):
+        for entry in (*dirs, *names):
+            path = Path(directory) / entry
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                continue
+            if not stat.S_ISREG(mode):
+                raise ValueError(f"unexpected non-regular vendor file: {path}")
+            name = path.relative_to(root).as_posix()
+            if include_notice or name != "VENDOR.md":
+                files[name] = (stat.S_IMODE(mode), path.read_bytes())
+    return files
+
+
+def verify_complete_tree(source, commit, files):
+    """Export attributes must not hide or rewrite any tracked release input."""
+    tracked = set()
+    for entry in git(source, "ls-tree", "-rz", commit).split(b"\0"):
+        if not entry:
+            continue
+        metadata, name = entry.split(b"\t", 1)
+        mode, kind, blob = metadata.decode().split()
+        name = name.decode("utf-8", errors="surrogateescape")
+        if kind != "blob" or mode not in ("100644", "100755") or name not in files:
+            raise ValueError(f"archive omits or cannot represent tracked input: {name}")
+        actual_mode, payload = files[name]
+        header = f"blob {len(payload)}\0".encode()
+        actual_blob = hashlib.new("sha1" if len(blob) == 40 else "sha256", header + payload).hexdigest()
+        if actual_mode != (int(mode, 8) & 0o777) or actual_blob != blob:
+            raise ValueError(f"archive changed tracked input: {name}")
+        tracked.add(name)
+    if tracked != files.keys():
+        raise ValueError("archive includes untracked inputs")
+
+
+def provenance(tag, commit, tree, digest):
+    return ("# InterActive source provenance\n\n"
+            "Aerial-owned metadata; all other files are the complete upstream git archive.\n\n"
+            f"Tag: {tag}\nCommit: {commit}\nTree: {tree}\nArchive-SHA256: {digest}\n\n"
+            "Source: ~/Projects/interactive.release (signed annotated local release).\n"
+            "License: LGPL-3.0-or-later; see LICENSE.md, COPYING and COPYING.LESSER.\n"
+            "Material Color Utilities: Apache-2.0; see third_party/material-color-utilities/\n"
+            "LICENSE and README.md. No source files are omitted.\n\n"
+            f"Refresh from the Aerial repository: `Scripts/update-interactive {tag}`.\n")
+
+
+def publish(stage, dest, validated):
+    if validated is None:
+        if dest.exists() or dest.is_symlink():
+            raise ValueError("vendor appeared during refresh; no files were replaced")
+        stage.rename(dest)
+        return
+    # This backup must survive the staging context if rollback itself fails.
+    backup = Path(tempfile.mkdtemp(prefix=".interactive-backup-", dir=dest.parent))
+    previous = backup / "previous"
+    try:
+        dest.rename(previous)
+        try:
+            stage.rename(dest)
+        except BaseException:
+            try:
+                previous.rename(dest)
+            except OSError as error:
+                raise ValueError(f"refresh rollback failed; previous vendor retained at {previous}") from error
+            raise
+        # Check the displaced tree, not the newly installed path. Include the
+        # provenance file; changed or unreadable backups are never discarded.
+        try:
+            unchanged = inventory(previous, include_notice=True) == validated
+        except (OSError, ValueError) as error:
+            raise ValueError(f"refresh installed; previous vendor retained at {previous}") from error
+        if not unchanged:
+            raise ValueError(f"refresh installed but previous vendor changed; previous vendor retained at {previous}")
+        shutil.rmtree(previous)
+    finally:
+        if not previous.exists() and not previous.is_symlink():
+            backup.rmdir()
+
+
+def refresh(source, repo, tag):
+    # check-ref-format keeps tag operands out of git's option/revision syntax.
+    subprocess.run(["git", "check-ref-format", f"refs/tags/{tag}"], check=True)
+    tag_object = git(source, "rev-parse", "--verify", f"refs/tags/{tag}").decode().strip()
+    if git(source, "cat-file", "-t", tag_object).strip() != b"tag":
+        raise ValueError("release must be an annotated tag")
+    subprocess.run(["git", "-C", str(source), "verify-tag", tag_object], check=True)
+    commit = git(source, "rev-parse", f"{tag_object}^{{commit}}").decode().strip()
+    tree = git(source, "rev-parse", f"{commit}^{{tree}}").decode().strip()
+    archive = git(source, "-c", "tar.umask=0002", "archive", "--format=tar", commit)
+    digest = hashlib.sha256(archive).hexdigest()
+    files = archive_files(archive)
+    verify_complete_tree(source, commit, files)
+    metadata = provenance(tag, commit, tree, digest)
+    dest = repo / "third_party/interactive"
+    if dest.parent.is_symlink() or dest.is_symlink():
+        raise ValueError("vendor destination is a symlink")
+    validated = None
+    if dest.exists():
+        validated = inventory(dest, include_notice=True)
+        current = dict(validated)
+        notice = current.pop("VENDOR.md", None)
+        recorded = notice[1].decode() if notice else ""
+        if current == files and recorded == metadata:
+            print(f"InterActive {tag}: unchanged ({digest})")
+            return
+        # Never replace unexpected/untracked/manual content. Reject dirty
+        # metadata before interpreting its recorded source identity.
+        if notice is None:
+            raise ValueError("unexpected vendor tree: VENDOR.md missing")
+        if git(repo, "status", "--porcelain", "--untracked-files=all", "--", "third_party/interactive"):
+            raise ValueError("vendor is dirty; commit its current refresh first")
+        fields = dict(line.split(": ", 1) for line in recorded.splitlines()
+                      if ": " in line)
+        old_commit = fields["Commit"]
+        if len(old_commit) not in (40, 64) or any(c not in "0123456789abcdef" for c in old_commit):
+            raise ValueError("invalid vendor commit identity")
+        old = git(source, "archive", "--format=tar", old_commit)
+        old_files = archive_files(old)
+        if git(source, "rev-parse", f"{old_commit}^{{tree}}").decode().strip() != fields["Tree"]:
+            raise ValueError("recorded vendor tree does not match its commit")
+        verify_complete_tree(source, old_commit, old_files)
+        if current != old_files:
+            raise ValueError("vendor contains manual edits")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".interactive-refresh-", dir=dest.parent) as temporary:
+        stage = Path(temporary) / "new"
+        stage.mkdir()
+        for name, (mode, content) in files.items():
+            path = stage / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            path.chmod(mode)
+        (stage / "VENDOR.md").write_text(metadata)
+        if inventory(stage) != files:
+            raise ValueError("staged source verification failed")
+        publish(stage, dest, validated)
+    print(f"InterActive {tag}: {commit}, {len(files)} files, archive SHA256 {digest}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tag")
+    parser.add_argument("--source", type=Path, default=Path.home() / "Projects/interactive.release",
+                        help="local upstream repository (fixture override; never fetched)")
+    args = parser.parse_args()
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        refresh(args.source.resolve(strict=True), repo, args.tag)
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"update-interactive: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

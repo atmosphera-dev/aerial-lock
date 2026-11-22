@@ -1,0 +1,11 @@
+/build/
+/stage/
+/artifacts/
+/.envrc
+/token
+*.local.toml
+*.bak
+/CMakeUserPresets.json
+*.user
+/compile_commands.json
+/build-*/
