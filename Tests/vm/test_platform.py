@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """VM-platform contracts. Execute only inside a disposable project VM."""
+import http.server
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import tarfile
+import threading
 import time
 import unittest
 import subprocess
@@ -201,6 +204,111 @@ class DiskObservation(unittest.TestCase):
             meter.sample()
             self.assertEqual(meter.result()['sampled_peak_growth_bytes'], 400)
             self.assertEqual(meter.result()['minimum_free_bytes'], 600)
+
+
+class FlakyArchive:
+    """Local package server whose first request for every file is dropped unanswered."""
+    def __init__(self, files):
+        self.files, self.requests = files, []
+        owner = self
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                owner.requests.append(self.path)
+                body = owner.files.get(self.path)
+                if body is None:
+                    self.send_error(404)
+                elif owner.requests.count(self.path) == 1:
+                    self.close_connection = True
+                else:
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.prefix = f'http://127.0.0.1:{self.server.server_port}/repos/2026/11/14/'
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class NetworkFetch(unittest.TestCase):
+    def fetch(self, root, prefix, locations):
+        (root / 'cache').mkdir()
+        (root / 'locations').write_text(''.join(line + '\n' for line in locations))
+        script = (Path(__file__).parent / 'provision.sh').read_text().split('cd "$root/provision"', 1)[0]
+        script = script.replace('root=/var/lib/aerial-ci', 'root=$FIXTURE_ROOT')
+        return subprocess.run(['/bin/bash', '-c', script + '\nfetch_packages "$PREFIX" "$FIXTURE_ROOT/cache" '
+                               '"$FIXTURE_ROOT/locations"\n'], timeout=120,
+                              env=dict(os.environ, FIXTURE_ROOT=str(root), PREFIX=prefix))
+
+    def test_dropped_package_transfers_are_retried_into_the_pacman_cache(self):
+        names = ('fftw-3.3.11-1-x86_64.pkg.tar.zst', 'avahi-1:0.9rc5-2-x86_64.pkg.tar.zst')
+        files = {}
+        for index, name in enumerate(names):
+            files[f'/repos/2026/11/14/extra/os/x86_64/{name}'] = f'package {index}'.encode()
+            files[f'/repos/2026/11/14/extra/os/x86_64/{name}.sig'] = f'signature {index}'.encode()
+        with tempfile.TemporaryDirectory() as directory, FlakyArchive(files) as archive:
+            root = Path(directory)
+            locations = [archive.prefix + 'extra/os/x86_64/' + name for name in names]
+            result = self.fetch(root, archive.prefix, locations + ['file:///var/cache/pacman/pkg/cached-1-1-any.pkg.tar.zst'])
+            self.assertEqual(result.returncode, 0, (root / 'provision.log').read_text())
+            for path, body in files.items():
+                self.assertEqual((root / 'cache' / Path(path).name).read_bytes(), body)
+                self.assertEqual(archive.requests.count(path), 2)
+            self.assertEqual(sorted(p.name for p in (root / 'cache').iterdir()), sorted(Path(p).name for p in files))
+            self.assertFalse((root / 'tmp/fetch-packages.curlrc').exists())
+
+    def test_location_outside_the_locked_snapshot_is_refused_before_any_transfer(self):
+        with tempfile.TemporaryDirectory() as directory, FlakyArchive({}) as archive:
+            root = Path(directory)
+            for location in ('https://mirror.example/extra/os/x86_64/fftw-3.3.11-1-x86_64.pkg.tar.zst',
+                             archive.prefix + 'extra/os/x86_64/fftw"\nurl = "http://other/x',
+                             archive.prefix + 'extra/os/x86_64/'):
+                with self.subTest(location=location):
+                    shutil.rmtree(root / 'cache', ignore_errors=True)
+                    result = self.fetch(root, archive.prefix, [location])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('unexpected package location', (root / 'provision.log').read_text())
+                    self.assertEqual(list((root / 'cache').iterdir()), [])
+            self.assertEqual(archive.requests, [])
+
+    def test_failed_input_downloads_are_retried_and_partial_bytes_discarded(self):
+        body = b'official image'
+        class Truncated(io.BytesIO):
+            def read(self, size=-1):
+                raise platform.http.client.IncompleteRead(b'partial')
+        expected = platform.hashlib.sha256(body).hexdigest()
+        with tempfile.TemporaryDirectory() as directory, patch.object(platform.time, 'sleep') as sleep, \
+                patch.object(platform.urllib.request, 'urlopen', side_effect=[
+                    platform.urllib.error.URLError('reset'), Truncated(), io.BytesIO(body)]) as urlopen:
+            destination = Path(directory) / 'official.qcow2'
+            platform.download('https://mirror.example/image.qcow2', destination, expected)
+            self.assertEqual(destination.read_bytes(), body)
+            self.assertEqual(urlopen.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
+            self.assertFalse(destination.with_suffix('.download').exists())
+
+    def test_input_download_failure_is_bounded_and_mismatch_is_never_retried(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(platform.time, 'sleep'):
+            destination = Path(directory) / 'official.qcow2'
+            with patch.object(platform.urllib.request, 'urlopen',
+                              side_effect=platform.urllib.error.URLError('down')) as urlopen, \
+                    self.assertRaises(platform.urllib.error.URLError):
+                platform.download('https://mirror.example/image.qcow2', destination, '0' * 64)
+            self.assertEqual(urlopen.call_count, platform.DOWNLOAD_ATTEMPTS)
+            self.assertFalse(destination.exists())
+            with patch.object(platform.urllib.request, 'urlopen', return_value=io.BytesIO(b'other')) as urlopen, \
+                    self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                platform.download('https://mirror.example/image.qcow2', destination, '0' * 64)
+            self.assertEqual(urlopen.call_count, 1)
 
 
 class ProvisioningObservation(unittest.TestCase):

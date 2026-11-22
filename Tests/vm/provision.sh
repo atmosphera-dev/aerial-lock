@@ -13,13 +13,45 @@ publish_exit() {
     mv -- "$root/provision.exit.pending" "$root/provision.exit"
 }
 trap publish_exit EXIT
+# Pacman abandons its whole transaction after one stalled or reset transfer and
+# never retries. Download the files it resolved (and their signatures) into its
+# cache with bounded retries instead; pacman still verifies each cached
+# package's signature and checksum before installing it.
+fetch_packages() {
+    local prefix=$1 cache=$2 locations=$3 location name config
+    config="$TMPDIR/fetch-packages.curlrc"
+    : > "$config"
+    while IFS= read -r location; do
+        case $location in
+            file://*) continue ;;
+            "$prefix"*) ;;
+            *) printf 'unexpected package location: %s\n' "$location" >&2; return 1 ;;
+        esac
+        name=${location##*/}
+        case $location$name in
+            *[!A-Za-z0-9@._+:/-]* | */) printf 'unexpected package location: %s\n' "$location" >&2; return 1 ;;
+        esac
+        printf 'url = "%s"\noutput = "%s/%s"\n' \
+            "$location" "$cache" "$name" "$location.sig" "$cache" "$name.sig" >> "$config"
+    done < "$locations"
+    if [[ -s $config ]]; then
+        curl --fail --location --no-progress-meter --parallel --parallel-max 4 \
+            --connect-timeout 30 --speed-limit 1024 --speed-time 30 \
+            --retry 8 --retry-all-errors --config "$config"
+    fi
+    rm -f -- "$config"
+}
 cd "$root/provision"
 snapshot=$(python3 -c 'import json; print(json.load(open("image.lock.json"))["snapshot"])')
 # Pacman, not this shell, expands the repository/architecture placeholders.
 # shellcheck disable=SC2016
 printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" > /etc/pacman.d/mirrorlist
 mapfile -t packages < <(python3 -c 'import json; print("\n".join(json.load(open("image.lock.json"))["requested_packages"]))')
-pacman -Syyu --noconfirm --needed "${packages[@]}"
+pacman -Syy --noconfirm
+pacman -Sup --noconfirm --needed --print-format '%l' "${packages[@]}" > "$root/package-locations"
+fetch_packages "https://archive.archlinux.org/repos/$snapshot/" /var/cache/pacman/pkg "$root/package-locations"
+rm -f -- "$root/package-locations"
+pacman -Su --noconfirm --needed "${packages[@]}"
 systemctl enable --now qemu-guest-agent sshd
 install -d /etc/systemd/system/qemu-guest-agent.service.d
 printf '[Service]\nEnvironment=TMPDIR=%s\n' "$TMPDIR" > /etc/systemd/system/qemu-guest-agent.service.d/aerial-ci.conf

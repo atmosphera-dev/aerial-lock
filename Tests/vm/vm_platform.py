@@ -4,6 +4,7 @@ import argparse
 import base64
 import fnmatch
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ import xml.etree.ElementTree as ET
 HERE = Path(__file__).resolve().parent
 BOOT_MARKER = 'AERIAL_CI_READY '
 PROVISION_OBSERVER = 'AERIAL_PROVISION_OBSERVER\n'
+DOWNLOAD_ATTEMPTS = 4
 
 
 class DiskMeter:
@@ -234,13 +236,23 @@ def validate_lock(path, resolving=False):
     return lock
 
 
-def download(url, destination, expected):
+def download(url, destination, expected, attempts=DOWNLOAD_ATTEMPTS):
+    """Fetch a pinned input, retrying failed transfers; only the pinned digest is accepted."""
     destination = Path(destination)
     if not destination.exists():
         pending = destination.with_suffix('.download')
-        with urllib.request.urlopen(url, timeout=60) as response, pending.open('xb') as output:
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
+        for attempt in range(1, attempts + 1):
+            pending.unlink(missing_ok=True)
+            try:
+                with urllib.request.urlopen(url, timeout=60) as response, pending.open('xb') as output:
+                    while chunk := response.read(1024 * 1024):
+                        output.write(chunk)
+                break
+            except (OSError, http.client.HTTPException) as error:
+                if attempt == attempts:
+                    raise
+                print(f'DOWNLOAD_RETRY {attempt}/{attempts} {url}: {error}', file=sys.stderr, flush=True)
+                time.sleep(5 * attempt)
         pending.replace(destination)
     if digest(destination) != expected:
         raise ValueError('download checksum mismatch: ' + str(destination))
