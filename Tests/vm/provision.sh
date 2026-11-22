@@ -13,6 +13,21 @@ publish_exit() {
     mv -- "$root/provision.exit.pending" "$root/provision.exit"
 }
 trap publish_exit EXIT
+# Database refreshes can stall on the same archive as the package transfers.
+# Retrying synchronization cannot partially install or upgrade packages.
+sync_databases() {
+    local attempt
+    for attempt in {1..4}; do
+        if pacman -Syy --noconfirm; then
+            return 0
+        fi
+        if (( attempt == 4 )); then
+            return 1
+        fi
+        printf 'Database synchronization failed; retrying (%s/4)\n' "$attempt" >&2
+        sleep "$((5 * attempt))"
+    done
+}
 # Pacman abandons its whole transaction after one stalled or reset transfer and
 # never retries. Download the files it resolved (and their signatures) into its
 # cache with bounded retries instead; pacman still verifies each cached
@@ -47,7 +62,7 @@ snapshot=$(python3 -c 'import json; print(json.load(open("image.lock.json"))["sn
 # shellcheck disable=SC2016
 printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" > /etc/pacman.d/mirrorlist
 mapfile -t packages < <(python3 -c 'import json; print("\n".join(json.load(open("image.lock.json"))["requested_packages"]))')
-pacman -Syy --noconfirm
+sync_databases
 pacman -Sup --noconfirm --needed --print-format '%l' "${packages[@]}" > "$root/package-locations"
 fetch_packages "https://archive.archlinux.org/repos/$snapshot/" /var/cache/pacman/pkg "$root/package-locations"
 rm -f -- "$root/package-locations"

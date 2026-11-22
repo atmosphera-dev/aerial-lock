@@ -240,6 +240,29 @@ class FlakyArchive:
 
 
 class NetworkFetch(unittest.TestCase):
+    def test_database_sync_retries_are_bounded_and_stop_after_success(self):
+        script = (Path(__file__).parent / 'provision.sh').read_text().split('cd "$root/provision"', 1)[0]
+        script = script.replace('root=/var/lib/aerial-ci', 'root=$FIXTURE_ROOT')
+        for failures, expected_calls, expected_exit in ((0, 1, 0), (2, 3, 0), (4, 4, 1)):
+            with self.subTest(failures=failures), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                stub = '''
+pacman() {
+    printf '%s\\n' "$*" >> "$FIXTURE_ROOT/calls"
+    (( $(wc -l < "$FIXTURE_ROOT/calls") > FAILURES ))
+}
+sleep() { printf '%s\\n' "$*" >> "$FIXTURE_ROOT/sleeps"; }
+sync_databases
+'''
+                result = subprocess.run(['/bin/bash', '-c', script + stub], timeout=10,
+                                        env=dict(os.environ, FIXTURE_ROOT=str(root), FAILURES=str(failures)))
+                self.assertEqual(result.returncode, expected_exit, (root / 'provision.log').read_text())
+                self.assertEqual((root / 'calls').read_text().splitlines(),
+                                 ['-Syy --noconfirm'] * expected_calls)
+                sleeps = root / 'sleeps'
+                self.assertEqual(sleeps.read_text().splitlines() if sleeps.exists() else [],
+                                 [str(5 * attempt) for attempt in range(1, min(failures, 3) + 1)])
+
     def fetch(self, root, prefix, locations):
         (root / 'cache').mkdir()
         (root / 'locations').write_text(''.join(line + '\n' for line in locations))
