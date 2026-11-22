@@ -252,6 +252,8 @@ def download(url, destination, expected, attempts=DOWNLOAD_ATTEMPTS):
                         received += len(chunk)
                     if expected_size is not None and received != int(expected_size):
                         raise OSError(f'incomplete download: received {received} of {expected_size} bytes')
+                if digest(pending) != expected:
+                    raise ValueError('download checksum mismatch: ' + str(destination))
                 break
             except (OSError, http.client.HTTPException) as error:
                 if attempt == attempts:
@@ -259,6 +261,7 @@ def download(url, destination, expected, attempts=DOWNLOAD_ATTEMPTS):
                 print(f'DOWNLOAD_RETRY {attempt}/{attempts} {url}: {error}', file=sys.stderr, flush=True)
                 time.sleep(5 * attempt)
         pending.replace(destination)
+        return
     if digest(destination) != expected:
         raise ValueError('download checksum mismatch: ' + str(destination))
 

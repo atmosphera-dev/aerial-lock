@@ -213,8 +213,8 @@ class DownloadBody(io.BytesIO):
 
 
 class FlakyArchive:
-    """Local package server whose first request for every file is dropped unanswered."""
-    def __init__(self, files, truncate_first=False):
+    """Local archive whose first response for every file is interrupted."""
+    def __init__(self, files, truncate_first=False, declare_length=True):
         self.files, self.requests = files, []
         owner = self
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -226,13 +226,15 @@ class FlakyArchive:
                 elif owner.requests.count(self.path) == 1:
                     if truncate_first:
                         self.send_response(200)
-                        self.send_header('Content-Length', str(len(body)))
+                        if declare_length:
+                            self.send_header('Content-Length', str(len(body)))
                         self.end_headers()
                         self.wfile.write(body[:len(body) // 2])
                     self.close_connection = True
                 else:
                     self.send_response(200)
-                    self.send_header('Content-Length', str(len(body)))
+                    if declare_length:
+                        self.send_header('Content-Length', str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
             def log_message(self, *args):
@@ -357,6 +359,26 @@ sync_databases
                     self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                 platform.download('https://mirror.example/image.qcow2', destination, '0' * 64)
             self.assertEqual(urlopen.call_count, 1)
+
+    def test_unframed_input_is_verified_before_promotion_without_requiring_a_length(self):
+        body = b'complete official image'
+        path = '/repos/2026/11/14/image.qcow2'
+        for truncated in (False, True):
+            with self.subTest(truncated=truncated), tempfile.TemporaryDirectory() as directory, \
+                    FlakyArchive({path: body}, truncate_first=truncated, declare_length=False) as archive, \
+                    patch.object(platform.time, 'sleep'):
+                destination = Path(directory) / 'official.qcow2'
+                if truncated:
+                    with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                        platform.download(archive.prefix + 'image.qcow2', destination,
+                                          platform.hashlib.sha256(body).hexdigest())
+                    self.assertFalse(destination.exists())
+                    self.assertEqual(archive.requests, [path])
+                else:
+                    platform.download(archive.prefix + 'image.qcow2', destination,
+                                      platform.hashlib.sha256(body).hexdigest())
+                    self.assertEqual(destination.read_bytes(), body)
+                    self.assertFalse(destination.with_suffix('.download').exists())
 
 
 class ProvisioningObservation(unittest.TestCase):
