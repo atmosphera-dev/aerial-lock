@@ -542,6 +542,13 @@ failed setup too. Each make and phase prints its duration and build/codegen work
 `python3 Tests/test-build-config.py .` still runs the entire sequence standalone
 and removes its private workspace on exit.
 
+`build-config-flags` changes flags once across all native targets and checks every
+object was rebuilt. The subsequent compiler/launcher permutations target only
+`settings/aerial-settings` and its shared-client dependency: these check the
+Make-to-CMake flag bridge by inspecting recorded compiler flags in both artifacts,
+and assert that unrelated native objects were not rebuilt. This keeps independent
+bridge checks from multiplying full-tree rebuilds as the native inventory grows.
+
 `build-config-lto` rebuilds every native target with LTO. On Arch it sources
 `CFLAGS`, `CXXFLAGS`, `LDFLAGS` and `LTOFLAGS` from `/etc/makepkg.conf`; elsewhere
 it uses a minimal optimized LTO build. This exercises Qt's protected-data-symbol

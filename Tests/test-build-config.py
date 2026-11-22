@@ -238,10 +238,15 @@ def flags(fixture, runtime):
         assert recorded.returncode == 0 and lines and all(" -O1 " in line + " " for line in lines), (artifact, recorded.stdout[-2000:], recorded.stderr)
     launcher = root / "ccache"
     launcher.write_text('#!/bin/sh\nexec "$@"\n'); launcher.chmod(0o700)
+    native_stamps = [p.stat().st_mtime_ns for p in objects]
+    # These permutations exercise the CXX -> CMake bridge, not native flag
+    # invalidation (checked above). Build both consumers through their real
+    # dependency graph without rebuilding every unrelated native target.
     for command, cxxflags in (("g++ -O2", "-frecord-gcc-switches"), (launcher.name + " g++ -O2", "-frecord-gcc-switches"),
                               (launcher.name + " g++", "-O2 -frecord-gcc-switches")):
         with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
-            make(b, "CXX=" + command, "CXXFLAGS=" + cxxflags)
+            make(b, "settings/aerial-settings", "CXX=" + command, "CXXFLAGS=" + cxxflags)
+        assert native_stamps == [p.stat().st_mtime_ns for p in objects], "CMake flag checks rebuilt unrelated native objects"
         for artifact in (tree / "build/client/libaerial-client.a", tree / "settings/aerial-settings"):
             recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
             lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]
