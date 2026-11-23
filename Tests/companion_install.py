@@ -35,7 +35,7 @@ def installed_private_executable(owned, name):
     return installed
 
 
-def check_layout(stage, prefix, libexec, bindir=None):
+def check_layout(stage, prefix, libexec, bindir=None, settings=True, interactive_root=None):
     stage, prefix, libexec = map(Path, (stage, prefix, libexec))
     bindir = Path(bindir) if bindir else prefix / "bin"
     systemd = stage / prefix.relative_to("/") / "lib/systemd/user"
@@ -69,19 +69,54 @@ def check_layout(stage, prefix, libexec, bindir=None):
     text = notice.read_text()
     assert "MIT License" in text and "2015-present Guillaume Louel, and contributors" in text
     assert "THE SOFTWARE IS PROVIDED" in text and "SOFTWARE." in text
-    check_settings_layout(stage, prefix, bindir)
+    if settings:
+        check_settings_layout(stage, prefix, bindir, interactive_root)
+    else:
+        share = stage / prefix.relative_to("/") / "share"
+        private = Path(interactive_root) if interactive_root else prefix / "lib/aerial-lock/interactive"
+        for path in (stage / bindir.relative_to("/") / "aerial-settings",
+                     share / "applications/org.aeriallock.AerialSettings.desktop",
+                     share / "dbus-1/services/org.aeriallock.AerialSettings.service",
+                     systemd / "aerial-tray.service", stage / private.relative_to("/"),
+                     share / "licenses/aerial-lock/interactive",
+                     share / "icons/hicolor/scalable/apps/org.aeriallock.AerialSettings.svg",
+                     share / "icons/hicolor/scalable/status/org.aeriallock.AerialSettings-symbolic.svg"):
+            assert not path.exists(), "core-only install contains settings payload: " + str(path)
     return descriptor
 
 
 THEMES = ("Macintosh", "Windows7", "MaterialYou", "Enfield", "Clockwork")
 
 
-def check_settings_layout(stage, prefix, bindir):
+def check_settings_layout(stage, prefix, bindir, interactive_root=None):
     """Desktop app payload; the tray is installed but never enabled or autostarted."""
     stage, prefix, bindir = map(Path, (stage, prefix, bindir))
     share = stage / prefix.relative_to("/") / "share"
     binary = stage / bindir.relative_to("/") / "aerial-settings"
     assert binary.is_file() and not binary.is_symlink() and binary.stat().st_mode & 0o777 == 0o755, binary
+    private = Path(interactive_root) if interactive_root else prefix / "lib/aerial-lock/interactive"
+    runtime = stage / private.relative_to("/")
+    backing = []
+    for module in ("InterActive", "InterActive/Foundation", "InterActive/Components"):
+        directory = runtime / "qml" / module
+        qmldir = directory / "qmldir"
+        lines = [line.split() for line in qmldir.read_text().splitlines()]
+        def value(key):
+            return next(words[-1] for words in lines if key in words[:-1])
+        links = [path for path in directory.iterdir() if path.is_symlink()]
+        assert len(links) == 1, links
+        library = runtime / "lib" / links[0].name
+        plugin = directory / ("lib" + value("plugin") + ".so")
+        assert library.is_file() and not library.is_symlink(), library
+        assert plugin.is_file() and not plugin.is_symlink(), plugin
+        link = directory / library.name
+        assert link.is_symlink() and not os.path.isabs(os.readlink(link)) and link.resolve() == library.resolve(), link
+        assert (directory / value("typeinfo")).is_file()
+        backing.append(library.name)
+    assert sorted(path.name for path in (runtime / "lib").iterdir()) == sorted(backing)
+    licenses = share / "licenses/aerial-lock/interactive"
+    for name in ("LICENSE.md", "COPYING", "COPYING.LESSER", "material-color-utilities/LICENSE", "material-color-utilities/README.md"):
+        assert (licenses / name).is_file(), name
     assert section(share / "applications/org.aeriallock.AerialSettings.desktop", "Desktop Entry") == {
         "Name": "Aerial", "Type": "Application", "Exec": "aerial-settings", "Icon": "org.aeriallock.AerialSettings",
         "Terminal": "false", "DBusActivatable": "true", "Categories": "Settings;DesktopSettings;"}

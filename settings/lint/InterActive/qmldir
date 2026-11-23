@@ -1,0 +1,35 @@
+module InterActive
+typeinfo interactive_controls.qmltypes
+depends QtQuick
+depends QtQuick.Shapes
+depends InterActive.Foundation
+IAButton 1.0 ../../../third_party/interactive/src/controls/IAButton.qml
+IAToolButton 1.0 ../../../third_party/interactive/src/controls/IAToolButton.qml
+IALabel 1.0 ../../../third_party/interactive/src/controls/IALabel.qml
+IATextField 1.0 ../../../third_party/interactive/src/controls/IATextField.qml
+IAComboBox 1.0 ../../../third_party/interactive/src/controls/IAComboBox.qml
+IAColorWell 1.0 ../../../third_party/interactive/src/controls/IAColorWell.qml
+IAColorPlane 1.0 ../../../third_party/interactive/src/controls/IAColorPlane.qml
+IACheckBox 1.0 ../../../third_party/interactive/src/controls/IACheckBox.qml
+IARadioButton 1.0 ../../../third_party/interactive/src/controls/IARadioButton.qml
+IASwitch 1.0 ../../../third_party/interactive/src/controls/IASwitch.qml
+IATabBar 1.0 ../../../third_party/interactive/src/controls/IATabBar.qml
+IATabButton 1.0 ../../../third_party/interactive/src/controls/IATabButton.qml
+IASlider 1.0 ../../../third_party/interactive/src/controls/IASlider.qml
+IAProgressBar 1.0 ../../../third_party/interactive/src/controls/IAProgressBar.qml
+IASegmentedControl 1.0 ../../../third_party/interactive/src/controls/IASegmentedControl.qml
+IASegmentedButton 1.0 ../../../third_party/interactive/src/controls/IASegmentedButton.qml
+IAItemDelegate 1.0 ../../../third_party/interactive/src/controls/IAItemDelegate.qml
+IAScrollBar 1.0 ../../../third_party/interactive/src/controls/IAScrollBar.qml
+IAScrollView 1.0 ../../../third_party/interactive/src/controls/IAScrollView.qml
+IAPane 1.0 ../../../third_party/interactive/src/controls/IAPane.qml
+IAFrame 1.0 ../../../third_party/interactive/src/controls/IAFrame.qml
+IAToolBar 1.0 ../../../third_party/interactive/src/controls/IAToolBar.qml
+IAToolSeparator 1.0 ../../../third_party/interactive/src/controls/IAToolSeparator.qml
+IAMenu 1.0 ../../../third_party/interactive/src/controls/IAMenu.qml
+IAMenuItem 1.0 ../../../third_party/interactive/src/controls/IAMenuItem.qml
+IAMenuSeparator 1.0 ../../../third_party/interactive/src/controls/IAMenuSeparator.qml
+IAPopup 1.0 ../../../third_party/interactive/src/controls/IAPopup.qml
+IADialog 1.0 ../../../third_party/interactive/src/controls/IADialog.qml
+IADialogButtonBox 1.0 ../../../third_party/interactive/src/controls/IADialogButtonBox.qml
+IAToolTip 1.0 ../../../third_party/interactive/src/controls/IAToolTip.qml

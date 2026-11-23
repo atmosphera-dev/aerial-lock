@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Installed desktop-app qualification from an exact-tree guest test package.
 
-The retained release recipe is copied read-only; only its source/checksum and
-the build tools CMake/Ninja differ in the labelled test copy. A disposable task
+The retained release recipe is copied read-only; source/checksum and the current
+full-app dependency declarations differ in the labelled test copy. A disposable task
 account runs the real user manager with installed vendor units, so tester's
 default profile is never activated.
 """
@@ -21,6 +21,7 @@ from companion_install import check_layout
 from fixture_files import publish
 from settings_fixture_cleanup import Cleanup, access_paths, stop_process
 from owned_instance import digest
+from settings_native_logs import QT_LOG_ENV
 
 APP = Path("/usr/bin/aerial-settings")
 DESKTOP = Path("/usr/share/applications/org.aeriallock.AerialSettings.desktop")
@@ -82,11 +83,13 @@ def build_package(owned, output, packaging):
             target.add(path, arcname=name + "-" + version + "/" + relative, recursive=False)
     text, sources = re.subn(r"^source=\([^\n]*\)$", 'source=("' + archive.name + '")', text, flags=re.M)
     text, sums = re.subn(r"^sha256sums=\([^\n]*\)$", "sha256sums=('" + digest(archive) + "')", text, flags=re.M)
-    # Build-only finding since the shared client subbuild: CMake and Ninja.
-    text, tools = re.subn(r"^makedepends=\('wayland-protocols'\)$", "makedepends=('wayland-protocols' 'cmake' 'ninja')", text, flags=re.M)
-    assert sources == sums == tools == 1
+    from settings_package import with_settings_dependencies
+    text = with_settings_dependencies(text)
+    assert sources == sums == 1
     (test / "PKGBUILD").write_text(text)
     shutil.copy2(original / "aerial-lock.install", test / "aerial-lock.install")
+    test_srcinfo = run(["makepkg", "--printsrcinfo"], cwd=test).stdout
+    (test / ".SRCINFO").write_text(test_srcinfo)
     (test / "TEST-ONLY.md").write_text("Exact task-tree acceptance package, not a release recipe or publication.\n")
     config = Path("/etc/makepkg.conf").read_text()
     for setting, leaf in (("BUILDDIR", "build"), ("PKGDEST", "packages"), ("SRCDEST", "sources"),
@@ -101,7 +104,7 @@ def build_package(owned, output, packaging):
     packages = [Path(p).resolve(strict=True) for p in run([*makepkg, "--packagelist"], cwd=test).stdout.splitlines()]
     main = [p for p in packages if "pkgname = aerial-lock\n" in run(["bsdtar", "-xOf", p, ".PKGINFO"]).stdout]
     assert len(main) == 1
-    declared = re.findall(r"^\tdepends = (.+)$", srcinfo, re.M)
+    declared = re.findall(r"^\tdepends = (.+)$", test_srcinfo, re.M)
     return main[0], declared, digest(archive)
 
 
@@ -166,10 +169,18 @@ def install(owned, output):
     assert verify.returncode == 0 and not verify.stderr.strip(), verify.stderr
     # Every NEEDED library and QML module of the app belongs to a declared dependency.
     needed = re.findall(r"\(NEEDED\)\s+Shared library: \[(.+)\]", run(["readelf", "-d", APP]).stdout)
-    owners = {run(["pacman", "-Qqo", "/usr/lib/" + library]).stdout.strip() for library in needed}
+    loaded = run(["ldd", APP]).stdout
+    assert "not found" not in loaded, loaded
+    resolved = dict(re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)", loaded, re.M))
+    assert set(needed) <= set(resolved), (needed, resolved)
+    owners = {run(["pacman", "-Qqo", Path(resolved[library]).resolve()]).stdout.strip() for library in needed}
     for module in ("QtQuick", "QtQuick/Controls", "QtQuick/Layouts", "QtQuick/Shapes"):
         owners.add(run(["pacman", "-Qqo", "/usr/lib/qt6/qml/" + module + "/qmldir"]).stdout.strip())
-    assert owners <= set(depends), (owners, depends)
+    private = Path("/usr/lib/aerial-lock/interactive")
+    for module in ("InterActive", "InterActive/Foundation", "InterActive/Components"):
+        assert run(["pacman", "-Qqo", private / "qml" / module / "qmldir"]).stdout.strip() == "aerial-lock"
+    declared_names = {re.split(r"[<>=]", dependency, maxsplit=1)[0] for dependency in depends}
+    assert owners <= declared_names | {"aerial-lock"}, (owners, depends)
     observations.update(appLibraryOwners=sorted(owners), declaredDepends=depends)
 
     user = "aerial-ui-install-" + str(os.getpid())
@@ -204,7 +215,8 @@ def install(owned, output):
         task_env = dict(HOME=str(home), USER=user, LOGNAME=user, XDG_RUNTIME_DIR=str(runtime),
                         DBUS_SESSION_BUS_ADDRESS="unix:path=" + str(runtime / "bus"),
                         WAYLAND_DISPLAY=str(Path(env["XDG_RUNTIME_DIR"]) / env["WAYLAND_DISPLAY"]), TMPDIR=str(home / "tmp"),
-                        LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none")
+                        LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none",
+                        QT_NO_XDG_DESKTOP_PORTAL="1", **QT_LOG_ENV)
         # Config and session wiring exist before the manager starts; the
         # installed vendor units themselves are used unmodified.
         for directory in ("tmp", ".config/systemd/user", ".config/aerial-lock", ".config/environment.d"):
@@ -272,7 +284,7 @@ def install(owned, output):
         ctl("disable", "aerial-tray.service")
         observations["reinstall"] = {"before": enabled, "after": reinstalled, "trayEnablementPreserved": True, "serviceNotRestarted": True}
         publish(output / "result.json", json.dumps(observations, indent=2))
-        return {"exactTreePackage": True, "noNewRuntimeDependency": True, "freshInstallNoStart": True, "desktopActivation": True,
+        return {"exactTreePackage": True, "declaredRuntimeDependencies": True, "freshInstallNoStart": True, "desktopActivation": True,
                 "installedPreviews": True, "reinstallNoRestart": True, "trayDefaultOff": True, "output": str(output)}
     finally:
         if created:

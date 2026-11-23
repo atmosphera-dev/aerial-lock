@@ -423,7 +423,8 @@ with tempfile.TemporaryDirectory(prefix="idle-logind-") as directory:
 
         # A private compiled bundle lets unset/empty cases run without /usr.
         tree = root / "compiled-source"
-        shutil.copytree(source, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__", "*.so"))
+        from source_tree import copy_source_tree
+        copy_source_tree(source, tree, "*.so")
         for targets in (("clean",), ("idle/aerial-idle", "supervisor/aerial-lock-supervisor")):
             result = subprocess.run(["make", "-C", str(tree), "DATADIR=" + str(source),
                                      "EMERGENCY_CLIENT=" + str(source / "Tests/supervisor-emergency-stub.py"), *targets],

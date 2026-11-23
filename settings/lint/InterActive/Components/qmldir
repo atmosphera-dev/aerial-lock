@@ -1,0 +1,11 @@
+module InterActive.Components
+typeinfo interactive_components.qmltypes
+depends InterActive.Foundation
+depends InterActive
+IAColorEditor 1.0 ../../../../third_party/interactive/src/components/IAColorEditor.qml
+IAColorDialog 1.0 ../../../../third_party/interactive/src/components/IAColorDialog.qml
+IAFieldRow 1.0 ../../../../third_party/interactive/src/components/IAFieldRow.qml
+IASettingsRow 1.0 ../../../../third_party/interactive/src/components/IASettingsRow.qml
+IAStatusBanner 1.0 ../../../../third_party/interactive/src/components/IAStatusBanner.qml
+IAEmptyState 1.0 ../../../../third_party/interactive/src/components/IAEmptyState.qml
+depends QtQuick

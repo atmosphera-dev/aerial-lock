@@ -3,7 +3,7 @@ FROM docker.io/library/archlinux:base-devel
 ENV TMPDIR=/var/tmp
 
 RUN pacman -Syu --noconfirm --needed \
-        qt6-base qt6-tools qt6-declarative qt6-5compat qt6-svg quickshell mpv git cmake shellcheck \
+        qt6-base qt6-tools qt6-declarative qt6-5compat qt6-svg qt6-shadertools quickshell mpv git cmake shellcheck \
         libarchive ffmpeg \
         ninja python nodejs openssh dbus systemd wayland-protocols libxkbcommon ttf-dejavu sway mesa \
     && useradd --create-home builder \

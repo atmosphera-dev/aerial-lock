@@ -21,12 +21,22 @@ def source_identity(root, freeze):
 
 def binary_paths(root):
     source, build = root / "src/aerial-lock", root / "build/debug/aerial-tests"
-    probes = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe"]
+    probes = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe", "interactive-runtime-probe"]
     for name in ("desktop", "pages", "tray", "units"):
         if (source / ("settings/tests/" + name + ".cpp")).is_file():
             probes.append("settings-" + name + "-probe")
-    return ([source / name for name in ("settings/aerial-settings", "companion/aerial", "cli/aerialctl", "idle/aerial-idle")]
-            + [build / name for name in probes])
+    if (source / "Tests/settings-portal-settings-peer.cpp").is_file():
+        probes.append("settings-portal-settings-peer")
+    outputs = ([source / name for name in ("settings/aerial-settings", "companion/aerial", "cli/aerialctl", "idle/aerial-idle")]
+               + [build / name for name in probes])
+    for owner in (source / "build/settings", build):
+        manifest = owner / "interactive/runtime-files.txt"
+        files = [Path(line) for line in manifest.read_text().splitlines() if line]
+        if (len(files) != 12 or len(set(files)) != 12
+                or any(not path.is_absolute() or not path.resolve().is_relative_to((owner / "interactive").resolve()) for path in files)):
+            raise RuntimeError("invalid target-derived InterActive output inventory: " + str(manifest))
+        outputs.extend([manifest, *files])
+    return outputs
 
 
 def hashes(paths):

@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from source_tree import copy_source_tree
 
 source = Path(sys.argv[1]).resolve(strict=True)
 with tempfile.TemporaryDirectory(prefix="idle-shell-dir-") as directory:
     root = Path(directory)
     tree = root / "source"
-    shutil.copytree(source, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__", "*.so"))
+    copy_source_tree(source, tree, "*.so")
     defaults = json.loads((source / "Config/defaults.json").read_text())
 
     def bundle(name, timeout):

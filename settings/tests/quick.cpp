@@ -1,4 +1,5 @@
 #include "fixture.h"
+#include "interactive-runtime.h"
 #include <QtQuickTest/quicktest.h>
 #include <QQmlEngine>
 #include <QSaveFile>
@@ -103,6 +104,7 @@ public slots:
     }
     void qmlEngineAvailable(QQmlEngine *engine)
     {
+        configureInterActive(*engine);
         auto *harness = new QuickHarness(fixture);
         harness->setParent(engine);
         QQmlEngine::setObjectOwnership(harness, QQmlEngine::CppOwnership);

@@ -39,7 +39,8 @@ def main():
         subprocess.run([str(root / "build/debug/aerial-tests/companion-transfer-probe"), "--export", str(fixture),
                         str(source / "companion/aerial-media-probe")], check=True, timeout=30)
         shell = work / "shell"
-        shutil.copytree(source, shell, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
+        from source_tree import copy_source_tree
+        copy_source_tree(source, shell)
         (shell / "shell.qml").write_text('import QtQuick\nimport Quickshell\nShellRoot { settings.watchFiles: false; '
                                         'Loader { source: "root:/Tests/companion-source-cache.qml" } '
                                         'Timer { interval: 9000; running: true; onTriggered: Qt.exit(2) } }\n')

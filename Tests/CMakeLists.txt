@@ -7,9 +7,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(AERIAL_LOCK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
     "aerial-lock source tree used by the test fixtures")
 get_filename_component(AERIAL_LOCK_SOURCE "${AERIAL_LOCK_SOURCE}" ABSOLUTE)
+option(AERIAL_BUILD_SETTINGS "Build and test the Qt 6.12 settings application" ON)
+if(AERIAL_BUILD_SETTINGS)
+    set(aerial_settings_mode 1)
+else()
+    set(aerial_settings_mode 0)
+endif()
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Test DBus Network)
 add_subdirectory("${AERIAL_LOCK_SOURCE}/common/client" "${CMAKE_CURRENT_BINARY_DIR}/client")
-add_subdirectory("${AERIAL_LOCK_SOURCE}/settings" "${CMAKE_CURRENT_BINARY_DIR}/settings")
+if(AERIAL_BUILD_SETTINGS)
+    add_subdirectory("${AERIAL_LOCK_SOURCE}/settings" "${CMAKE_CURRENT_BINARY_DIR}/settings")
+endif()
 
 add_executable(native-input-probe native-input-probe.cpp)
 target_link_libraries(native-input-probe PRIVATE
@@ -119,7 +127,27 @@ set_tests_properties(surface-input-filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(AERIAL_BUILD_SETTINGS)
 add_test(NAME interactive-vendor COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-update-interactive.py")
+add_executable(settings-portal-settings-peer settings-portal-settings-peer.cpp)
+target_link_libraries(settings-portal-settings-peer PRIVATE Qt6::Core Qt6::DBus)
+add_test(NAME interactive-metadata COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/interactive-metadata.py"
+    "${AERIAL_LOCK_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME interactive-lint COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-interactive-lint.py"
+    "${AERIAL_LOCK_SOURCE}")
+add_test(NAME interactive-packaging COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-package.py")
+add_executable(interactive-runtime-probe interactive-runtime-probe.cpp)
+target_include_directories(interactive-runtime-probe PRIVATE "${AERIAL_LOCK_SOURCE}/settings")
+get_target_property(interactive_definitions aerial-settings-core INTERFACE_COMPILE_DEFINITIONS)
+target_compile_definitions(interactive-runtime-probe PRIVATE ${interactive_definitions})
+target_link_libraries(interactive-runtime-probe PRIVATE Qt6::Quick Qt6::Test)
+foreach(module IN ITEMS interactive_foundation interactive_controls interactive_components)
+    qt_query_qml_module(${module} PLUGIN_TARGET plugin)
+    add_dependencies(interactive-runtime-probe ${plugin})
+endforeach()
+add_test(NAME interactive-runtime COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-interactive-runtime.py"
+    "${AERIAL_LOCK_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}" "$<TARGET_FILE:interactive-runtime-probe>")
+set_tests_properties(interactive-runtime PROPERTIES RUN_SERIAL TRUE)
 add_executable(settings-client-probe settings-client-probe.cpp)
 set_target_properties(settings-client-probe PROPERTIES AUTOMOC ON)
 target_link_libraries(settings-client-probe PRIVATE aerial-client Qt6::Test)
@@ -161,6 +189,7 @@ add_executable(settings-units-probe "${AERIAL_LOCK_SOURCE}/settings/tests/units.
 target_link_libraries(settings-units-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
 add_test(NAME settings-qml COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-quick-probe>" -input "${AERIAL_LOCK_SOURCE}/settings/tests" -import "${AERIAL_LOCK_SOURCE}")
 add_test(NAME settings-fixture-cleanup COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-fixture-cleanup.py")
+endif()
 add_test(NAME auth-handoff-driver
     COMMAND "${Python3_EXECUTABLE}" "${AERIAL_LOCK_SOURCE}/Tests/test-auth-handoff-driver.py")
 add_test(NAME power-actions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-power-actions.py"
@@ -276,7 +305,7 @@ add_test(NAME companion-queue COMMAND dbus-run-session -- "${Python3_EXECUTABLE}
 add_test(NAME companion-owner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-owner.py"
     "${AERIAL_LOCK_SOURCE}/companion/aerial" "${AERIAL_LOCK_SOURCE}")
 add_test(NAME companion-install COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-companion-install.py"
-    "${AERIAL_LOCK_SOURCE}")
+    "${AERIAL_LOCK_SOURCE}" "--build-settings=${aerial_settings_mode}")
 add_executable(companion-http-probe companion-http-probe.cpp
     "${AERIAL_LOCK_SOURCE}/companion/http-operation.cpp" "${CMAKE_CURRENT_BINARY_DIR}/http-operation.moc"
     "${AERIAL_LOCK_SOURCE}/companion/source-resolver.cpp" "${AERIAL_LOCK_SOURCE}/common/content-snapshot.cpp"
@@ -332,6 +361,7 @@ add_test(NAME supervisor-failures
 add_test(NAME script-arguments
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-script-arguments.py"
             "${AERIAL_LOCK_SOURCE}")
+add_test(NAME source-tree COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-source-tree.py")
 # Preserve the original incremental sequence without placing every full rebuild
 # under one CTest deadline. Fixture prerequisites also support focused -R runs.
 set(build_config_workspace "${CMAKE_CURRENT_BINARY_DIR}/build-config-workspace")
@@ -340,8 +370,14 @@ set(build_config_previous)
 foreach(phase IN ITEMS paths dev flags install lto)
     add_test(NAME build-config-${phase}
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-build-config.py"
-                "${AERIAL_LOCK_SOURCE}" --case "${phase}" --workspace "${build_config_workspace}")
+                "${AERIAL_LOCK_SOURCE}" --case "${phase}" --workspace "${build_config_workspace}"
+                "--build-settings=${aerial_settings_mode}")
     set_tests_properties(build-config-${phase} PROPERTIES FIXTURES_SETUP build-config-${phase})
+    if(AERIAL_BUILD_SETTINGS AND phase MATCHES "^(paths|flags|install)$")
+        # Full clean Make now includes the measured 73-second IA/settings build.
+        # These phases own several full rebuilds; core-only budgets are unchanged.
+        set_tests_properties(build-config-${phase} PROPERTIES TIMEOUT 600)
+    endif()
     if(build_config_previous)
         set_tests_properties(build-config-${phase} PROPERTIES FIXTURES_REQUIRED "${build_config_previous}")
     endif()
@@ -350,7 +386,8 @@ foreach(phase IN ITEMS paths dev flags install lto)
 endforeach()
 add_test(NAME build-config-cleanup
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-build-config.py"
-            "${AERIAL_LOCK_SOURCE}" --case cleanup --workspace "${build_config_workspace}")
+            "${AERIAL_LOCK_SOURCE}" --case cleanup --workspace "${build_config_workspace}"
+            "--build-settings=${aerial_settings_mode}")
 set_tests_properties(build-config-cleanup PROPERTIES FIXTURES_CLEANUP "${build_config_fixtures}")
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 add_library(full-caller-faults SHARED full-caller-faults.c)

@@ -5,6 +5,19 @@ Install aerial-lock first (see [installation](../README.md#installation)). Run
 password before changing automatic locking. Keep a TTY or SSH recovery route
 available; see [recovery](../README.md#recovery-last-resort).
 
+## Settings runtime layout
+
+The default build includes settings and requires a coherent Qt >= 6.12.0
+installation. Core-only Qt 6.11 installs must explicitly use `BUILD_SETTINGS=0`
+for both build and install. Do not mix plugins from different Qt versions.
+
+The settings executable resolves only its private InterActive module root,
+relative to its installed location. `PREFIX`, `BINDIR`, `INTERACTIVE_ROOT` and
+`DESTDIR` are supported without `QML_IMPORT_PATH`, `LD_LIBRARY_PATH`, ldconfig
+or installing IA in Qt's own directories. Keep the private root together when
+relocating the package. Source-only descriptors in `settings/lint` are not
+runtime modules and are never installed.
+
 ## Compositor keybinds
 
 Replace any existing binding for the chosen key rather than keeping two lock

@@ -20,6 +20,7 @@ from owned_instance import OwnedInstance, digest, session_identity
 from private_runtime import PrivateRuntime, bus_address, bus_config
 from settings_fixture_cleanup import Cleanup, stop_process
 from settings_build import binary_paths, quick_test_inputs, verify_build
+from settings_native_logs import NativeLogGate, QT_LOG_ENV, qt_version, require_quiet
 
 
 def run(argv, **kwargs):
@@ -132,7 +133,7 @@ def native(args):
             while not (runtime / "bus").exists():
                 assert bus.poll() is None and time.monotonic() < deadline
                 time.sleep(.03)
-            env.update(DBUS_SESSION_BUS_ADDRESS=bus_address(runtime / "bus"), AERIAL_LOCK_SHELL=str(source))
+            env.update(DBUS_SESSION_BUS_ADDRESS=bus_address(runtime / "bus"), AERIAL_LOCK_SHELL=str(source), QT_NO_XDG_DESKTOP_PORTAL="1")
             for key in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
                 env[key] = str(output / key)
             user = Path(env["XDG_CONFIG_HOME"]) / "aerial-lock/config.json"
@@ -145,7 +146,8 @@ def native(args):
             time.sleep(.5)
             first = capture(window, "downloads")
             forwarded = run([str(binary)], env=env, capture_output=True, text=True)
-            assert not forwarded.stderr and len([w for w in windows() if w["pid"] == app.pid]) == 1
+            require_quiet(forwarded.stderr, qt_version())
+            assert len([w for w in windows() if w["pid"] == app.pid]) == 1
             visual = owned.check_binary(owned.paths["build"] / "settings-visual-probe")
             peer = spawn([str(visual), "--focus-peer"], "focus-peer", env)
             peer_window = wait_window(peer, "org.aeriallock.SettingsFocusWitness")
@@ -153,7 +155,7 @@ def native(args):
             assert next(w for w in windows() if w["pid"] == peer.pid)["is_focused"]
             # Compositor spawning supplies a real activation token, unlike an
             # unrelated SSH process trying to steal focus without user context.
-            forwarded_env = [key + "=" + env[key] for key in ("DBUS_SESSION_BUS_ADDRESS", "AERIAL_LOCK_SHELL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMPDIR")]
+            forwarded_env = [key + "=" + env[key] for key in ("DBUS_SESSION_BUS_ADDRESS", "AERIAL_LOCK_SHELL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMPDIR", "QT_NO_XDG_DESKTOP_PORTAL", *QT_LOG_ENV)]
             run(["niri", "msg", "action", "spawn", "--", "/usr/bin/env", *forwarded_env, str(binary)], env=env, capture_output=True)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -203,7 +205,7 @@ def native(args):
             assert daemon.poll() is None, "closing settings stopped service"
             for handle in handles:
                 handle.flush()
-            assert not (output / "app.log").read_text(), (output / "app.log").read_text()
+            require_quiet((output / "app.log").read_text(), qt_version())
             captures = [first, second, unavailable, recovered]
             if args.case == "visuals":
                 for palette in ("dark", "light"):
@@ -211,13 +213,13 @@ def native(args):
                     path = output / ("downloads-" + palette + ".png")
                     probe = run(probe_command(source, visual, palette, path), env=env, capture_output=True, text=True)
                     publish(output / ("visual-" + palette + ".log"), probe.stdout + probe.stderr)
-                    assert not probe.stdout + probe.stderr, "unexpected visual probe log"
+                    require_quiet(probe.stdout + probe.stderr, qt_version())
                     assert path.is_file()
                     captures.append(str(path))
                     pages = output / ("pages-" + palette); pages.mkdir()
                     probe = run(probe_command(source, visual, "--pages", palette, pages), env=env, capture_output=True, text=True)
                     publish(output / ("visual-pages-" + palette + ".log"), probe.stdout + probe.stderr)
-                    assert not probe.stdout + probe.stderr, "unexpected page visual probe log"
+                    require_quiet(probe.stdout + probe.stderr, qt_version())
                     captures += sorted(str(p) for p in pages.glob("*.png"))
             result = {"window": window, "forwarded": True, "raised_from_peer": True, "natural_exit": 0, "service_survives": True, "captures": captures, "source_identity": owned.record["current_source_identity"]}
             publish(output / "result.json", json.dumps(result, indent=2))
@@ -241,7 +243,13 @@ def main():
     if Path(os.environ.get("TMPDIR", "")).resolve() != args.root / "tmp":
         raise RuntimeError("TMPDIR does not name the guest's disk-backed workspace/tmp")
     result_path = args.root / "results" / ("settings-" + args.case + ".json")
+    # Child Qt processes must not route around redirected logs via journald.
+    # Also audit the full corresponding journal, including disposable accounts.
+    os.environ.update(QT_LOG_ENV)
+    gate = None
     try:
+        if args.case != "prepare":
+            gate = NativeLogGate(args.root, args.case)
         if args.case == "prepare":
             result = prepare(args)
         elif args.case in ("cold-load", "visuals"):
@@ -276,10 +284,22 @@ def main():
                 result = {"nativeProductionControls": True, "cliReadback": True, "draftOutageAndRepair": True, "quickTestTextInputProtocol": "zwp_text_input_v1", "testInputs": test_inputs, "output": str(output)}
         else:
             raise RuntimeError("case belongs to a later implementation phase: " + args.case)
+        if gate:
+            audit, gate = gate, None
+            logs = audit.finish()
+            if logs["unexpected"]: raise RuntimeError("unexpected native warnings: " + json.dumps(logs["unexpected"]))
+            result["logs"] = logs
         publish(result_path, json.dumps({"case": args.case, "exit": 0, "observations": result}, indent=2))
         print("SETTINGS_" + args.case.upper().replace("-", "_") + "_PASS " + str(result_path))
     except Exception as error:
-        publish(result_path, json.dumps({"case": args.case, "exit": 1, "error": str(error)}, indent=2))
+        failure = {"case": args.case, "exit": 1, "error": str(error)}
+        cleanup = Cleanup()
+        if gate:
+            cleanup("collect native logs", gate.finish)
+            if cleanup.failures:
+                failure["logError"] = cleanup.failures[0]
+        cleanup("write failure result", lambda: publish(result_path, json.dumps(failure, indent=2)))
+        cleanup.finish()
         raise
 
 

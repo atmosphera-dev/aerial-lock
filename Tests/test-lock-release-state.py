@@ -16,7 +16,8 @@ class ReleaseState(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="release-state-") as directory:
             root = Path(directory)
             shell = root / "shell"
-            shutil.copytree(source, shell, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
+            from source_tree import copy_source_tree
+            copy_source_tree(source, shell)
             (shell / "ProductionShell.qml").write_bytes((source / "shell.qml").read_bytes())
             shutil.copyfile(source / "Tests/lock-release-state-shell.qml", shell / "shell.qml")
             for mode in ("none", "once", "twice", "late", "held", "secure-held"):

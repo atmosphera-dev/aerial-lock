@@ -42,3 +42,13 @@ SOFTWARE.
 
 Community sources remain explicit opt-ins. AerialCommunity's source-specific
 media licenses are not replaced by Aerial's repository MIT license.
+
+## InterActive
+
+The settings app privately links InterActive 0.1.1 under LGPL-3.0-or-later.
+Its complete signed-tag source, including the pinned Material Color Utilities
+subset under Apache-2.0, is in `third_party/interactive`. See its `VENDOR.md`
+for tag, commit, tree and archive identities, `LICENSE.md` for provenance, and
+`COPYING` / `COPYING.LESSER` for license terms. The installed package includes
+these texts and the MCU license/README under
+`share/licenses/aerial-lock/interactive`. This does not relicense Aerial or media.

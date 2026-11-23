@@ -15,7 +15,8 @@ class LockStateLog(unittest.TestCase):
         source = Path(__file__).resolve().parent.parent
         cls.scratch = tempfile.TemporaryDirectory(prefix="lock-state-")
         shell = Path(cls.scratch.name) / "shell"
-        shutil.copytree(source, shell, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
+        from source_tree import copy_source_tree
+        copy_source_tree(source, shell)
         (shell / "shell.qml").write_text(
             'import QtQuick\nimport Quickshell\nShellRoot { settings.watchFiles: false; '
             'Loader { source: "root:/Tests/lock-state-shell.qml" } }\n')

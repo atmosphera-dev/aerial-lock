@@ -16,8 +16,9 @@ timeout 5m make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 timeout 2m cmake -S Tests -B /work/build -G Ninja -DAERIAL_LOCK_SOURCE="$PWD"
 timeout 5m cmake --build /work/build
 # The render-failure case needs a real rendering platform. Owned-instance is
-# not registered without an operator-supplied VM manifest.
-timeout 15m ctest --test-dir /work/build --output-on-failure --timeout 300 \
+# not registered without an operator-supplied VM manifest. The settings build
+# fixtures repeat compiler and private-runtime/install layouts at two CPUs.
+timeout 35m ctest --test-dir /work/build --output-on-failure --timeout 300 \
     -E '^media-fallback-render$'
 timeout 2m node --test Tests/*.test.cjs
 

@@ -11,7 +11,8 @@ from private_runtime import PrivateRuntime, bus_config
 with PrivateRuntime("bus") as runtime:
     config = runtime / "bus.conf"
     config.write_text(bus_config(runtime / "bus"))
-    result = subprocess.run(["dbus-run-session", "--config-file=" + str(config), "--", *sys.argv[1:]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ)
+    environment = dict(os.environ, QT_NO_XDG_DESKTOP_PORTAL="1")
+    result = subprocess.run(["dbus-run-session", "--config-file=" + str(config), "--", *sys.argv[1:]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment)
 text = result.stdout.decode(errors="replace")
 print(text, end="")
 sys.exit(result.returncode or int(bool(re.search(r"^QWARN\s*:|QQmlApplicationEngine failed|ReferenceError:|TypeError:", text, re.M))))

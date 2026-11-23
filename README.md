@@ -33,8 +33,11 @@ frame decodes. The headless `aerial` content service also requires
 Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
 `aerialctl` and the compatible `aerial-lock-fetch` command use that service;
 they do not require curl, Python or tar. Python remains test tooling.
-The Aerial settings app uses Qt6 Widgets (`qt6-base`) and Qt Quick, Controls
-and Shapes (`qt6-declarative`). Its choosers and links use the desktop's
+The Aerial settings app requires Qt >= 6.12.0, including Widgets (`qt6-base`),
+Quick, Controls and Shapes (`qt6-declarative`), and SVG (`qt6-svg`). Its private
+InterActive runtime is built from the complete pinned source in this tree;
+no system InterActive package or global import-path setting is needed.
+Its choosers and links use the desktop's
 `xdg-desktop-portal` when one is present; nothing else needs it.
 
 Building requires a C/C++ compiler, Make, CMake, Ninja, pkg-config, Qt6
@@ -44,6 +47,13 @@ wayland-protocols (including `wayland-scanner`). On Arch these are provided by
 `qt6-declarative`, `pam`, `wayland`,
 `wayland-protocols`, `libxkbcommon`, `libarchive` and `ffmpeg`; Git is needed
 to build from a clone. Arch's `qdbusxml2cpp` is supplied by `qt6-base`.
+The full build also needs `qt6-svg` and `qt6-shadertools` >= 6.12.0.
+The full Arch package includes the settings app and needs these Qt dependencies;
+its release recipe must be updated before packaging this integration.
+For an explicit core-only build on Qt 6.11, use `make BUILD_SETTINGS=0` and
+`make BUILD_SETTINGS=0 install`. This excludes the settings executable, private
+InterActive runtime, desktop activation, icons and tray unit, not the content
+service, CLI or idle helper. The default build never silently drops settings.
 
 With the default `PREFIX=/usr`, installation includes `aerial-lock`,
 `aerial-lock-supervisor`, `aerial-unlock`, `aerial`, `aerialctl`, `aerial-lock-fetch` and
@@ -61,6 +71,11 @@ not start or restart it in running sessions. The Aerial settings app adds
 under `hicolor/scalable`, theme previews and `aerial-tray.service`, which is
 also **not enabled**. `PREFIX` and `DESTDIR` select
 the layout; Arch packaging uses `LIBEXECDIR=/usr/lib/aerial-lock`.
+Settings libraries and QML modules live under
+`/usr/lib/aerial-lock/interactive/{lib,qml}`. `INTERACTIVE_ROOT` overrides that
+private root; `BINDIR` and `PREFIX` overrides retain relative lookup and RUNPATH.
+InterActive licenses are installed under
+`share/licenses/aerial-lock/interactive` relative to `PREFIX`.
 
 ### First use and automatic content
 

@@ -52,10 +52,17 @@ def tray(owned, output):
     env = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none")
     env.pop("QT_QPA_PLATFORM", None)
     owned.check_session(owned.record["session"], env)
+    # This SNI-only host runs on a deliberately portal-free private bus. Qt 6.12
+    # otherwise registers with its absent host portal and emits a QPA warning.
+    # Scope the documented capability opt-out to this private fixture, including
+    # its apps. Real desktop/portal qualification keeps the real capability.
+    env["QT_NO_XDG_DESKTOP_PORTAL"] = "1"
+    def host_environment():
+        return dict(env, QT_NO_XDG_DESKTOP_PORTAL="1")
     processes, handles, hosts = [], [], []
     leases = {}
-    def run(argv, **kwargs):
-        return subprocess.run(argv, env=env, check=True, timeout=30, **kwargs)
+    def run(argv, environment=None, **kwargs):
+        return subprocess.run(argv, env=env if environment is None else environment, check=True, timeout=30, **kwargs)
     def wait(read, label, seconds=20):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
@@ -64,9 +71,9 @@ def tray(owned, output):
                 return value
             time.sleep(.08)
         raise RuntimeError("not observed: " + label)
-    def spawn(argv, name):
+    def spawn(argv, name, environment=None):
         handle = (output / (name + ".log")).open("wb"); handles.append(handle)
-        process = subprocess.Popen(argv, env=env, stdout=handle, stderr=handle); processes.append(process)
+        process = subprocess.Popen(argv, env=env if environment is None else environment, stdout=handle, stderr=handle); processes.append(process)
         return process
     def windows():
         return json.loads(run(["niri", "msg", "-j", "windows"], capture_output=True, text=True).stdout)
@@ -82,9 +89,9 @@ def tray(owned, output):
         if method == "quit":
             lease = leases.pop(host_file, None)
             if lease is not None: lease.finish()
-        return run(["qs", "-p", str(host_file), "ipc", "call", "proof", method, *map(str, args)], capture_output=True, text=True).stdout.strip()
+        return run(["qs", "-p", str(host_file), "ipc", "call", "proof", method, *map(str, args)], environment=host_environment(), capture_output=True, text=True).stdout.strip()
     def lease_host(host, path):
-        environment = dict(env)
+        environment = host_environment()
         leases[path] = HostLease(host, lambda: subprocess.run(["qs", "-p", str(path), "ipc", "call", "proof", "keepalive"],
             env=environment, capture_output=True, check=True, timeout=10))
     def snap(name):
@@ -140,6 +147,9 @@ def tray(owned, output):
             spawn(["dbus-daemon", "--nofork", "--nopidfile", "--config-file=" + str(conf)], "bus")
             wait(lambda: (runtime / "bus").exists(), "private bus")
             env.update(DBUS_SESSION_BUS_ADDRESS=bus_address(runtime / "bus"), DBUS_SYSTEM_BUS_ADDRESS=bus_address(runtime / "bus"), AERIAL_LOCK_SHELL=str(source))
+            peer = owned.check_binary(owned.paths["build"] / "settings-portal-settings-peer")
+            spawn([str(peer)], "settings-peer")
+            wait(lambda: (output / "settings-peer.log").read_text().strip() == "SETTINGS_PEER_READY", "private Settings capability")
             for key in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
                 env[key] = str(output / key)
             config = Path(env["XDG_CONFIG_HOME"]) / "aerial-lock/config.json"
@@ -152,7 +162,7 @@ def tray(owned, output):
                 env.update(QT_QPA_PLATFORMTHEME="gtk3", GTK_THEME="Adwaita:dark" if palette == "dark" else "Adwaita")
                 host_file = output / ("host-" + palette + ".qml")
                 publish(host_file, (source / "Tests/settings-tray-host.qml").read_text())
-                host = spawn(["qs", "-p", str(host_file)], "host-" + palette); hosts.append((host, host_file))
+                host = spawn(["qs", "-p", str(host_file)], "host-" + palette, environment=host_environment()); hosts.append((host, host_file))
                 wait(lambda: info().get("count") == 0, "real Quickshell watcher")
                 lease_host(host, host_file)
                 app = spawn([str(binary), "--tray"], "app-" + palette)
@@ -167,7 +177,7 @@ def tray(owned, output):
                     # Host/watcher replacement while the tray stays wanted re-registers once.
                     call("quit"); assert host.wait(timeout=10) == 0
                     assert app.poll() is None
-                    host = spawn(["qs", "-p", str(host_file)], "host-dark-replacement"); hosts.append((host, host_file))
+                    host = spawn(["qs", "-p", str(host_file)], "host-dark-replacement", environment=host_environment()); hosts.append((host, host_file))
                     wait(lambda: info().get("count") == 1 and len(info().get("entries", [])) == 7 and info().get("iconReady"), "re-registration with a replacement watcher")
                     lease_host(host, host_file)
                     observations.append({"replacementHost": info()})
@@ -276,7 +286,7 @@ def tray(owned, output):
             event.set()
         for host, path in hosts:
             if host.poll() is None:
-                cleanup("host quit", lambda path=path: subprocess.run(["qs", "-p", str(path), "ipc", "call", "proof", "quit"], env=env, capture_output=True, check=True, timeout=10))
+                cleanup("host quit", lambda path=path: subprocess.run(["qs", "-p", str(path), "ipc", "call", "proof", "quit"], env=host_environment(), capture_output=True, check=True, timeout=10))
                 cleanup("host wait", lambda host=host: host.wait(timeout=100)) # Natural watchdog exit if IPC could not connect.
         for process in reversed(processes):
             if process is pointer and process.poll() is None:

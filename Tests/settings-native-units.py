@@ -10,6 +10,7 @@ import time
 
 from fixture_files import publish
 from settings_fixture_cleanup import Cleanup, HostLease, access_paths, stop_process
+from settings_native_logs import QT_LOG_ENV, qt_version, require_quiet
 
 
 def unit_argument(value):
@@ -104,7 +105,8 @@ def units(owned, output):
         result_file = home / (name + ".json")
         tested = as_user([probe, source, result_file, mode], capture_output=True, text=True, timeout=120, check=False)
         publish(output / (name + ".log"), tested.stdout + tested.stderr)
-        assert tested.returncode == 0 and not tested.stdout + tested.stderr, (name, tested.returncode, tested.stdout + tested.stderr)
+        assert tested.returncode == 0, (name, tested.returncode, tested.stdout + tested.stderr)
+        require_quiet(tested.stdout + tested.stderr, qt_version())
         receipt = json.loads(as_user(["cat", result_file], capture_output=True, text=True).stdout)
         captures = []
         for image in receipt.get("captures", []):
@@ -131,7 +133,8 @@ def units(owned, output):
                         DBUS_SESSION_BUS_ADDRESS="unix:path=" + str(runtime / "bus"),
                         WAYLAND_DISPLAY=str(Path(env["XDG_RUNTIME_DIR"]) / env["WAYLAND_DISPLAY"]),
                         AERIAL_LOCK_SHELL=str(source), TMPDIR=str(home / "tmp"),
-                        LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none")
+                        LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none",
+                        QT_NO_XDG_DESKTOP_PORTAL="1", **QT_LOG_ENV)
         # Everything the user manager reads at startup exists before it starts:
         # no default-source service and no installed vendor binary may run.
         units_dir = home / ".config/systemd/user"

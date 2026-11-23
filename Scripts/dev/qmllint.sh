@@ -32,7 +32,7 @@ if [[ ! "$QMLLINT_VERSION" =~ ^qmllint\ [6-9]\. ]]; then
 fi
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMPORT_OPTS=(-I "$REPO_ROOT" -I /usr/lib/qt6/qml/ -I /usr/lib/qt6/qml/Quickshell/)
+IMPORT_OPTS=(-I "$REPO_ROOT" -I "$REPO_ROOT/settings/lint" -I /usr/lib/qt6/qml/ -I /usr/lib/qt6/qml/Quickshell/)
 
 # A find root is a literal pathname, never an option or an expression (even
 # names such as -delete, '(' or '!'). Keep filenames NUL-delimited through
@@ -49,14 +49,30 @@ done
 file_list=$(mktemp)
 trap 'rm -f -- "$file_list"' EXIT
 find "${roots[@]}" -name '*.qml' -type f ! -path './.git/*' -print0 | sort -z > "$file_list"
+# Out-of-source CMake output is derived, regardless of its chosen directory
+# name. This also classifies module copies reached through development links.
+is_cmake_output() {
+    local directory home
+    directory=$(dirname -- "$1")
+    while [[ "$directory" == "$REPO_ROOT"/* ]]; do
+        if [[ -f "$directory/CMakeCache.txt" && -d "$directory/CMakeFiles" ]]; then
+            home=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$directory/CMakeCache.txt")
+            [[ -z "$home" || "$home" == "$directory" ]] || return 0
+        fi
+        directory=$(dirname -- "$directory")
+    done
+    return 1
+}
 all_files=()
 while IFS= read -r -d '' file; do
     # Vendored QML is qualified by its upstream project, not Aerial's source
     # lint. Resolve each candidate so absolute roots and explicit files obey
     # the same ownership boundary as a recursive '.' invocation.
-    case "$(realpath -- "$file")" in
+    canonical=$(realpath -- "$file")
+    case "$canonical" in
         "$REPO_ROOT"/third_party/*) continue ;;
     esac
+    is_cmake_output "$canonical" && continue
     all_files+=("$file")
 done < "$file_list"
 

@@ -1,5 +1,6 @@
 #include "window-controller.h"
 #include "settings-controller.h"
+#include "interactive-runtime.h"
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QTimer>
@@ -17,6 +18,7 @@ void WindowController::open(const QVariantMap &platform, int page)
     if (closing) { ++generation; qDeleteAll(engine->rootObjects()); engine.reset(); closing = false; }
     if (!engine) {
         engine = std::make_unique<QQmlApplicationEngine>();
+        configureInterActive(*engine);
         engine->setInitialProperties({{"controller", QVariant::fromValue(&settings)}});
         engine->load(QUrl("qrc:/settings/qml/Main.qml"));
         if (engine->rootObjects().isEmpty()) { engine.reset(); emit closed(); return; }

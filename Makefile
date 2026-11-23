@@ -5,6 +5,13 @@ LIBEXECDIR ?= $(PREFIX)/libexec/aerial-lock
 AUTH_HELPER = $(LIBEXECDIR)/aerial-lock-auth
 EMERGENCY_CLIENT = $(LIBEXECDIR)/aerial-lock-emergency
 PLUGINROOT ?= $(PREFIX)/lib/aerial-lock/qt-plugins
+INTERACTIVE_ROOT ?= $(PREFIX)/lib/aerial-lock/interactive
+BUILD_SETTINGS ?= 1
+ifeq ($(BUILD_SETTINGS),1)
+SETTINGS_TARGET := settings/aerial-settings
+else ifneq ($(BUILD_SETTINGS),0)
+$(error BUILD_SETTINGS must be 0 or 1)
+endif
 PAMDIR ?= /etc/pam.d
 CONFDIR ?= $(DATADIR)/Config
 I18NDIR ?= $(CONFDIR)/i18n
@@ -61,7 +68,7 @@ INPUT_PLUGIN := native/qt-plugins/generic/libAerialLockSurfaceInput.so
 
 .PHONY: all install uninstall dev clean pam-limits build-flags force-native-config
 
-all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial companion/aerial-media-probe cli/aerialctl settings/aerial-settings
+all: pam-limits build-flags recovery/aerial-unlock supervisor/aerial-lock-supervisor idle/aerial-idle native/aerial-lock-auth emergency/aerial-lock-emergency $(GUARD_PLUGIN) $(INPUT_PLUGIN) companion/aerial companion/aerial-media-probe cli/aerialctl $(SETTINGS_TARGET)
 
 # Let the compiler own the complete transitive header graph. Private flags do
 # not leak into shared code-generation/config prerequisites or link commands.
@@ -310,10 +317,25 @@ $(OBJDIR)/aerialctl.o: cli/aerialctl.cpp $(CLIENT_ARCHIVE) common/config-documen
 cli/aerialctl: $(CLI_OBJS) $(CLIENT_ARCHIVE)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(QT_PIC_FLAGS) -o $@ $(CLI_OBJS) $(CLIENT_ARCHIVE) $$(pkg-config --libs Qt6Core Qt6DBus)
 
-settings/aerial-settings: native/shell-dir.h $(CLIENT_ARCHIVE) $(shell find settings -type f ! -name aerial-settings) $(OBJDIR)/native-config
-	cmake -S settings -B "$(SETTINGS_BUILD)" -G Ninja -DCMAKE_CXX_COMPILER="$(CMAKE_CXX_COMPILER)" -DCMAKE_CXX_COMPILER_LAUNCHER="$(CMAKE_CXX_LAUNCHER)" -DCMAKE_CXX_FLAGS="$(CMAKE_CXX_ARGUMENTS) $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS)" -DCMAKE_EXE_LINKER_FLAGS="$(LDFLAGS)" -DAERIAL_COMPANION_DATADIR="$(DATADIR)" -DAERIAL_CLIENT_ARCHIVE="$(abspath $(CLIENT_ARCHIVE))"
+define SETTINGS_CONFIG
+$(NATIVE_CONFIG)
+INTERACTIVE_ROOT=$(INTERACTIVE_ROOT)
+endef
+
+$(OBJDIR)/settings-config: force-native-config | $(OBJDIR)
+	$(file >$@.tmp,$(SETTINGS_CONFIG))
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
+
+ifeq ($(BUILD_SETTINGS),1)
+settings/aerial-settings: native/shell-dir.h $(CLIENT_ARCHIVE) $(shell find settings third_party/interactive -type f ! -name aerial-settings) $(OBJDIR)/settings-config
+	cmake -S settings -B "$(SETTINGS_BUILD)" -G Ninja -DCMAKE_CXX_COMPILER="$(CMAKE_CXX_COMPILER)" -DCMAKE_CXX_COMPILER_LAUNCHER="$(CMAKE_CXX_LAUNCHER)" -DCMAKE_CXX_FLAGS="$(CMAKE_CXX_ARGUMENTS) $(CPPFLAGS) $(CXXFLAGS) $(QT_PIC_FLAGS)" -DCMAKE_EXE_LINKER_FLAGS="$(LDFLAGS)" -DCMAKE_SHARED_LINKER_FLAGS="$(LDFLAGS)" -DCMAKE_MODULE_LINKER_FLAGS="$(LDFLAGS)" -DAERIAL_COMPANION_DATADIR="$(DATADIR)" -DAERIAL_CLIENT_ARCHIVE="$(abspath $(CLIENT_ARCHIVE))" -DCMAKE_INSTALL_PREFIX="$(PREFIX)" -DAERIAL_SETTINGS_BINDIR="$(BINDIR)" -DAERIAL_INTERACTIVE_ROOT="$(INTERACTIVE_ROOT)"
 	cmake --build "$(SETTINGS_BUILD)" -j2
 	cp "$(SETTINGS_BUILD)/aerial-settings" $@
+	ln -sfn "$(abspath $(SETTINGS_BUILD)/interactive)" settings/interactive
+else
+settings/aerial-settings:
+	@echo "Settings explicitly disabled by BUILD_SETTINGS=0" >&2; exit 1
+endif
 
 $(OBJDIR)/moc_companion_adaptor.cpp: $(OBJDIR)/companion_adaptor.h
 	/usr/lib/qt6/moc $< -o $@
@@ -427,12 +449,14 @@ install: all
 	install -m 644 Config/i18n/en.json "$(DESTDIR)$(I18NDIR)/"
 	install -m 755 aerial-lock "$(DESTDIR)$(BINDIR)/aerial-lock"
 	install -m 755 cli/aerialctl "$(DESTDIR)$(BINDIR)/aerialctl"
-	install -m 755 settings/aerial-settings "$(DESTDIR)$(BINDIR)/aerial-settings"
+ifeq ($(BUILD_SETTINGS),1)
+	DESTDIR="$(DESTDIR)" cmake --install "$(SETTINGS_BUILD)" --component aerial-settings
 	install -d "$(DESTDIR)$(PREFIX)/share/applications"
 	install -m 644 data/org.aeriallock.AerialSettings.desktop "$(DESTDIR)$(PREFIX)/share/applications/"
 	install -d "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps" "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/status"
 	install -m 644 settings/assets/org.aeriallock.AerialSettings.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/"
 	install -m 644 settings/assets/aerial-symbolic.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/status/org.aeriallock.AerialSettings-symbolic.svg"
+endif
 	install -m 755 Scripts/aerial-lock-fetch "$(DESTDIR)$(BINDIR)/aerial-lock-fetch"
 	install -m 755 recovery/aerial-unlock "$(DESTDIR)$(BINDIR)/aerial-unlock"
 	install -m 755 supervisor/aerial-lock-supervisor "$(DESTDIR)$(BINDIR)/aerial-lock-supervisor"
@@ -440,8 +464,10 @@ install: all
 	install -d "$(DESTDIR)$(PREFIX)/lib/systemd/user" "$(DESTDIR)$(DATADIR)/examples"
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-idle.service.in > $(OBJDIR)/aerial-idle.service
 	install -m 644 $(OBJDIR)/aerial-idle.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
+ifeq ($(BUILD_SETTINGS),1)
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial-tray.service.in > $(OBJDIR)/aerial-tray.service
 	install -m 644 $(OBJDIR)/aerial-tray.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
+endif
 	sed 's|@BINDIR@|$(BINDIR)|g' systemd/aerial.service.in > $(OBJDIR)/aerial.service
 	install -m 644 $(OBJDIR)/aerial.service "$(DESTDIR)$(PREFIX)/lib/systemd/user/"
 	install -d "$(DESTDIR)$(PREFIX)/lib/systemd/user/default.target.wants"
@@ -456,8 +482,10 @@ install: all
 	install -d "$(DESTDIR)$(PREFIX)/share/dbus-1/services"
 	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.Aerial1.service.in > $(OBJDIR)/org.aeriallock.Aerial1.service
 	install -m 644 $(OBJDIR)/org.aeriallock.Aerial1.service "$(DESTDIR)$(PREFIX)/share/dbus-1/services/"
+ifeq ($(BUILD_SETTINGS),1)
 	sed 's|@BINDIR@|$(BINDIR)|g' dbus/org.aeriallock.AerialSettings.service.in > $(OBJDIR)/org.aeriallock.AerialSettings.service
 	install -m 644 $(OBJDIR)/org.aeriallock.AerialSettings.service "$(DESTDIR)$(PREFIX)/share/dbus-1/services/"
+endif
 	install -m 644 dbus/org.aeriallock.Aerial1.xml "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/"
 	install -m 644 dbus/org.aeriallock.Aerial1.Job1.xml "$(DESTDIR)$(PREFIX)/share/dbus-1/interfaces/"
 	install -m 755 emergency/aerial-lock-emergency "$(DESTDIR)$(LIBEXECDIR)/aerial-lock-emergency"
@@ -471,6 +499,7 @@ install: all
 	install -m 644 LICENSE docs/third-party-notices.md "$(DESTDIR)$(PREFIX)/share/licenses/aerial-lock/"
 
 uninstall:
+	DESTDIR="$(DESTDIR)" cmake -DBINDIR="$(BINDIR)" -DINTERACTIVE_ROOT="$(INTERACTIVE_ROOT)" -DLICENSE_ROOT="$(PREFIX)/share/licenses/aerial-lock/interactive" -P settings/uninstall-runtime.cmake
 	rm -rf "$(DESTDIR)$(DATADIR)"
 	rm -f "$(DESTDIR)$(BINDIR)/aerial-lock"
 	rm -f "$(DESTDIR)$(BINDIR)/aerialctl"
@@ -496,6 +525,7 @@ uninstall:
 clean:
 	$(if $(wildcard $(SETTINGS_BUILD)/build.ninja),cmake --build "$(SETTINGS_BUILD)" --target clean, :)
 	rm -f settings/aerial-settings
+	rm -f settings/interactive $(OBJDIR)/settings-config $(OBJDIR)/settings-config.tmp
 	$(if $(wildcard $(CLIENT_BUILD)/build.ninja),cmake --build "$(CLIENT_BUILD)" --target clean, :)
 	rm -f gen-pam-limits.tmp Config/pam-limits.json Config/build-flags.json
 	rm -f recovery/aerial-unlock recovery/ext-session-lock-v1-client.h recovery/ext-session-lock-v1-protocol.c

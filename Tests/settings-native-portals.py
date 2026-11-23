@@ -71,6 +71,7 @@ def portals(owned, output):
     probe = owned.paths["build"] / "settings-desktop-probe"
     env = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
     env.pop("QT_QPA_PLATFORM", None)
+    env.pop("QT_NO_XDG_DESKTOP_PORTAL", None)
     env.setdefault("LANG", "C.UTF-8")
     owned.check_session(owned.record["session"], env)
     desktop_bus = "unix:path=" + env["XDG_RUNTIME_DIR"] + "/bus"

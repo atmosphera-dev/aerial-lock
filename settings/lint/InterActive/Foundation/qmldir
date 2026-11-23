@@ -1,0 +1,14 @@
+module InterActive.Foundation
+typeinfo interactive_foundation.qmltypes
+depends QtQuick
+Icon 1.0 ../../../../third_party/interactive/src/foundation/Icon.qml
+IconLabel 1.0 ../../../../third_party/interactive/src/foundation/IconLabel.qml
+Separator 1.0 ../../../../third_party/interactive/src/foundation/Separator.qml
+singleton ControlState 1.0 ../../../../third_party/interactive/src/foundation/ControlState.qml
+ControlBackground 1.0 ../../../../third_party/interactive/src/foundation/ControlBackground.qml
+SegmentBackground 1.0 ../../../../third_party/interactive/src/foundation/SegmentBackground.qml
+ChoiceIndicator 1.0 ../../../../third_party/interactive/src/foundation/ChoiceIndicator.qml
+ChoiceRow 1.0 ../../../../third_party/interactive/src/foundation/ChoiceRow.qml
+ValueTrack 1.0 ../../../../third_party/interactive/src/foundation/ValueTrack.qml
+SegmentGroup 1.0 ../../../../third_party/interactive/src/foundation/SegmentGroup.qml
+PopupDirection 1.0 ../../../../third_party/interactive/src/foundation/PopupDirection.qml

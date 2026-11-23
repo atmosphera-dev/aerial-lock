@@ -23,7 +23,15 @@ class LiteralArguments(unittest.TestCase):
             vendor = root / "third_party/library/Broken.qml"
             vendor.parent.mkdir(parents=True)
             vendor.write_text("this is not QML\n")
-            for operand in (".", str(root), "third_party", str(vendor)):
+            derived = root / "custom output/qml/InterActive/Broken.qml"
+            derived.parent.mkdir(parents=True)
+            derived.write_text("this is generated vendor QML\n")
+            output = root / "custom output"
+            (output / "CMakeFiles").mkdir()
+            (output / "CMakeCache.txt").write_text("CMAKE_HOME_DIRECTORY:INTERNAL=" + str(vendor.parent) + "\n")
+            (root / "settings").mkdir()
+            (root / "settings/interactive").symlink_to(output, target_is_directory=True)
+            for operand in (".", str(root), "third_party", str(vendor), str(derived), str(root / "settings/interactive/qml/InterActive/Broken.qml")):
                 with self.subTest(operand=operand):
                     result = subprocess.run(["bash", str(script), operand], cwd=root,
                                             capture_output=True, text=True, timeout=20)

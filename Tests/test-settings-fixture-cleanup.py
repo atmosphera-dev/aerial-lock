@@ -24,9 +24,95 @@ import time
 from http.server import BaseHTTPRequestHandler
 from settings_build import binary_paths, hashes, quick_test_inputs, source_identity, verify_build
 from desktop_entry import exec_argument
+from settings_native_logs import accepted_warning, inspect_journal, inspect_text, journal_cursor, require_quiet
+
+
+def synthetic_runtime_inventory(root):
+    """Receipt-only placeholders, never loaded as an InterActive implementation."""
+    private = []
+    for owner in (root / "src/aerial-lock/build/settings", root / "build/debug/aerial-tests"):
+        files = []
+        for index in range(3):
+            for kind in ("backing.so", "plugin.so", "qmldir", "types.qmltypes"):
+                path = owner / "interactive" / str(index) / kind
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("synthetic provenance fixture, not a runtime module\n")
+                files.append(path)
+        manifest = owner / "interactive/runtime-files.txt"
+        manifest.write_text("\n".join(map(str, files)) + "\n")
+        private.extend([manifest, *files])
+    return private
 
 
 class CleanupTest(unittest.TestCase):
+    def test_native_journal_cursor_is_independent_of_entry_presentation(self):
+        for prefix in ("", "-- No entries --\n", '{"MESSAGE":"last entry"}\n'):
+            self.assertEqual(journal_cursor(prefix + "-- cursor: s=abc;i=1\n"), "s=abc;i=1")
+        for text in ("", "-- No entries --\n", "-- cursor: \n", "-- cursor: a\n-- cursor: b\n"):
+            with self.assertRaises(RuntimeError): journal_cursor(text)
+
+    def test_native_warning_exception_is_exact_and_versioned(self):
+        message = "virtual void QtWaylandClient::QWaylandTextInputv3::disableSurface(wl_surface*) Trying to disable 0xabc123 but 0x0 is focused"
+        category = "qt.qpa.wayland.textinput"
+        self.assertTrue(accepted_warning(message, category, (6, 12, 0)))
+        for text, cat, version in ((message, category, (6, 11, 2)), (message, "other", (6, 12, 0)),
+                                   (message + " trailing", category, (6, 12, 0)), (message.replace("0x0 is", "0x1 is"), category, (6, 12, 0))):
+            self.assertFalse(accepted_warning(text, cat, version))
+        line = "AERIAL_QT|warning|" + category + "|" + message
+        self.assertEqual(inspect_text(line, (6, 12, 0)), ([line], []))
+        require_quiet(line, (6, 12, 0))
+        for other in ("AERIAL_QT|warning|other|injected", "QWARN : late teardown warning", "  WARN qt.other: late teardown", line + " trailing"):
+            self.assertTrue(inspect_text(other, (6, 12, 0))[1])
+            with self.assertRaises(RuntimeError): require_quiet(other, (6, 12, 0))
+
+    def test_native_journal_keeps_severity_and_teardown_warnings(self):
+        entries = [{"_EXE": "/usr/bin/aerial-settings", "PRIORITY": "6", "MESSAGE": "older portal info"},
+                   {"_EXE": "/guest/build/settings-visual-probe", "QT_CATEGORY": "qt.other", "PRIORITY": "4", "MESSAGE": "teardown warning"},
+                   {"_EXE": "/usr/bin/aerial-settings", "PRIORITY": "6", "MESSAGE": "AERIAL_QT|warning|other|redirected warning"}]
+        self.assertEqual(inspect_journal(entries, (6, 12, 0)), ([], ["teardown warning", "AERIAL_QT|warning|other|redirected warning"]))
+        message = "virtual void QtWaylandClient::QWaylandTextInputv3::disableSurface(wl_surface*) Trying to disable 0x123 but 0x0 is focused"
+        entry = {"QT_CATEGORY": "qt.qpa.wayland.textinput", "PRIORITY": "4", "MESSAGE": message}
+        self.assertEqual(inspect_journal([entry], (6, 12, 0)), ([message], []))
+        self.assertEqual(inspect_journal([entry], (6, 11, 2)), ([], [message]))
+        entry["PRIORITY"] = "2"
+        self.assertEqual(inspect_journal([entry], (6, 12, 0)), ([], [message]))
+        entry["MESSAGE"] = line = "AERIAL_QT|warning|" + entry["QT_CATEGORY"] + "|" + message
+        for severity in ("2", "6"):
+            entry["PRIORITY"] = severity
+            self.assertEqual(inspect_journal([entry], (6, 12, 0)), ([], [line]))
+        entry["PRIORITY"] = "4"
+        self.assertEqual(inspect_journal([entry], (6, 12, 0)), ([line], []))
+
+    def test_native_failure_survives_audit_timeout(self):
+        path = Path(__file__).with_name("settings-vm.py")
+        spec = importlib.util.spec_from_file_location("settings_vm_fixture", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for phase in ("case", "audit", "setup"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "results").mkdir()
+                (root / "tmp").mkdir()
+                receipt = root / "results/settings-cold-load.json"
+                receipt.write_text('{"exit": 0}')
+                audit_failure = subprocess.TimeoutExpired("journalctl", 30)
+                case_failure = RuntimeError("native case failed")
+                expected = case_failure if phase == "case" else audit_failure
+                argv = [str(path), "--root", str(root), "--vm-record", "unused", "--case", "cold-load"]
+                with patch.object(sys, "argv", argv), patch.dict(os.environ, TMPDIR=str(root / "tmp")), \
+                     patch.object(module, "NativeLogGate", side_effect=audit_failure if phase == "setup" else None) as gate, \
+                     patch.object(module, "native", return_value={}, side_effect=case_failure if phase == "case" else None):
+                    gate.return_value.finish.side_effect = audit_failure
+                    with self.assertRaises(type(expected)) as failure:
+                        module.main()
+                self.assertIs(failure.exception, expected)
+                self.assertEqual(gate.return_value.finish.call_count, 0 if phase == "setup" else 1)
+                result = json.loads(receipt.read_text())
+                self.assertEqual(result["exit"], 1)
+                self.assertEqual(result["error"], str(expected))
+                if phase == "case":
+                    self.assertIn("journalctl", result["logError"])
+
     def test_host_lease_lifetime_and_failure_are_observed(self):
         for broken in (False, True):
             with self.subTest(broken=broken):
@@ -140,7 +226,8 @@ class CleanupTest(unittest.TestCase):
             source.mkdir(parents=True); build.mkdir(parents=True); (root / "run").mkdir(); (root / "tmp").mkdir()
             for directory in ("settings", "companion", "cli", "idle"): (source / directory).mkdir()
             input = source / "input.c"; input.write_text('#include <stdio.h>\nint main(void) { puts("old"); }\n')
-            names = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe"]
+            names = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe", "interactive-runtime-probe"]
+            synthetic_runtime_inventory(root)
             (source / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\nproject(provenance C)\n" + ''.join(f'add_executable({name} input.c)\n' for name in names))
             (source / "Makefile").write_text("all: settings/aerial-settings\nsettings/aerial-settings: input.c\n\t$(CC) input.c -o $@\n\tcp $@ companion/aerial\n\tcp $@ cli/aerialctl\n\tcp $@ idle/aerial-idle\nclean:\n\trm -f settings/aerial-settings companion/aerial cli/aerialctl idle/aerial-idle\n")
             subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja", "-DAERIAL_LOCK_SOURCE=" + str(source)], check=True, capture_output=True)
@@ -200,13 +287,43 @@ class CleanupTest(unittest.TestCase):
             file = source / "input"; file.write_text("frozen source")
             files = {"input": dict(sha256=hashlib.sha256(file.read_bytes()).hexdigest(), mode=file.lstat().st_mode)}
             freeze = dict(files=files, identity=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest())
+            synthetic_runtime_inventory(root)
             outputs = binary_paths(root); peer = root / "build/debug/aerial-tests/settings-client-probe"
             self.assertIn(peer, outputs)
-            for path in outputs: path.parent.mkdir(parents=True, exist_ok=True); path.write_text("verified output")
+            for path in outputs:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.name != "runtime-files.txt": path.write_text("verified output")
             (root / "run/settings-build.json").write_text(json.dumps(dict(source_identity=source_identity(root, freeze), binary_hashes=hashes(outputs))))
             self.configure_source(root)
             verify_build(root, freeze, outputs); peer.write_text("replaced peer")
             with self.assertRaisesRegex(RuntimeError, "build provenance"): verify_build(root, freeze, outputs)
+
+    def test_private_runtime_outputs_are_mandatory_and_attested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source = root / "src/aerial-lock"; source.mkdir(parents=True); (root / "run").mkdir()
+            file = source / "input"; file.write_text("frozen source")
+            files = {"input": dict(sha256=hashlib.sha256(file.read_bytes()).hexdigest(), mode=file.lstat().st_mode)}
+            freeze = dict(files=files, identity=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest())
+            with self.assertRaises(FileNotFoundError): binary_paths(root)
+            private = synthetic_runtime_inventory(root)
+            outputs = binary_paths(root)
+            for path in outputs:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path not in private: path.write_text("verified executable")
+            self.configure_source(root)
+            (root / "run/settings-build.json").write_text(json.dumps(dict(source_identity=source_identity(root, freeze), binary_hashes=hashes(outputs))))
+            verify_build(root, freeze, outputs)
+            for path in private:
+                with self.subTest(output=path.relative_to(root)):
+                    original = path.read_bytes(); path.write_bytes(original + b"changed")
+                    with self.assertRaisesRegex(RuntimeError, "build provenance"): verify_build(root, freeze, outputs)
+                    path.write_bytes(original)
+            for manifest in (path for path in private if path.name == "runtime-files.txt"):
+                original = manifest.read_text(); entries = original.splitlines()
+                entries[0] = str(manifest.parent / "../outside-owned-runtime")
+                manifest.write_text("\n".join(entries) + "\n")
+                with self.assertRaisesRegex(RuntimeError, "invalid target-derived"): binary_paths(root)
+                manifest.write_text(original)
 
     def test_build_provenance_rejects_refreshed_source_and_stale_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:

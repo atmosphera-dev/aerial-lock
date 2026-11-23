@@ -14,6 +14,24 @@ make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 
 ## Portable checks
 
+Full settings tests require coherent Qt >= 6.12.0 with SVG and ShaderTools.
+`AERIAL_BUILD_SETTINGS` defaults ON. On Qt 6.11 use both `make BUILD_SETTINGS=0`
+and `cmake -S Tests -B build/tests-core -DAERIAL_BUILD_SETTINGS=OFF`: this retains
+all non-settings cases and registers no settings/InterActive tests.
+
+`interactive-vendor` proves complete signed-tag refresh and refusal/no-op cases.
+`interactive-metadata` compares tooling-only `settings/lint` descriptors with
+the actual built native metadata and references the original vendor QML, never
+copied implementations. To refresh after a deliberate vendor update, run
+`python3 Tests/interactive-metadata.py . <test-build> --write` inside the VM,
+then inspect and deliver the descriptors. Normal hooks only lint, without a
+build or descriptor rewrite. Unknown properties still fail source lint.
+`interactive-runtime` renders and clicks a real three-module consumer, then
+repeats from the staged private layout with exact source/build roots hidden,
+without import/library-path environment assistance. It also checks origin-relative
+RUNPATH and resolved dependencies. `build-config-*` retains its path/flags/LTO
+assertions and adds vendor-only rebuild and private-root override coverage.
+
 The settings tests link the production shared client, controller and QML types.
 Settings fixture helpers use Python 3.9 APIs (`Path.is_relative_to`), not a
 Python 3.11 exception-API requirement. Cleanup preserves the original exception
@@ -46,8 +64,9 @@ inside the owned VM with
 TMPDIR on its disk-backed workspace, never on a physical host.
 
 The `install` case builds a labelled exact-tree package using the retained AUR
-recipe with CMake/Ninja added as build tools, without changing runtime
-dependencies or the release recipe. It validates the scalable icons, theme
+recipe with the full-app Qt 6.12 dependency floor and SVG/ShaderTools plus
+CMake/Ninja declared in the test-only copy. The release recipe remains unchanged
+and is retained separately. It validates the scalable icons, theme
 previews, desktop/D-Bus/unit payload and actual installed preview reads. A
 disposable account has empty sources before its user manager starts. Installed
 desktop activation uses one window; install/reinstall starts no tray/idle,

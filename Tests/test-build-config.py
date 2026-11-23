@@ -17,14 +17,16 @@ from unittest.mock import patch
 
 from private_runtime import PrivateRuntime
 from companion_install import check_layout
+from source_tree import copy_source_tree
 
 PHASES = ("paths", "dev", "flags", "install", "lto")
 
 
 class BuildFixture:
     """One owned workspace and incremental object graph for the entire sequence."""
-    def __init__(self, source, root, prepare=False):
+    def __init__(self, source, root, prepare=False, build_settings=True):
         self.source, self.root = source, root
+        self.settings = build_settings
         self.tree = root / "source with spaces"
         self.marker = root / "owner.json"
         if prepare:
@@ -32,23 +34,24 @@ class BuildFixture:
             identity = root.stat()
             with self.marker.open("x") as stream:
                 os.fchmod(stream.fileno(), 0o600)
-                json.dump({"source": str(source), "device": identity.st_dev,
+                json.dump({"source": str(source), "build_settings": build_settings, "device": identity.st_dev,
                            "inode": identity.st_ino, "uid": identity.st_uid}, stream)
         identity = root.lstat()
         owner = json.loads(self.marker.read_text())
         assert stat.S_ISDIR(identity.st_mode) and not root.is_symlink()
-        assert owner == {"source": str(source), "device": identity.st_dev,
+        assert owner == {"source": str(source), "build_settings": build_settings, "device": identity.st_dev,
                          "inode": identity.st_ino, "uid": os.getuid()}
         if prepare:
-            shutil.copytree(source, self.tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__", "*.so"))
+            copy_source_tree(source, self.tree, "*.so")
 
     def locations(self):
         return self.root, self.tree, self.root / "a", self.root / "b"
 
     def make(self, prefix, *args):
         started = time.monotonic()
-        result = subprocess.run(["make", "-C", str(self.tree), "PREFIX=" + str(prefix), *args],
-                                capture_output=True, text=True, timeout=120)
+        result = subprocess.run(["make", "-C", str(self.tree), "PREFIX=" + str(prefix),
+                                 "BUILD_SETTINGS=" + str(int(self.settings)), *args],
+                                capture_output=True, text=True, timeout=240 if self.settings else 120)
         commands = result.stdout.replace("\\\n", " ")
         objects = [line for line in commands.splitlines()
                    if re.search(r"\s-c\s", line) and re.search(r"\s-o\s+\S+\.o(?:\s|$)", line)]
@@ -106,8 +109,11 @@ def paths(fixture, runtime):
     make(a, "clean")
     make(a)
     settings = tree / "settings/aerial-settings"
-    embedded(settings, a / "share/aerial-lock", b / "share/aerial-lock")
-    settings_before = settings.stat().st_mtime_ns
+    if fixture.settings:
+        embedded(settings, a / "share/aerial-lock", b / "share/aerial-lock")
+        settings_before = settings.stat().st_mtime_ns
+    else:
+        assert not settings.exists(), "core-only build produced settings"
     objects = fixture.objects()
     assert {p.name for p in objects} == {
         "aerial-unlock-main.o", "aerial-unlock-proto.o",
@@ -132,10 +138,11 @@ def paths(fixture, runtime):
     after = [p.stat().st_mtime_ns for p in objects]
     assert all(new > old for old, new in zip(before, after)), "install-path changes reused native objects"
     assert client_archive.stat().st_mtime_ns == client_before, "path-only changes rebuilt path-independent client"
-    assert settings.stat().st_mtime_ns > settings_before, "install-path change reused the settings app"
-    embedded(settings, b / "share/aerial-lock", a / "share/aerial-lock")
-    embedded(b / "bin/aerial-settings", b / "share/aerial-lock", a / "share/aerial-lock")
-    settings_after = settings.stat().st_mtime_ns
+    if fixture.settings:
+        assert settings.stat().st_mtime_ns > settings_before, "install-path change reused the settings app"
+        embedded(settings, b / "share/aerial-lock", a / "share/aerial-lock")
+        embedded(b / "bin/aerial-settings", b / "share/aerial-lock", a / "share/aerial-lock")
+        settings_after = settings.stat().st_mtime_ns
 
     marker = root / "runner-args.json"
     runner = b / "libexec/aerial-lock/aerial-lock-run"
@@ -160,7 +167,20 @@ def paths(fixture, runtime):
     listener.close()
     make(b)
     assert after == [p.stat().st_mtime_ns for p in objects], "unchanged configuration rebuilt native objects"
-    assert settings.stat().st_mtime_ns == settings_after, "unchanged configuration rebuilt the settings app"
+    if fixture.settings:
+        assert settings.stat().st_mtime_ns == settings_after, "unchanged configuration rebuilt the settings app"
+        # Make must see vendor-only inputs, not just the app's own sources.
+        vendor = tree / "third_party/interactive/src"
+        for name, owner in (("controls/DialogButtonBoxLayout.h", "controls"),
+                            ("controls/IAButton.qml", "controls"),
+                            ("foundation/icons/check.svg", "foundation"),
+                            ("components/CMakeLists.txt", None)):
+            backing = tree / "build/settings/interactive/lib" / ("libinteractive_" + str(owner) + ".so")
+            outputs = [settings] + ([backing] if owner else [])
+            before_vendor = [path.stat().st_mtime_ns for path in outputs]
+            touch_after_outputs(vendor / name, *outputs)
+            make(b, "settings/aerial-settings")
+            assert all(path.stat().st_mtime_ns > stamp for path, stamp in zip(outputs, before_vendor)), name
     # Registration embeds LocalConfig/ConfigDocument's layout; it must rebuild
     # for a transitive header edit, including one not named in its manual rule.
     registration = tree / "build/surface-input.o"
@@ -170,22 +190,24 @@ def paths(fixture, runtime):
     make(b)
     assert registration.stat().st_mtime_ns > before_registration, "transitive config layout left stale QML registration"
     assert "common/config-document.h" in (tree / "build/surface-input.d").read_text()
-    nested_settings = tree / "build/settings/aerial-settings"
-    settings_object = tree / "build/settings/CMakeFiles/aerial-settings.dir/main.cpp.o"
-    settings_before = nested_settings.stat().st_mtime_ns
-    object_before = settings_object.stat().st_mtime_ns
-    touch_after_outputs(tree / "native/shell-dir.h", settings, nested_settings, settings_object)
-    make(b, "settings/aerial-settings")
-    assert nested_settings.stat().st_mtime_ns > settings_before, "external shell-dir header left the nested settings app stale"
-    assert settings_object.stat().st_mtime_ns > object_before, "external shell-dir header did not recompile its consumer"
+    if fixture.settings:
+        nested_settings = tree / "build/settings/aerial-settings"
+        settings_object = tree / "build/settings/CMakeFiles/aerial-settings.dir/main.cpp.o"
+        settings_before = nested_settings.stat().st_mtime_ns
+        object_before = settings_object.stat().st_mtime_ns
+        touch_after_outputs(tree / "native/shell-dir.h", settings, nested_settings, settings_object)
+        make(b, "settings/aerial-settings")
+        assert nested_settings.stat().st_mtime_ns > settings_before, "external shell-dir header left the nested settings app stale"
+        assert settings_object.stat().st_mtime_ns > object_before, "external shell-dir header did not recompile its consumer"
     wrapper = root / "cxx-wrapper"
     calls = root / "wrapper-calls.log"
     calls.unlink(missing_ok=True)
     wrapper.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shlex.quote(str(calls)) + "\nexec \"$@\"\n")
     wrapper.chmod(0o700)
     with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
-        make(b, "settings/aerial-settings", "CXX=" + wrapper.name + " g++")
-    assert "main.cpp" in calls.read_text(), "compiler wrapper did not build settings sources"
+        make(b, "settings/aerial-settings" if fixture.settings else "build/client/libaerial-client.a", "CXX=" + wrapper.name + " g++")
+    if fixture.settings:
+        assert "main.cpp" in calls.read_text(), "compiler wrapper did not build settings sources"
     assert "service-connection.cpp" in calls.read_text(), "compiler wrapper did not build the shared client"
 
 
@@ -231,7 +253,10 @@ def flags(fixture, runtime):
     assert all(p.stat().st_mtime_ns > old for p, old in zip(objects, after)), "changed flags reused native objects"
     # CMake-built consumers take the same flags: the recorded compiler command
     # lines in both the shared client and the settings app carry the change.
-    for artifact in (tree / "build/client/libaerial-client.a", tree / "settings/aerial-settings"):
+    artifacts = [tree / "build/client/libaerial-client.a"]
+    if fixture.settings:
+        artifacts.append(tree / "settings/aerial-settings")
+    for artifact in artifacts:
         recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
         # The section exists only with -frecord-gcc-switches; every unit has -O1.
         lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]
@@ -245,9 +270,9 @@ def flags(fixture, runtime):
     for command, cxxflags in (("g++ -O2", "-frecord-gcc-switches"), (launcher.name + " g++ -O2", "-frecord-gcc-switches"),
                               (launcher.name + " g++", "-O2 -frecord-gcc-switches")):
         with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
-            make(b, "settings/aerial-settings", "CXX=" + command, "CXXFLAGS=" + cxxflags)
+            make(b, "settings/aerial-settings" if fixture.settings else "build/client/libaerial-client.a", "CXX=" + command, "CXXFLAGS=" + cxxflags)
         assert native_stamps == [p.stat().st_mtime_ns for p in objects], "CMake flag checks rebuilt unrelated native objects"
-        for artifact in (tree / "build/client/libaerial-client.a", tree / "settings/aerial-settings"):
+        for artifact in artifacts:
             recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
             lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]
             assert recorded.returncode == 0 and lines and all(" -O2 " in line + " " for line in lines), (command, artifact, recorded.stdout[-2000:], recorded.stderr)
@@ -257,10 +282,13 @@ def install(fixture, runtime):
     root, tree, a, b = fixture.locations()
     make = fixture.make
     dev_helper = tree / "native/aerial-lock-auth"
-    for label, prefix, bindir in (("default", Path("/usr"), Path("/usr/bin")),
-                                  ("prefix", Path("/usr/local"), Path("/usr/local/bin")),
-                                  ("bindir", Path("/usr/local"), Path("/opt/aerial/bin")),
-                                  ("spaces", root / "prefix with spaces", root / "bin with spaces")):
+    layouts = [("default", Path("/usr"), Path("/usr/bin")),
+               ("prefix", Path("/usr/local"), Path("/usr/local/bin")),
+               ("bindir", Path("/usr/local"), Path("/opt/aerial/bin")),
+               ("spaces", root / "prefix with spaces", root / "bin with spaces")]
+    if fixture.settings:
+        layouts.append(("private", Path("/usr/local"), Path("/opt/aerial/bin")))
+    for label, prefix, bindir in layouts:
         stage = root / (label + " stage")
         options = ["DESTDIR=" + str(stage)]
         # Shared desktop directories may already hold other packages' files.
@@ -268,15 +296,18 @@ def install(fixture, runtime):
         for path in foreign:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("foreign\n")
-        if label in ("bindir", "spaces"):
+        if label in ("bindir", "private", "spaces"):
             options.append("BINDIR=" + str(bindir))
+        private = Path("/opt/aerial/runtime") if label == "private" else prefix / "lib/aerial-lock/interactive"
+        if fixture.settings:
+            options.append("INTERACTIVE_ROOT=" + str(private))
         make(prefix, "install", *options)
         unit = stage / prefix.relative_to("/") / "lib/systemd/user/aerial-idle.service"
         commands = [line for line in unit.read_text().splitlines() if line.startswith("ExecStart=")]
         assert len(commands) == 1 and shlex.split(commands[0].removeprefix("ExecStart=")) == [str(bindir / "aerial-idle")], (label, commands)
         assert unit.stat().st_mode & 0o777 == 0o644, (label, oct(unit.stat().st_mode))
         assert (stage / bindir.relative_to("/") / "aerial-idle").is_file()
-        check_layout(stage, prefix, prefix / "libexec/aerial-lock", bindir)
+        check_layout(stage, prefix, prefix / "libexec/aerial-lock", bindir, settings=fixture.settings, interactive_root=private)
         helper_path(stage / prefix.relative_to("/") / "lib/aerial-lock/qt-plugins/generic/libAerialLockSurfaceInput.so",
                     prefix / "libexec/aerial-lock/aerial-lock-auth", dev_helper)
         emergency = stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency"
@@ -288,13 +319,31 @@ def install(fixture, runtime):
                     prefix / "libexec/aerial-lock/aerial-lock-emergency",
                     stage / prefix.relative_to("/") / "libexec/aerial-lock/aerial-lock-emergency")
         print(f"UNIT_INSTALL_PASS {label} {commands[0]} mode=644", flush=True)
+        if fixture.settings:
+            # The adapter owns exact files, not arbitrary additions or user
+            # startup policy, even across reinstall and a custom private root.
+            for path in (stage / private.relative_to("/") / "lib/foreign-note",
+                         stage / prefix.relative_to("/") / "share/licenses/aerial-lock/interactive/foreign-note",
+                         stage / "etc/systemd/user/aerial-tray.service"):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("foreign\n")
+                foreign.add(path)
+            enabled = stage / "etc/systemd/user/graphical-session.target.wants/aerial-tray.service"
+            enabled.parent.mkdir(parents=True)
+            enabled.symlink_to("../aerial-tray.service")
+            foreign.add(enabled)
+            make(prefix, "install", *options)
+            assert all(path.read_text() == "foreign\n" for path in foreign)
+            assert enabled.is_symlink() and os.readlink(enabled) == "../aerial-tray.service"
         make(prefix, "uninstall", *options)
         remaining = {p for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
         assert remaining == foreign and all(p.read_text() == "foreign\n" for p in foreign), f"{label} uninstall: {remaining ^ foreign}"
+        if fixture.settings:
+            assert enabled.is_symlink() and os.readlink(enabled) == "../aerial-tray.service"
 
     arch_stage = root / "arch-stage"
     make("/usr", "install", "DESTDIR=" + str(arch_stage), "LIBEXECDIR=/usr/lib/aerial-lock")
-    check_layout(arch_stage, "/usr", "/usr/lib/aerial-lock")
+    check_layout(arch_stage, "/usr", "/usr/lib/aerial-lock", settings=fixture.settings)
     emergency = arch_stage / "usr/lib/aerial-lock/aerial-lock-emergency"
     assert emergency.stat().st_mode & 0o777 == 0o755
     assert b"/usr/lib/aerial-lock/aerial-lock-auth" in emergency.read_bytes()
@@ -339,16 +388,16 @@ def lto(fixture, runtime):
     print("BUILD_CONFIG_PASS paths_consumed_by_installed_supervisor_and_idle auth_helper_dev_install stable_noop flags_rebuilt unit_install_paths packaging_lto")
 
 
-def cleanup(source, workspace):
+def cleanup(source, workspace, build_settings=True):
     if not workspace.exists():
         return
-    fixture = BuildFixture(source, workspace)
+    fixture = BuildFixture(source, workspace, build_settings=build_settings)
     shutil.rmtree(fixture.root)
 
 
-def run_phase(source, workspace, phase):
+def run_phase(source, workspace, phase, build_settings=True):
     started = time.monotonic()
-    fixture = BuildFixture(source, workspace, prepare=phase == "paths")
+    fixture = BuildFixture(source, workspace, prepare=phase == "paths", build_settings=build_settings)
     with PrivateRuntime("wayland") as runtime:
         globals()[phase](fixture, runtime)
     print(f"BUILD_CONFIG_PHASE_PASS {phase} seconds={time.monotonic() - started:.3f}", flush=True)
@@ -359,23 +408,24 @@ def main():
     parser.add_argument("source", type=lambda value: Path(value).resolve(strict=True))
     parser.add_argument("--case", choices=(*PHASES, "cleanup", "all"), default="all")
     parser.add_argument("--workspace", type=Path)
+    parser.add_argument("--build-settings", type=int, choices=(0, 1), default=1)
     args = parser.parse_args()
     if args.case != "all":
         if args.workspace is None:
             parser.error("--workspace is required for a CTest phase")
         workspace = args.workspace.absolute()
         if args.case == "cleanup":
-            cleanup(args.source, workspace)
+            cleanup(args.source, workspace, bool(args.build_settings))
         else:
-            run_phase(args.source, workspace, args.case)
+            run_phase(args.source, workspace, args.case, bool(args.build_settings))
         return
     with tempfile.TemporaryDirectory(prefix="aerial-build-config-") as parent:
         workspace = Path(parent) / "fixture"
         try:
             for phase in PHASES:
-                run_phase(args.source, workspace, phase)
+                run_phase(args.source, workspace, phase, bool(args.build_settings))
         finally:
-            cleanup(args.source, workspace)
+            cleanup(args.source, workspace, bool(args.build_settings))
 
 
 if __name__ == "__main__":

@@ -77,9 +77,9 @@ def main():
     archive_hash = digest(archive)
     test_text, source_count = re.subn(r"^source=\([^\n]*\)$", 'source=("' + archive.name + '")', original_text, flags=re.M)
     test_text, checksum_count = re.subn(r"^sha256sums=\([^\n]*\)$", "sha256sums=('" + archive_hash + "')", test_text, flags=re.M)
-    test_text, tools_count = re.subn(r"^makedepends=\('wayland-protocols'\)$",
-                                    "makedepends=('wayland-protocols' 'cmake' 'ninja')", test_text, flags=re.M)
-    assert source_count == checksum_count == tools_count == 1
+    from settings_package import with_settings_dependencies
+    test_text = with_settings_dependencies(test_text)
+    assert source_count == checksum_count == 1
     (test / "PKGBUILD").write_text(test_text)
     shutil.copy2(original / "aerial-lock.install", test / "aerial-lock.install")
     (test / "TEST-ONLY.md").write_text("Exact task-tree acceptance package, not a release recipe or publication.\n")
@@ -114,7 +114,7 @@ def main():
         metadata = metadata_by_path[package]
         publish(output / "PKGINFO.txt", metadata)
         dependencies = re.findall(r"^depend = (.+)$", metadata, re.M)
-        assert {"qt6-base", "dbus", "libarchive", "ffmpeg"}.issubset(dependencies)
+        assert {"qt6-base>=6.12.0", "qt6-declarative>=6.12.0", "qt6-svg>=6.12.0", "dbus", "libarchive", "ffmpeg"}.issubset(dependencies)
         assert not any("optdepend = " + item + ":" in metadata for item in ("curl", "python", "tar"))
         tool_owner = run(["pacman", "-Qo", "/usr/lib/qt6/bin/qdbusxml2cpp"]).stdout
         publish(output / "qdbusxml2cpp-owner.txt", tool_owner)
