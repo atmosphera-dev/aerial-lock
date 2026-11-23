@@ -243,13 +243,29 @@ def dev(fixture, runtime):
     print("AUTH_HELPER_PATH_PASS installed dev dev_noop installed_again source_path_spaces", flush=True)
 
 
+def interactive_compile_commands(tree):
+    # Compare the commands Ninja invalidates when flags change, not mtimes:
+    # Qt 6.12's shader depfile does not escape spaces and can dirty a resource
+    # object on an otherwise unchanged build of this fixture.
+    settings_build = tree / "build/settings"
+    entries = json.loads(subprocess.check_output(["ninja", "-t", "compdb"], cwd=settings_build, timeout=10))
+    commands = {entry["output"]: entry["command"] for entry in entries
+                if entry["output"].startswith("interactive/") and entry["output"].endswith(".o")}
+    assert commands, "InterActive was not in the settings compile database"
+    return commands
+
+
 def flags(fixture, runtime):
     root, tree, a, b = fixture.locations()
     make = fixture.make
     # Keep the original paths phase's object inventory across process boundaries.
     objects = [tree / "build" / name for name in json.loads((root / "objects.json").read_text())]
     after = [p.stat().st_mtime_ns for p in objects]
-    make(b, "CXXFLAGS=-O1 -frecord-gcc-switches")
+    # Only the InterActive subproject uses a fixed compiler configuration.
+    # Establish its baseline as part of the first full build, if needed.
+    interactive_include = tree / "Tests/build-config-interactive.cmake"
+    scope = (f"CMAKE_PROJECT_InterActive_INCLUDE={interactive_include}",) if fixture.settings else ()
+    make(b, "CXXFLAGS=-O1 -frecord-gcc-switches", *scope)
     assert all(p.stat().st_mtime_ns > old for p, old in zip(objects, after)), "changed flags reused native objects"
     # CMake-built consumers take the same flags: the recorded compiler command
     # lines in both the shared client and the settings app carry the change.
@@ -264,14 +280,18 @@ def flags(fixture, runtime):
     launcher = root / "ccache"
     launcher.write_text('#!/bin/sh\nexec "$@"\n'); launcher.chmod(0o700)
     native_stamps = [p.stat().st_mtime_ns for p in objects]
+    interactive_commands = interactive_compile_commands(tree) if fixture.settings else None
     # These permutations exercise the CXX -> CMake bridge, not native flag
     # invalidation (checked above). Build both consumers through their real
     # dependency graph without rebuilding every unrelated native target.
     for command, cxxflags in (("g++ -O2", "-frecord-gcc-switches"), (launcher.name + " g++ -O2", "-frecord-gcc-switches"),
                               (launcher.name + " g++", "-O2 -frecord-gcc-switches")):
         with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
-            make(b, "settings/aerial-settings" if fixture.settings else "build/client/libaerial-client.a", "CXX=" + command, "CXXFLAGS=" + cxxflags)
+            make(b, "settings/aerial-settings" if fixture.settings else "build/client/libaerial-client.a",
+                 "CXX=" + command, "CXXFLAGS=" + cxxflags, *scope)
         assert native_stamps == [p.stat().st_mtime_ns for p in objects], "CMake flag checks rebuilt unrelated native objects"
+        if fixture.settings:
+            assert interactive_compile_commands(tree) == interactive_commands, f"{command}: CMake flag checks changed InterActive compile commands"
         for artifact in artifacts:
             recorded = subprocess.run(["readelf", "-p", ".GCC.command.line", str(artifact)], capture_output=True, text=True, timeout=30)
             lines = [line for line in recorded.stdout.splitlines() if line.lstrip().startswith("[") and "GNU C++" in line]

@@ -591,9 +591,9 @@ regression for a prepared VM (below).
 
 `build-config-paths`, `build-config-dev`, `build-config-flags`,
 `build-config-install` and `build-config-lto` run the original incremental sequence
-as focused CTest cases with the unchanged default timeout. They share one owned
-workspace through chained fixtures, retaining objects rather than repeating setup
-builds. CTest adds prerequisites and `build-config-cleanup` even when selecting a
+as focused CTest cases. They share one owned workspace through chained fixtures,
+retaining objects rather than repeating setup builds. CTest adds prerequisites
+and `build-config-cleanup` even when selecting a
 middle case, for example `ctest --test-dir "$ROOT/build/debug/aerial-tests"
 --output-on-failure --timeout 300 -R '^build-config-dev$'`. Cleanup runs after
 failed setup too. Each make and phase prints its duration and build/codegen work.
@@ -604,8 +604,11 @@ and removes its private workspace on exit.
 object was rebuilt. The subsequent compiler/launcher permutations target only
 `settings/aerial-settings` and its shared-client dependency: these check the
 Make-to-CMake flag bridge by inspecting recorded compiler flags in both artifacts,
-and assert that unrelated native objects were not rebuilt. This keeps independent
-bridge checks from multiplying full-tree rebuilds as the native inventory grows.
+and assert that unrelated native objects were not rebuilt and that InterActive's
+compile commands did not change. A test-only CMake project include pins the flags
+and launcher only for the vendored InterActive subproject. The settings app still
+links the real libraries; the paths, install and LTO phases use the normal vendor
+build configuration.
 
 `build-config-lto` rebuilds every native target with LTO. On Arch it sources
 `CFLAGS`, `CXXFLAGS`, `LDFLAGS` and `LTOFLAGS` from `/etc/makepkg.conf`; elsewhere
