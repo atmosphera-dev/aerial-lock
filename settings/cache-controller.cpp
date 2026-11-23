@@ -1,4 +1,6 @@
 #include "cache-controller.h"
+#include "service-text.h"
+#include <QSet>
 #include <QDateTime>
 #include <algorithm>
 #include <limits>
@@ -71,7 +73,12 @@ QVariantMap CacheController::storageFacts(const QVariantMap &p)
         legend << QVariantMap{{"kind", entry.first}, {"label", label + bytes(entry.second)}};
     }
     legend << QVariantMap{{"kind", "free"}, {"label", "Free " + bytes(free)}};
-    return {{"usage", known ? bytes(managed) + " of " + bytes(limit) + " used" : "Cache usage unavailable"},
+    const auto usage = known ? bytes(managed) + " of " + bytes(limit) + " used" : QString("Cache usage unavailable");
+    return {{"usage", usage}, {"usageKnown", known},
+        {"storageFraction", known && denominator > 0 ? double(used / denominator) : 0.},
+        {"storageDescription", usage + (known && partial > 0 ? ", " + bytes(partial) + " in the current download" : QString())
+            + (known && reserved > 0 ? ", " + bytes(reserved) + " reserved" : QString())
+            + (known && over ? "; " + overage + " over limit" : QString())},
         {"free", known ? (over ? overage + " over limit" : bytes(free) + " free") : ""},
         {"segments", known ? segments : QVariantList{}}, {"legend", known ? legend : QVariantList{}}};
 }
@@ -81,19 +88,33 @@ QVariantMap CacheController::facts() const
 }
 QVariantList CacheController::activity() const
 {
-    auto jobs = service.snapshot().jobs;
+    return projectActivity(service.snapshot().jobs);
+}
+QVariantList CacheController::projectActivity(QVariantList jobs)
+{
     std::stable_sort(jobs.begin(), jobs.end(), [](const QVariant &a, const QVariant &b) {
         return a.toMap().value("Details").toMap().value("createdAt").toLongLong() > b.toMap().value("Details").toMap().value("createdAt").toLongLong();
     });
     QVariantList result;
+    QSet<QString> seen;
     for (const auto &entry : jobs) {
         const auto job = entry.toMap(), details = job.value("Details").toMap();
+        const auto path = job.value("path").toString();
+        if (!path.isEmpty() && seen.contains(path)) continue;
+        if (!path.isEmpty()) seen.insert(path);
         const auto state = job.value("State").toString(), error = job.value("ErrorCode").toString();
         const auto title = details.value("assetTitle").toString(), source = details.value("sourceName").toString();
-        QString text = job.value("Kind").toString() + ": " + state;
-        if (!title.isEmpty()) text = title + (source.isEmpty() ? "" : " from " + source) + ": " + state;
-        if (!error.isEmpty()) text += " (" + error + ")";
-        result << QVariantMap{{"text", text}, {"error", !error.isEmpty()}, {"time", job.value("Cancellable").toBool() ? "Now" : localTime(details.value("finishedAt"))}, {"glyph", !error.isEmpty() ? "alert" : job.value("Cancellable").toBool() ? "download" : "checkcircle"}};
+        const auto kind = job.value("Kind").toString();
+        const bool failed = !error.isEmpty();
+        const auto action = kind == "prune" ? QString("open-about") : QString("open-sources");
+        const auto subject = !title.isEmpty() ? title + (source.isEmpty() ? "" : " from " + source)
+            : kind == "refresh" ? QString("Check sources") : kind == "prune" ? QString("Clean up storage") : QString("Download videos");
+        const auto label = failed ? (title.isEmpty() ? QString() : subject + ": ") + ServiceText::reason(error) : subject;
+        result << QVariantMap{{"text", label + ": " + ServiceText::state(state)}, {"error", failed}, {"path", path},
+            {"label", label}, {"state", ServiceText::state(state)},
+            {"actionId", failed ? action : QString()}, {"actionLabel", failed ? (action == "open-about" ? "Open About" : "Open Sources") : QString()},
+            {"sourceId", job.value("SourceId")},
+            {"time", job.value("Cancellable").toBool() ? "Now" : localTime(details.value("finishedAt"))}, {"glyph", failed ? "alert" : job.value("Cancellable").toBool() ? "download" : "checkcircle"}};
     }
     return result;
 }
@@ -133,7 +154,7 @@ void CacheController::sampled()
             if (job.value("Cancellable").toBool()) { cleanupState = "pending"; problem.clear(); break; }
             jobPath.clear(); pruneResult = job.value("Details").toMap().value("prune").toMap();
             if (!job.value("ErrorCode").toString().isEmpty() || pruneResult.isEmpty()) {
-                cleanupState = "error"; problem = "Clean up failed: " + job.value("ErrorCode").toString();
+                cleanupState = "error"; problem = ServiceText::reason(job.value("ErrorCode").toString());
             } else { cleanupState = preview ? "confirm" : "result"; problem.clear(); }
             break;
           }

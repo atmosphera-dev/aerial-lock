@@ -38,6 +38,10 @@ private slots:
         const auto facts = CacheController::storageFacts(p);
         QCOMPARE(facts.value("usage").toString(), QString("100 bytes of 200 bytes used"));
         QCOMPARE(facts.value("free").toString(), QString("80 bytes free"));
+        QCOMPARE(facts.value("usageKnown").toBool(), true);
+        QCOMPARE(facts.value("storageFraction").toDouble(), 0.6);
+        QVERIFY(facts.value("storageDescription").toString().contains("40 bytes in the current download"));
+        QVERIFY(facts.value("storageDescription").toString().contains("20 bytes reserved"));
         const auto segments = facts.value("segments").toList();
         QCOMPARE(segments.size(), 3); QCOMPARE(facts.value("legend").toList().size(), 4);
         QCOMPARE(segments[0].toMap().value("kind").toString(), QString("stored"));
@@ -50,6 +54,8 @@ private slots:
         QCOMPARE(CacheController::storageFacts(p).value("legend").toList()[0].toMap().value("label").toString(), QString("Stored data 100 bytes"));
         p["PartialBytes"] = QVariant::fromValue(40ULL); p["MaxBytes"] = QVariant::fromValue(80ULL);
         QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("40 bytes over limit"));
+        QCOMPARE(CacheController::storageFacts(p).value("storageFraction").toDouble(), 1.);
+        QVERIFY(CacheController::storageFacts(p).value("storageDescription").toString().contains("40 bytes over limit"));
         p["MaxBytes"] = QVariant::fromValue(0ULL);
         QCOMPARE(CacheController::storageFacts(p).value("free").toString(), QString("120 bytes over limit"));
         p["ManagedBytes"] = QVariant::fromValue(9007199254740993ULL);
@@ -67,12 +73,15 @@ private slots:
         QCOMPARE(CacheController::storageFacts(p).value("segments").toList()[0].toMap().value("fraction").toDouble(), 0.0);
         p["UsageKnown"] = false;
         const auto unknown = CacheController::storageFacts(p);
+        QCOMPARE(unknown.value("usageKnown").toBool(), false);
+        QCOMPARE(unknown.value("storageFraction").toDouble(), 0.);
         QCOMPARE(unknown.value("usage").toString(), QString("Cache usage unavailable"));
         QVERIFY(unknown.value("free").toString().isEmpty()); QVERIFY(unknown.value("segments").toList().isEmpty());
         QVERIFY(unknown.value("legend").toList().isEmpty());
         p["UsageKnown"] = true; p["ManagedBytes"] = p["PartialBytes"] = p["ReservedBytes"] = p["MaxBytes"] = QVariant::fromValue(0ULL);
         const auto empty = CacheController::storageFacts(p);
         QCOMPARE(empty.value("free").toString(), QString("0 bytes free"));
+        QCOMPARE(empty.value("storageFraction").toDouble(), 0.);
         for (const auto &segment : empty.value("segments").toList()) QCOMPARE(segment.toMap().value("fraction").toDouble(), 0.0);
         Fixture f; QVERIFY(f.start());
         QTRY_VERIFY(f.controller->serviceProperties().value("UsageKnown").toBool());

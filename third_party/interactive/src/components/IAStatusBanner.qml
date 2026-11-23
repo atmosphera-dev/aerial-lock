@@ -18,13 +18,13 @@ IAPane {
         : validation === IA.Presentation.Warning ? IA.Appearance.colors.warningSurface
         : IA.Appearance.colors.canvas
     contentItem: RowLayout {
-        spacing: IA.Appearance.metrics.spacingS
+        spacing: IA.Appearance.metrics.spacingM
         IA.Icon {
             objectName: "iaBannerIcon"
             visible: root.iconName.length > 0 || root.iconSource.toString().length > 0
             Layout.preferredWidth: IA.Appearance.metrics.iconSize
-            Layout.preferredHeight: IA.Appearance.metrics.iconSize
-            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredHeight: bannerTitle.visible ? bannerTitle.implicitHeight : IA.Appearance.metrics.iconSize
+            Layout.alignment: Qt.AlignTop
             name: root.iconName
             source: IA.IconSource.resolve(root, root.iconSource)
             color: root.validation === IA.Presentation.Invalid ? IA.Appearance.colors.errorText
@@ -35,8 +35,9 @@ IAPane {
             objectName: "iaBannerText"
             Layout.fillWidth: true
             Layout.minimumWidth: 0
-            spacing: IA.Appearance.metrics.spacingXS
+            spacing: 2
             IALabel {
+                id: bannerTitle
                 objectName: "iaBannerTitle"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
@@ -52,18 +53,15 @@ IAPane {
                 Layout.minimumWidth: 0
                 text: root.message
                 textFormat: Text.PlainText
-                foregroundColor: root.validation === IA.Presentation.Invalid ? IA.Appearance.colors.errorText
-                    : root.validation === IA.Presentation.Warning ? IA.Appearance.colors.warningText
-                    : IA.Appearance.colors.secondaryText
+                fontPixelSize: IA.Appearance.typography.supportingSize
+                foregroundColor: IA.Appearance.colors.secondaryText
                 wrapMode: Text.Wrap
             }
         }
         IAButton {
             objectName: "iaBannerAction"
             visible: root.actionText.length > 0
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-            Layout.maximumWidth: implicitWidth
+            Layout.minimumWidth: implicitWidth
             Layout.alignment: Qt.AlignVCenter
             text: root.actionText
             onClicked: root.actionRequested()

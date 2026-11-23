@@ -1,4 +1,5 @@
 #include "sources-controller.h"
+#include "service-text.h"
 #include "portal-client.h"
 #include <QJsonDocument>
 #include <QUrl>
@@ -70,7 +71,7 @@ QVariantList SourcesController::computeRows() const
             if (localPaths.contains(id)) description += ", " + localPaths.value(id);
         }
         const bool failing = row.value("enabled", true).toBool() && !error.isEmpty();
-        if (failing) description = "Couldn't get the video list: " + error + (row.value("httpStatus").toUInt() ? " (" + row.value("httpStatus").toString() + ")" : "");
+        if (failing) description = ServiceText::reason(error);
         row["description"] = description; row["canRetry"] = remote && failing;
         row["glyph"] = type == "apple" ? "tv" : type == "folder" ? "folder" : type == "file" ? "movie" : "world";
         result << row;

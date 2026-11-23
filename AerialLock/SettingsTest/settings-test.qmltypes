@@ -6,6 +6,16 @@ Module {
         exports: ["AerialLock.SettingsTest/Harness 1.0"]
         isCreatable: false
         isSingleton: true
+        Method { name: "nativeRendering"; type: "bool"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
+        Method { name: "iconIn"; type: "QObject"; isPointer: true; Parameter { name: "item"; type: "QObject"; isPointer: true } }
+        Method { name: "inkPixels"; type: "int"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
+        Method { name: "statusProjection"; type: "QVariantMap"; Parameter { name: "properties"; type: "QVariantMap" } Parameter { name: "jobs"; type: "QVariantList" } }
+        Method { name: "resizeSurface"; type: "bool"; Parameter { name: "item"; type: "QObject"; isPointer: true } Parameter { name: "width"; type: "int" } Parameter { name: "height"; type: "int" } }
+        Method { name: "releaseSurface"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
+        Method { name: "appearance"; type: "bool"; Parameter { name: "dark"; type: "bool" } }
+        Method { name: "edgeViolation"; type: "QString"; Parameter { name: "item"; type: "QObject"; isPointer: true } Parameter { name: "sidebarWidth"; type: "int" } Parameter { name: "edge"; type: "int" } }
+        Method { name: "edgePixelFixture"; type: "QString"; Parameter { name: "scale"; type: "double" } }
+        Method { name: "capture"; type: "bool"; Parameter { name: "item"; type: "QObject"; isPointer: true } Parameter { name: "name"; type: "QString" } }
         Method { name: "pixels"; type: "QVariantList"; Parameter { name: "item"; type: "QObject"; isPointer: true } Parameter { name: "points"; type: "QVariantList" } }
         Method { name: "cancelTouch"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
         Method { name: "observeTouch"; Parameter { name: "item"; type: "QObject"; isPointer: true } }

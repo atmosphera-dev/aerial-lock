@@ -1,6 +1,6 @@
 # InterActive source provenance
 
-Aerial-owned metadata; all other files are the complete upstream git archive.
+Complete signed upstream git archive, followed by the declared Aerial-owned patches below.
 
 Tag: v0.1.1
 Commit: 614609e5fa215d7a24ae858bed238d8e061f6e82
@@ -13,3 +13,4 @@ Material Color Utilities: Apache-2.0; see third_party/material-color-utilities/
 LICENSE and README.md. No source files are omitted.
 
 Refresh from the Aerial repository: `Scripts/update-interactive v0.1.1`.
+Patch: v0.1.1/0001-reserve-banner-action.patch 3910f8c64f40f869ad128dbf89f81a5c7d8db6b3224e7f5e0cae73aedafe89ca

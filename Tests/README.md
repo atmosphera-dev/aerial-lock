@@ -48,6 +48,33 @@ processes, including profile isolation. `settings-qml` uses its own QuickTest
 runner and `settings/tests/` input, not the generic locker QML runner. Its wrapper
 rejects warnings from the complete construction-to-teardown log.
 
+`RevampOverview` within that runner exercises the staged revamp compositions
+against the production controller and private service, without replacing the
+shipped Main before cutover. It checks operation/CLI readback, error navigation,
+unknown/over-cap projections, open-select synchronization and outer popup bounds,
+shared geometry and decoded-pixel edge bounds at reference/minimum sizes and
+top/middle/end. Pixel classification matches the approved mock's one-pixel
+antialias-fringe check; it does not ignore real edge content. Native tests float
+and synchronize their own test window before observing geometry/pixels. Set
+`AERIAL_REVAMP_CAPTURES` to an owned guest results directory for full working
+frames and named geometry sidecars. Final user screenshots remain a separate
+reviewed delivery.
+
+The same suite also renders deterministic mock-equivalent Overview frames,
+separately from its real-service operation frames. Native pixel probes require
+actual artwork in sidebar, notice, status and button icon slots, including a
+compiled qrc SVG. Capturing visual evidence refuses the software scene graph,
+which cannot render the library's ShaderEffect tint. Offscreen tests remain
+layout/behavior checks, not icon-rendering proof. Banner actions keep their full
+natural width and descriptions wrap. Model tests translate service reasons and
+states to ordinary text, retain distinct job identities and dedupe repeated
+identities. Full-frame mock comparison precedes the per-region review.
+
+`interactive-vendor` also tests declared downstream source patches alongside
+the pinned signed archive. Patch hashes are recorded in VENDOR.md; unexpected
+vendor edits or changes to an already-recorded patch remain refusals. The
+upstream tag and other checkouts are not rewritten for an Aerial correction.
+
 For native settings checks, `Tests/settings-vm.py` accepts `--root`, `--vm-record`,
 `--host-receipt` (prepare only), and `--case` with `prepare`, `cold-load`,
 `controls`, `failure-recovery`, `portals`, `tray`, `units`, `install` or `visuals`.

@@ -22,6 +22,7 @@ public:
     Q_INVOKABLE void dismissCleanup();
     static QString bytes(qulonglong value);
     static QVariantMap storageFacts(const QVariantMap &properties);
+    static QVariantList projectActivity(QVariantList jobs);
 signals:
     void changed();
 private:

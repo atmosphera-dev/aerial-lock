@@ -152,11 +152,12 @@ QVariantMap SystemdController::idle() const
         : blocked ? "aerial-idle is " + file + ". Check its user unit; Aerial will never unmask it."
         : unknown ? "The current aerial-idle state is unknown. Retrying the user manager read."
         : idleWritesPending ? "Saving idle settings. Wait for the save before starting or restarting aerial-idle."
-        : !on ? "Automatic locking needs aerial-idle. Turn it on only if no other idle daemon owns automatic locking."
+        : !on && active ? "aerial-idle is running but is not enabled for future logins."
+        : !on ? "Automatic locking needs the aerial-idle service, and it isn't running."
         : !active ? "aerial-idle is stopped. Start it to use automatic locking."
         : "aerial-idle is running. Its applied settings cannot be confirmed here. Restart uses the profile configured in its user unit.";
     return {{"message", message}, {"action", !connected || blocked || unknown || idleWritesPending || operations.contains("aerial-idle.service") ? QString() : !on ? "enableStart" : !active ? "start" : "restart"},
-        {"actionLabel", !on ? "Turn on" : !active ? "Start aerial-idle" : "Restart aerial-idle"}, {"pending", operations.contains("aerial-idle.service")},
+        {"actionLabel", !on && active ? "Enable at login" : !on ? "Turn on" : !active ? "Start aerial-idle" : "Restart aerial-idle"}, {"pending", operations.contains("aerial-idle.service")},
         {"observation", unknown ? "aerial-idle activity is unknown." : active ? "aerial-idle is running." : "aerial-idle is not running."}, {"fresh", false}};
 }
 bool SystemdController::persistentlyEnabled(const QString &unit) const

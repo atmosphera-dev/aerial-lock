@@ -1,4 +1,5 @@
 #include "fixture.h"
+#include "service-text.h"
 #include <QSaveFile>
 #include <QDBusReply>
 #include <limits>
@@ -8,6 +9,38 @@ using namespace Aerial::Settings::Test;
 class ModelTest : public QObject {
     Q_OBJECT
 private slots:
+    void activityUsesHumanTextAndJobIdentity()
+    {
+        const QVariantMap first{{"path", "/jobs/one"}, {"Kind", "acquire"}, {"State", "failed"}, {"ErrorCode", "NoRemoteSources"},
+            {"Details", QVariantMap{{"createdAt", 10}, {"finishedAt", 10}}}};
+        auto second = first; second["path"] = "/jobs/two";
+        const auto rows = CacheController::projectActivity({first, first, second});
+        QCOMPARE(rows.size(), 2); // Repeated identity is one job; distinct operations stay distinct.
+        QCOMPARE(rows.first().toMap().value("label").toString(), QString("No online sources are enabled."));
+        QCOMPARE(rows.first().toMap().value("state").toString(), QString("Needs attention"));
+        QCOMPARE(rows.first().toMap().value("actionId").toString(), QString("open-sources"));
+        auto future = first; future["ErrorCode"] = "FutureInternalIdentifier";
+        const auto fallback = CacheController::projectActivity({future}).first().toMap();
+        QCOMPARE(fallback.value("label").toString(), QString("The operation couldn't finish. Try again or check your sources."));
+        QVERIFY(!fallback.value("text").toString().contains("FutureInternalIdentifier"));
+        auto success = first; success["ErrorCode"] = ""; success["State"] = "succeeded";
+        QCOMPARE(CacheController::projectActivity({success}).first().toMap().value("state").toString(), QString("Done"));
+    }
+    void serviceReasonProjectionNeverLeaksIdentifiers()
+    {
+        for (const auto *code : {"NoRemoteSources", "NoEligibleAssets", "NoAllowedResolution", "ConnectionTypeDisallowed",
+             "PowerDisallowed", "PlaybackProtected", "InvalidConfig", "StorageError", "TransferFailed", "TransportError",
+             "HttpError", "TlsError", "UnsafeUrl", "UnsafeRedirect", "InvalidResponse", "InvalidManifest",
+             "UnsafeManifestLink", "InvalidRepresentation", "LengthMismatch", "ChecksumMismatch", "ProbeFailed", "FutureReasonCode"}) {
+            const auto text = ServiceText::reason(code);
+            QVERIFY2(!text.contains(code), code);
+            QVERIFY(text.endsWith('.'));
+        }
+        Client::ServiceConnection::Snapshot snapshot;
+        snapshot.effective = {{"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", true}}}}}};
+        snapshot.properties = {{"DeferReason", "FutureReasonCode"}};
+        QVERIFY(!StatusModel::project(snapshot).value("headline").toString().contains("FutureReasonCode"));
+    }
     void statusFacts()
     {
         Client::ServiceConnection::Snapshot snapshot;
@@ -60,11 +93,44 @@ private slots:
         const auto idle = settings.notices()->idle(); QVERIFY(!idle.value("message").toString().isEmpty());
         fixture.daemon.terminate(); QVERIFY(fixture.daemon.waitForFinished(5000));
         QTRY_COMPARE(settings.panel(), QString("unavailable"));
+        QTRY_VERIFY(!fixture.service->errorName().isEmpty());
+        QVERIFY(!settings.diagnostic().contains(fixture.service->errorName().section('.', -1)));
         QVERIFY(settings.statusModel()->facts().value("primaryActionId").toString().isEmpty());
         QVERIFY(settings.sources()->sheetOpen()); QCOMPARE(settings.sources()->draft().value("name").toString(), QString("Unsaved source"));
         bool serviceNotice = false;
         for (const auto &entry : settings.notices()->entries()) serviceNotice |= entry.toMap().value("id") == "service";
         QVERIFY(serviceNotice); QCOMPARE(settings.notices()->idle(), idle);
+    }
+    void unavailableNoticeActionsHaveNoLabel()
+    {
+        Fixture f; QVERIFY(f.start());
+        QTRY_VERIFY(!f.controller->systemd()->error().isEmpty());
+        QCOMPARE(f.controller->notices()->idle().value("severity").toString(), QString("warning"));
+        for (const auto &entry : f.controller->notices()->entries()) {
+            const auto notice = entry.toMap();
+            if (notice.value("actionId").toString().isEmpty()) QVERIFY(notice.value("actionLabel").toString().isEmpty());
+        }
+    }
+    void overviewMutationErrorsStayVisible_data()
+    {
+        QTest::addColumn<bool>("automatic");
+        QTest::newRow("automatic") << true;
+        QTest::newRow("fetch") << false;
+    }
+    void overviewMutationErrorsStayVisible()
+    {
+        QFETCH(bool, automatic);
+        Fixture f; QVERIFY(f.start());
+        if (automatic) f.controller->dispatchAction("resume-downloads");
+        else f.controller->dispatchAction("fetch-videos");
+        f.service->mutationFinished(1, {}, "org.aeriallock.Aerial1.Error.Conflict");
+        const auto id = automatic ? QString("automatic-operation") : QString("download-operation");
+        QVariantMap notice;
+        for (const auto &entry : f.controller->notices()->entries()) if (entry.toMap().value("id") == id) notice = entry.toMap();
+        QVERIFY(!notice.value("message").toString().isEmpty());
+        QCOMPARE(notice.value("actionId").toString(), QString("retry-service"));
+        QCOMPARE(notice.value("actionLabel").toString(), QString("Check service state"));
+        QCOMPARE(notice.value("severity").toString(), QString("error"));
     }
     void projectionUnknownAndExactStorage()
     {

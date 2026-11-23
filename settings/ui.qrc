@@ -1,5 +1,25 @@
 <RCC><qresource prefix="/settings">
 <file>qml/Main.qml</file>
+<file>qml/revamp/qmldir</file>
+<file>qml/revamp/Insets.qml</file>
+<file>qml/revamp/Shell.qml</file>
+<file>qml/revamp/Sidebar.qml</file>
+<file>qml/revamp/PageScaffold.qml</file>
+<file>qml/revamp/SettingsSection.qml</file>
+<file>qml/revamp/SettingRow.qml</file>
+<file>qml/revamp/StatusHeader.qml</file>
+<file>qml/revamp/StorageMeter.qml</file>
+<file>qml/revamp/Overview.qml</file>
+<file>qml/revamp/EmptyPage.qml</file>
+<file>qml/revamp/icons/sky.svg</file>
+<file>qml/revamp/icons/stack.svg</file>
+<file>qml/revamp/icons/download.svg</file>
+<file>qml/revamp/icons/lock.svg</file>
+<file>qml/revamp/icons/info.svg</file>
+<file>qml/revamp/icons/alert.svg</file>
+<file>qml/revamp/icons/x.svg</file>
+<file>qml/revamp/icons/pause.svg</file>
+<file>qml/revamp/icons/play.svg</file>
 <file>qml/Downloads.qml</file>
 <file>qml/Preference.qml</file>
 <file>qml/Sources.qml</file>

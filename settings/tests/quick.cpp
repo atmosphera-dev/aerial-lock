@@ -1,22 +1,182 @@
 #include "fixture.h"
 #include "interactive-runtime.h"
+#include <Appearance.h>
 #include <QtQuickTest/quicktest.h>
 #include <QQmlEngine>
 #include <QSaveFile>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QImage>
 #include <QTouchEvent>
+#include <QApplication>
 using namespace Aerial::Settings;
 class QuickHarness : public SettingsController {
     Q_OBJECT
 public:
     Aerial::Settings::Test::Fixture &fixture;
+    InterActive::Appearance &appearanceState;
     QByteArray validConfig;
     std::unique_ptr<QPointingDevice> unrelatedTouch{QTest::createTouchDevice()};
     QPointer<QQuickWindow> touchWindow;
     QPointer<const QPointingDevice> touchDevice;
-    QuickHarness(Aerial::Settings::Test::Fixture &fixture) : SettingsController(*fixture.service), fixture(fixture) {}
+    QuickHarness(Aerial::Settings::Test::Fixture &fixture, InterActive::Appearance &appearanceState)
+        : SettingsController(*fixture.service), fixture(fixture), appearanceState(appearanceState)
+    {
+        if (!appearance(false)) qFatal("could not initialize the test appearance");
+    }
+    Q_INVOKABLE QObject *iconIn(QObject *object)
+    {
+        if (!object) return nullptr;
+        if (object->metaObject()->indexOfProperty("source") >= 0 && object->metaObject()->indexOfProperty("available") >= 0
+            && object->metaObject()->indexOfProperty("mirrored") >= 0) return object;
+        for (auto *child : object->children()) if (auto *icon = iconIn(child)) return icon;
+        return nullptr;
+    }
+    Q_INVOKABLE bool nativeRendering(QObject *object)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        return item && item->window() && QGuiApplication::platformName().startsWith("wayland")
+            && item->window()->rendererInterface()->graphicsApi() != QSGRendererInterface::Software;
+    }
+    Q_INVOKABLE int inkPixels(QObject *object)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->window()) return 0;
+        const auto frame = item->window()->grabWindow();
+        const auto origin = item->mapToScene({0, 0});
+        const double scale = double(frame.width()) / item->window()->width();
+        const auto area = frame.copy(QRect(qRound(origin.x() * scale), qRound(origin.y() * scale),
+            qRound(item->width() * scale), qRound(item->height() * scale)));
+        if (area.isNull()) return 0;
+        const auto background = area.pixelColor(0, 0);
+        int ink = 0;
+        for (int y = 0; y < area.height(); ++y) for (int x = 0; x < area.width(); ++x) {
+            const auto color = area.pixelColor(x, y);
+            if (qMax(qAbs(color.red() - background.red()), qMax(qAbs(color.green() - background.green()), qAbs(color.blue() - background.blue()))) > 32) ++ink;
+        }
+        return ink;
+    }
+    Q_INVOKABLE QVariantMap statusProjection(const QVariantMap &properties, const QVariantList &jobs)
+    {
+        auto snapshot = fixture.service->snapshot();
+        snapshot.properties = properties; snapshot.jobs = jobs;
+        return StatusModel::project(snapshot);
+    }
+    Q_INVOKABLE bool resizeSurface(QObject *object, int width, int height)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->window()) return false;
+        auto *window = item->window();
+        if (QGuiApplication::platformName().startsWith("wayland") && !qEnvironmentVariableIsEmpty("NIRI_SOCKET")) {
+            QProcess inventory; inventory.start("niri", {"msg", "-j", "windows"});
+            if (!inventory.waitForFinished(5000) || inventory.exitCode()) return false;
+            QStringList matches;
+            for (const auto &entry : QJsonDocument::fromJson(inventory.readAllStandardOutput()).array()) {
+                const auto candidate = entry.toObject();
+                if (candidate.value("pid").toInteger() == QCoreApplication::applicationPid()) matches << QString::number(candidate.value("id").toInteger());
+            }
+            if (matches.size() != 1) return false;
+            for (const auto *action : {"move-window-to-floating", "focus-window"}) {
+                QProcess command; command.start("niri", {"msg", "action", action, "--id", matches.first()});
+                if (!command.waitForFinished(5000) || command.exitCode()) return false;
+            }
+            window->setMaximumSize({16777215, 16777215});
+            window->setMinimumSize({width, height}); window->setMaximumSize({width, height});
+        }
+        window->resize(width, height);
+        return QTest::qWaitFor([&] { return window->width() == width && window->height() == height; }, 5000)
+            && QQuickTest::qWaitForPolish(window, 5000);
+    }
+    Q_INVOKABLE void releaseSurface(QObject *object)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (item && item->window() && QGuiApplication::platformName().startsWith("wayland") && !qEnvironmentVariableIsEmpty("NIRI_SOCKET")) {
+            item->window()->setMinimumSize({0, 0}); item->window()->setMaximumSize({16777215, 16777215});
+        }
+    }
+    Q_INVOKABLE bool appearance(bool dark)
+    {
+        const QString scheme = dark ? "dark" : "light";
+        appearanceState.setInput({{"schemaVersion", 1}, {"scheme", scheme}, {"density", "compact"},
+            {"tokens", QVariantMap{{"colors", QVariantMap{{"accent", QColor("#5795ec")}}},
+                {"typography", QVariantMap{{"family", QApplication::font().family()}}}}}});
+        return appearanceState.scheme() == scheme;
+    }
+    Q_INVOKABLE bool capture(QObject *object, const QString &name)
+    {
+        const auto directory = qEnvironmentVariable("AERIAL_REVAMP_CAPTURES");
+        if (directory.isEmpty()) return true;
+        // A software scene graph silently omits ShaderEffect artwork. Such
+        // frames may exercise layouts, but cannot become visual evidence.
+        if (!nativeRendering(object)) return false;
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->window() || !QDir().mkpath(directory)) return false;
+        QJsonArray geometry;
+        std::function<void(QQuickItem *)> visit = [&](QQuickItem *child) {
+            if (!child->isVisible()) return;
+            if (!child->objectName().isEmpty()) {
+                const auto point = child->mapToScene({0, 0});
+                geometry << QJsonObject{{"name", child->objectName()}, {"x", point.x()}, {"y", point.y()},
+                    {"width", child->width()}, {"height", child->height()}, {"implicitWidth", child->implicitWidth()}};
+            }
+            for (auto *descendant : child->childItems()) visit(descendant);
+        };
+        visit(item);
+        QFile report(directory + '/' + name + ".json");
+        if (!report.open(QIODevice::WriteOnly) || report.write(QJsonDocument(geometry).toJson()) < 0) return false;
+        return item->window()->grabWindow().save(directory + '/' + name + ".png");
+    }
+    Q_INVOKABLE QString edgeViolation(QObject *object, int sidebarWidth, int edge)
+    {
+        auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->window()) return "no exposed item";
+        const auto image = item->window()->grabWindow();
+        if (image.isNull()) return "no frame";
+        return checkEdgePixels(image, {item->mapToScene({0, 0}), item->size()}, item->window()->size(), sidebarWidth, edge);
+    }
+    Q_INVOKABLE QString edgePixelFixture(qreal scale)
+    {
+        const QSize size(160, 100);
+        QImage image(size * scale, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        // At 2x the offending pixel is between the old even-coordinate samples.
+        image.setPixelColor(21, 20, Qt::black);
+        return checkEdgePixels(image, {{0, 0}, size}, size, 60, 24);
+    }
+    static QString checkEdgePixels(const QImage &image, const QRectF &surface, const QSize &logicalWindow, int sidebarWidth, int edge)
+    {
+        if (logicalWindow.isEmpty() || surface.isEmpty()) return "empty test surface";
+        const auto scaleX = qreal(image.width()) / logicalWindow.width(), scaleY = qreal(image.height()) / logicalWindow.height();
+        const QRect physical = QRectF(surface.x() * scaleX, surface.y() * scaleY,
+            surface.width() * scaleX, surface.height() * scaleY).toAlignedRect();
+        if (!image.rect().contains(physical))
+            return "surface has not reached the requested size";
+        const auto distance = [](const QColor &a, const QColor &b) { return qMax(qAbs(a.red() - b.red()), qMax(qAbs(a.green() - b.green()), qAbs(a.blue() - b.blue()))); };
+        const auto canvas = image.pixelColor(physical.topLeft()), content = image.pixelColor(physical.topRight());
+        for (int py = physical.top(); py <= physical.bottom(); ++py) for (int px = physical.left(); px <= physical.right(); ++px) {
+            const auto x = (px + .5) / scaleX - surface.x(), y = (py + .5) / scaleY - surface.y();
+            if (x < 0 || y < 0 || x >= surface.width() || y >= surface.height()) continue;
+            const bool verticalEdge = y < edge || y >= surface.height() - edge;
+            const bool sidebar = x < sidebarWidth;
+            const bool sidebarEdge = sidebar && (verticalEdge || x < edge || x >= sidebarWidth - edge);
+            const bool pageEdge = x >= sidebarWidth + 1 && (verticalEdge || x < sidebarWidth + 1 + edge
+                || x >= surface.width() - edge);
+            const bool barLane = !verticalEdge && x >= surface.width() - 16 && x < surface.width() - 8;
+            if (!(sidebarEdge || (pageEdge && !barLane))) continue;
+            const auto color = image.pixelColor(px, py), background = sidebar ? canvas : content;
+            const auto delta = distance(color, background);
+            if (delta <= 3) continue;
+            // Same one-pixel fringe classifier as the approved mock's measure.py:
+            // low-coverage antialias pixels beside a stronger horizontal pixel.
+            const int chroma = qMax(color.red(), qMax(color.green(), color.blue())) - qMin(color.red(), qMin(color.green(), color.blue()));
+            const bool fringe = delta < 96 && (chroma > 12 || delta < 16)
+                && ((px > physical.left() && distance(image.pixelColor(px - 1, py), background) > delta)
+                    || (px < physical.right() && distance(image.pixelColor(px + 1, py), background) > delta));
+            if (!fringe) return QString("unexpected edge pixel at %1,%2: %3 (background %4)").arg(px).arg(py).arg(color.name(), background.name());
+        }
+        return {};
+    }
     Q_INVOKABLE QVariantList pixels(QObject *object, const QVariantList &points)
     {
         auto *item = qobject_cast<QQuickItem *>(object);
@@ -105,7 +265,11 @@ public slots:
     void qmlEngineAvailable(QQmlEngine *engine)
     {
         configureInterActive(*engine);
-        auto *harness = new QuickHarness(fixture);
+        // Render fixtures own this engine's appearance. Live portal binding
+        // and palette fallbacks have their own integration probe.
+        auto *appearance = engine->singletonInstance<InterActive::Appearance *>("InterActive.Foundation", "Appearance");
+        if (!appearance) qFatal("missing test appearance singleton");
+        auto *harness = new QuickHarness(fixture, *appearance);
         harness->setParent(engine);
         QQmlEngine::setObjectOwnership(harness, QQmlEngine::CppOwnership);
         engine->setProperty("aerialHarness", QVariant::fromValue<QObject *>(harness));

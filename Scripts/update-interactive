@@ -16,6 +16,15 @@ def git(source, *args):
     return subprocess.check_output(["git", "-C", str(source), *args])
 
 
+def git_mode(mode):
+    # Git records only the owner's executable bit for regular files.
+    return 0o755 if mode & stat.S_IXUSR else 0o644
+
+
+def source_inventory(files):
+    return {name: (git_mode(mode), content) for name, (mode, content) in files.items() if name != "VENDOR.md"}
+
+
 def archive_files(archive):
     files = {}
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -29,7 +38,7 @@ def archive_files(archive):
                 raise ValueError(f"unsupported archive entry: {entry.name}")
             # Git tracks the executable bit, not tar's configurable group-write
             # mask. Materialize the canonical Git regular-file modes.
-            files[entry.name] = (0o755 if entry.mode & 0o111 else 0o644, tar.extractfile(entry).read())
+            files[entry.name] = (git_mode(entry.mode), tar.extractfile(entry).read())
     if not files:
         raise ValueError("empty source archive")
     return files
@@ -77,15 +86,33 @@ def verify_complete_tree(source, commit, files):
         raise ValueError("archive includes untracked inputs")
 
 
-def provenance(tag, commit, tree, digest):
+def patched_files(repo, files, patches):
+    if not patches:
+        return files
+    # Apply declared source corrections only to an isolated copy. The signed
+    # archive is still verified in full before any downstream change is made.
+    with tempfile.TemporaryDirectory(prefix=".interactive-patches-", dir=repo / "third_party") as temporary:
+        stage = Path(temporary)
+        for name, (mode, content) in files.items():
+            path = stage / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            path.chmod(mode)
+        for _, payload in patches:
+            subprocess.run(["git", "apply", "--whitespace=error", "--directory=" + stage.relative_to(repo).as_posix(), "-"], cwd=repo, input=payload, check=True)
+        return source_inventory(inventory(stage))
+
+
+def provenance(tag, commit, tree, digest, patches=()):
     return ("# InterActive source provenance\n\n"
-            "Aerial-owned metadata; all other files are the complete upstream git archive.\n\n"
+            "Complete signed upstream git archive, followed by the declared Aerial-owned patches below.\n\n"
             f"Tag: {tag}\nCommit: {commit}\nTree: {tree}\nArchive-SHA256: {digest}\n\n"
             "Source: ~/Projects/interactive.release (signed annotated local release).\n"
             "License: LGPL-3.0-or-later; see LICENSE.md, COPYING and COPYING.LESSER.\n"
             "Material Color Utilities: Apache-2.0; see third_party/material-color-utilities/\n"
             "LICENSE and README.md. No source files are omitted.\n\n"
-            f"Refresh from the Aerial repository: `Scripts/update-interactive {tag}`.\n")
+            f"Refresh from the Aerial repository: `Scripts/update-interactive {tag}`.\n"
+            + "".join(f"Patch: {name} {hashlib.sha256(payload).hexdigest()}\n" for name, payload in patches))
 
 
 def publish(stage, dest, validated):
@@ -134,15 +161,20 @@ def refresh(source, repo, tag):
     digest = hashlib.sha256(archive).hexdigest()
     files = archive_files(archive)
     verify_complete_tree(source, commit, files)
-    metadata = provenance(tag, commit, tree, digest)
     dest = repo / "third_party/interactive"
     if dest.parent.is_symlink() or dest.is_symlink():
         raise ValueError("vendor destination is a symlink")
+    patch_root = repo / "third_party/interactive-patches"
+    patches = [(p.relative_to(patch_root).as_posix(), p.read_bytes()) for p in sorted((patch_root / tag).glob("*.patch"))]
+    (repo / "third_party").mkdir(parents=True, exist_ok=True)
+    files = patched_files(repo, files, patches)
+    metadata = provenance(tag, commit, tree, digest, patches)
     validated = None
     if dest.exists():
         validated = inventory(dest, include_notice=True)
-        current = dict(validated)
-        notice = current.pop("VENDOR.md", None)
+        # Source identity uses Git modes; backup equality keeps actual modes.
+        current = source_inventory(validated)
+        notice = validated.get("VENDOR.md")
         recorded = notice[1].decode() if notice else ""
         if current == files and recorded == metadata:
             print(f"InterActive {tag}: unchanged ({digest})")
@@ -158,12 +190,24 @@ def refresh(source, repo, tag):
         old_commit = fields["Commit"]
         if len(old_commit) not in (40, 64) or any(c not in "0123456789abcdef" for c in old_commit):
             raise ValueError("invalid vendor commit identity")
-        old = git(source, "archive", "--format=tar", old_commit)
+        old = git(source, "-c", "tar.umask=0002", "archive", "--format=tar", old_commit)
         old_files = archive_files(old)
         if git(source, "rev-parse", f"{old_commit}^{{tree}}").decode().strip() != fields["Tree"]:
             raise ValueError("recorded vendor tree does not match its commit")
         verify_complete_tree(source, old_commit, old_files)
-        if current != old_files:
+        old_patches = []
+        for line in recorded.splitlines():
+            if not line.startswith("Patch: "):
+                continue
+            name, sha = line[7:].split()
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts or not (patch_root / relative).is_file():
+                raise ValueError("recorded vendor patch changed or is unavailable")
+            payload = (patch_root / relative).read_bytes()
+            if hashlib.sha256(payload).hexdigest() != sha:
+                raise ValueError("recorded vendor patch changed or is unavailable")
+            old_patches.append((name, payload))
+        if current != patched_files(repo, old_files, old_patches):
             raise ValueError("vendor contains manual edits")
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".interactive-refresh-", dir=dest.parent) as temporary:

@@ -89,6 +89,7 @@ def native(args):
     owned.check(require_binaries=True)
     env = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
     env.pop("QT_QPA_PLATFORM", None)
+    env.pop("QT_QUICK_BACKEND", None)
     owned.check_session(owned.record["session"], env)
     source = owned.paths["source"]
     version = qt_version(owned.paths["build"])
@@ -261,6 +262,7 @@ def main():
             owned = OwnedInstance(args.vm_record, args.root); owned.check(require_binaries=True)
             environment = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl")
             environment.pop("QT_QPA_PLATFORM", None)
+            environment.pop("QT_QUICK_BACKEND", None)
             owned.check_session(owned.record["session"], environment)
             output = args.root / "results" / ("settings-" + args.case + "-" + str(time.time_ns())); output.mkdir(mode=0o700)
             if args.case in ("portals", "tray", "units", "install"):

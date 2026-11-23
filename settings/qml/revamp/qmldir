@@ -1,0 +1,10 @@
+singleton Insets 1.0 Insets.qml
+Shell 1.0 Shell.qml
+Sidebar 1.0 Sidebar.qml
+PageScaffold 1.0 PageScaffold.qml
+SettingsSection 1.0 SettingsSection.qml
+SettingRow 1.0 SettingRow.qml
+StatusHeader 1.0 StatusHeader.qml
+StorageMeter 1.0 StorageMeter.qml
+Overview 1.0 Overview.qml
+EmptyPage 1.0 EmptyPage.qml

@@ -69,7 +69,7 @@ QVariantMap StatusModel::project(const Client::ServiceConnection::Snapshot &snap
         {"NoAllowedResolution", "no quality allowed"}, {"NoRemoteSources", "no online sources"}, {"CacheFull", "cache full"}, {"PlaybackProtected", "videos in use"}};
     QString headline = !available ? "Service not running" : reason == "StorageError" ? "Cache needs attention"
         : reason == "InvalidConfig" ? "Settings need attention" : downloading ? "Downloading " + details.value("assetTitle", "video").toString()
-        : paused ? "Paused" : !reason.isEmpty() && reason != "None" ? "Waiting: " + reasons.value(reason, reason) : "Up to date, " + ready;
+        : paused ? "Paused" : !reason.isEmpty() && reason != "None" ? "Waiting: " + reasons.value(reason, "checking download conditions") : "Up to date, " + ready;
     auto summary = headline;
     if (available && downloading && known && !needsAttention(p)) summary += ", " + QString::number(int(qMin(100.L, 100.L * received / total))) + "%";
     const auto receivedText = CacheController::bytes(received), totalText = known ? CacheController::bytes(total) : QString("unknown size");
@@ -79,7 +79,8 @@ QVariantMap StatusModel::project(const Client::ServiceConnection::Snapshot &snap
         {"detail", available && downloading ? receivedText + " of " + totalText : QString()},
         {"downloading", available && downloading}, {"source", details.value("sourceName").toString()},
         {"progressKnown", available && known}, {"progress", available ? progress : 0.}, {"received", receivedText}, {"total", totalText},
-        {"readyCount", QVariant::fromValue(count)}, {"ready", ready}, {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))},
+        {"readyCount", QVariant::fromValue(count)}, {"ready", ready}, {"readyCountText", QString::number(count) + (count == 1 ? " video" : " videos")},
+        {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))},
         {"nextCheckText", localTime(p.value("NextCheck"))}, {"lastCheck", "Last check: " + localTime(p.value("LastCheck"))}, {"reason", reason},
         {"attention", needsAttention(p)}, {"badge", available ? badge(p, downloading, paused) : "problem"},
         {"primaryActionId", editable ? (downloading ? "stop-download" : "fetch-videos") : ""},

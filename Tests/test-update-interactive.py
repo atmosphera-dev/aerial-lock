@@ -97,6 +97,22 @@ class VendorRefresh(unittest.TestCase):
         self.assertIn(("-c", "tar.umask=0002", "archive", "--format=tar", commit), calls)
         self.assertEqual(sum("refs/tags/v1" in arg for call in calls for arg in call), 1)
 
+    def test_patch_digest_matches_applied_snapshot(self):
+        patches = self.repo / "third_party/interactive-patches/v1"
+        patches.mkdir(parents=True)
+        declared = patches / "0001-fixture.patch"
+        payload = b"diff --git a/tool b/tool\n--- a/tool\n+++ b/tool\n@@ -1,2 +1,2 @@\n #!/bin/sh\n-exit 0\n+exit 1\n"
+        declared.write_bytes(payload)
+        original = vendor_refresh.patched_files
+        def edit_after_apply(*args):
+            result = original(*args)
+            declared.write_bytes(payload.replace(b"exit 1", b"exit 2"))
+            return result
+        with patch.object(vendor_refresh, "patched_files", side_effect=edit_after_apply):
+            vendor_refresh.refresh(self.upstream, self.repo, "v1")
+        self.assertEqual((self.vendor / "tool").read_text(), "#!/bin/sh\nexit 1\n")
+        self.assertIn(hashlib.sha256(payload).hexdigest(), (self.vendor / "VENDOR.md").read_text())
+
     def test_rollback_failure_preserves_backup(self):
         self.vendor.mkdir(parents=True)
         (self.vendor / "retained").write_text("previous")
@@ -153,9 +169,28 @@ class VendorRefresh(unittest.TestCase):
         self.update("v1", success=False)
         self.assertEqual((self.vendor / "COPYING").read_text(), "new fixture license\n")
 
+    def test_group_writable_checkout_can_refresh(self):
+        self.update()
+        self.git(self.repo, "add", "third_party/interactive")
+        self.git(self.repo, "commit", "-qm", "vendor fixture")
+        self.vendor.rename(self.root / "original-vendor")
+        subprocess.run(["git", "-C", str(self.repo), "checkout-index", "--all"], umask=0o002, check=True)
+        self.assertEqual((self.vendor / "COPYING").stat().st_mode & 0o777, 0o664)
+        self.assertEqual((self.vendor / "tool").stat().st_mode & 0o777, 0o775)
+        self.assertEqual(self.git(self.repo, "status", "--porcelain", "--", "third_party/interactive"), b"")
+        with self.subTest(action="noop"):
+            self.assertIn("unchanged", self.update().stdout)
+        (self.upstream / "COPYING").write_text("new fixture license\n")
+        self.git(self.upstream, "commit", "-qam", "fixture update")
+        self.git(self.upstream, "tag", "-s", "v2", "-m", "fixture release")
+        with self.subTest(action="upgrade"):
+            self.update("v2")
+            self.assertEqual((self.vendor / "COPYING").read_text(), "new fixture license\n")
+            self.assertFalse(list(self.vendor.parent.glob(".interactive-backup-*")))
+
     def test_publication_preserves_edits_after_validation(self):
         self.update()
-        for tag, name in (("v2", "COPYING"), ("v3", "VENDOR.md")):
+        for tag, name in (("v2", "COPYING"), ("v3", "VENDOR.md"), ("v4", "tool")):
             with self.subTest(name=name):
                 self.git(self.repo, "add", "third_party/interactive")
                 self.git(self.repo, "commit", "-qm", "vendor fixture")
@@ -165,14 +200,20 @@ class VendorRefresh(unittest.TestCase):
                 publish = vendor_refresh.publish
 
                 def edit_before_publish(*args):
-                    (self.vendor / name).write_text("late local edit\n")
+                    if name == "tool":
+                        (self.vendor / name).chmod(0o775)
+                    else:
+                        (self.vendor / name).write_text("late local edit\n")
                     return publish(*args)
 
                 with patch.object(vendor_refresh, "publish", side_effect=edit_before_publish):
                     with self.assertRaisesRegex(ValueError, "previous vendor retained") as error:
                         vendor_refresh.refresh(self.upstream, self.repo, tag)
                 previous = Path(str(error.exception).rsplit(" at ", 1)[1])
-                self.assertEqual((previous / name).read_text(), "late local edit\n")
+                if name == "tool":
+                    self.assertEqual((previous / name).stat().st_mode & 0o777, 0o775)
+                else:
+                    self.assertEqual((previous / name).read_text(), "late local edit\n")
                 self.assertEqual((self.vendor / "COPYING").read_text(), tag + " license\n")
 
     def test_export_attributes_cannot_omit_tracked_source(self):
@@ -200,6 +241,51 @@ class VendorRefresh(unittest.TestCase):
         result = self.update(success=False)
         self.assertIn("vendor is dirty", result.stderr)
         self.assertIn("Commit: --remote=invalid", notice.read_text())
+
+    def test_declared_patch_is_reproducible_and_manual_edits_still_fail(self):
+        self.update()
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "vendor fixture")
+        patches = self.repo / "third_party/interactive-patches/v1"
+        patches.mkdir(parents=True)
+        patch = patches / "0001-fixture.patch"
+        patch.write_text("diff --git a/tool b/tool\n--- a/tool\n+++ b/tool\n@@ -1,2 +1,2 @@\n #!/bin/sh\n-exit 0\n+exit 1\n")
+        self.update()
+        self.assertEqual((self.vendor / "tool").read_text(), "#!/bin/sh\nexit 1\n")
+        self.assertIn("Patch: v1/0001-fixture.patch " + hashlib.sha256(patch.read_bytes()).hexdigest(), (self.vendor / "VENDOR.md").read_text())
+        self.assertIn("unchanged", self.update().stdout)
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "patched vendor fixture")
+        (self.vendor / "tool").write_text("manual change")
+        self.update(success=False)
+        self.assertEqual((self.vendor / "tool").read_text(), "manual change")
+
+    def test_changed_recorded_patch_cannot_relabel_vendor(self):
+        patches = self.repo / "third_party/interactive-patches/v1"
+        patches.mkdir(parents=True)
+        patch = patches / "0001-fixture.patch"
+        patch.write_text("diff --git a/tool b/tool\n--- a/tool\n+++ b/tool\n@@ -1,2 +1,2 @@\n #!/bin/sh\n-exit 0\n+exit 1\n")
+        self.update()
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "patched vendor fixture")
+        patch.write_text(patch.read_text().replace("exit 1", "exit 2"))
+        self.update(success=False)
+        self.assertEqual((self.vendor / "tool").read_text(), "#!/bin/sh\nexit 1\n")
+
+    def test_new_tag_can_retire_its_predecessors_patch(self):
+        patches = self.repo / "third_party/interactive-patches/v1"
+        patches.mkdir(parents=True)
+        (patches / "0001-fixture.patch").write_text("diff --git a/tool b/tool\n--- a/tool\n+++ b/tool\n@@ -1,2 +1,2 @@\n #!/bin/sh\n-exit 0\n+exit 1\n")
+        self.update()
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "patched vendor fixture")
+        (self.upstream / "tool").write_text("#!/bin/sh\nexit 1\n")
+        self.git(self.upstream, "commit", "-qam", "upstream correction")
+        self.git(self.upstream, "tag", "-s", "v2", "-m", "upstream corrected fixture")
+        self.update("v2")
+        self.assertEqual((self.vendor / "tool").read_text(), "#!/bin/sh\nexit 1\n")
+        self.assertNotIn("Patch:", (self.vendor / "VENDOR.md").read_text())
+        self.assertIn("unchanged", self.update("v2").stdout)
 
 
 if __name__ == "__main__":

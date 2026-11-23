@@ -15,6 +15,7 @@ public:
     NoticesModel(Client::ServiceConnection &service, SourcesController &sources, SystemdController &systemd, StatusModel &status, QObject *parent = nullptr);
     QVariantList entries() const { return current; }
     QVariantMap idle() const;
+    void setDownloadErrors(const QString &download, const QString &automatic);
     static QString connectionDiagnostic(const Client::ServiceConnection &service);
 signals:
     void changed();
@@ -25,5 +26,6 @@ private:
     SystemdController &systemd;
     StatusModel &status;
     QVariantList current;
+    QString downloadError, automaticError;
 };
 }

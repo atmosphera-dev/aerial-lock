@@ -35,6 +35,10 @@ SettingsController::SettingsController(Client::ServiceConnection &service, QObje
     connect(this, &SettingsController::changed, this, [this] {
         const auto automatic = controls().value("automatic").toMap();
         statusModel()->setAutomaticIntent(automatic.value("on").toBool(), automatic.value("pending").toBool());
+        noticesModel.setDownloadErrors(cacheController.error(), errors.value("automatic"));
+    });
+    connect(&cacheController, &CacheController::changed, this, [this] {
+        noticesModel.setDownloadErrors(cacheController.error(), errors.value("automatic"));
     });
     connect(&service, &Client::ServiceConnection::changed, this, &SettingsController::sampled);
     connect(&service, &Client::ServiceConnection::mutationFinished, this, [this](quint64 id, const QVariant &result, const QString &error) {
