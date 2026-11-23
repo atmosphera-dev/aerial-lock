@@ -14,8 +14,18 @@ import tarfile
 import time
 
 
-def digest(path):
+def file_digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def binary_hashes(*roots):
+    # Provisioning deploys this script alone; the ownership module arrives
+    # with the product source for run-group. Record links and payloads using
+    # the same digest contract as the manifest validator.
+    from owned_instance import digest
+
+    return {str(path): digest(path) for root in roots for path in root.rglob('*')
+            if path.is_file() and (os.access(path, os.X_OK) or path.suffix == '.so')}
 
 
 def inventory():
@@ -25,7 +35,7 @@ def inventory():
     databases = {}
     for database in sorted(Path('/var/lib/pacman/sync').glob('*.db')):
         repository = database.stem
-        databases[repository] = digest(database)
+        databases[repository] = file_digest(database)
         with tarfile.open(database) as archive:
             for member in archive:
                 if not member.name.endswith('/desc'):
@@ -165,9 +175,9 @@ def run_group(request_path):
             payload = paths['stage'] / 'usr/libexec/aerial-lock' / name
             target = '/usr/libexec/aerial-lock/' + name
             subprocess.run(['sudo', '-n', 'install', '-Dm755', str(payload), target], check=True, timeout=10)
-            if digest(payload) != digest(target):
+            if file_digest(payload) != file_digest(target):
                 raise RuntimeError('installed compiled-path payload does not match staged bytes')
-            installed[target] = digest(target)
+            installed[target] = file_digest(target)
         summary['phase'] = 'outer-session'
         # Arch grants Sway a scheduler file capability. That makes its /proc
         # identity non-dumpable to the unprivileged owner, breaking the existing
@@ -202,8 +212,7 @@ def run_group(request_path):
         secret = root / 'run/pam-fixture-secret'
         secret.write_text(password + '\n')
         secret.chmod(0o600)
-        binaries = {str(path): digest(path) for parent in (paths['stage'], paths['build'])
-                    for path in parent.rglob('*') if path.is_file() and (os.access(path, os.X_OK) or path.suffix == '.so')}
+        binaries = binary_hashes(paths['stage'], paths['build'])
         identity = hashlib.sha256(json.dumps(request['source_files'], sort_keys=True).encode()).hexdigest()
         record = dict(version=1, host=request['host'], domain=request['domain'], base_domain=request['base_domain'],
             uuid=request['uuid'], mac=request['mac'], host_identity=dict(uuid=request['uuid'], mac=request['mac']),

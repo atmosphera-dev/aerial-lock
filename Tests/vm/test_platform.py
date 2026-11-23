@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """VM-platform contracts. Execute only inside a disposable project VM."""
 import http.server
+import hashlib
 import importlib.util
 import io
 import json
@@ -29,6 +30,25 @@ guest_spec.loader.exec_module(guest)
 publish_spec = importlib.util.spec_from_file_location('aerial_image_publisher', Path(__file__).with_name('publish_image.py'))
 publisher = importlib.util.module_from_spec(publish_spec)
 publish_spec.loader.exec_module(publisher)
+
+
+class GuestBinaryInventory(unittest.TestCase):
+    def test_staged_qml_library_link_and_payload_have_distinct_identities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / 'lib/libcontrols.so'
+            link = root / 'qml/Controls/libcontrols.so'
+            payload.parent.mkdir()
+            payload.write_bytes(b'library bytes')
+            link.parent.mkdir(parents=True)
+            target = '../../lib/libcontrols.so'
+            link.symlink_to(target)
+            with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1]), *sys.path]):
+                hashes = guest.binary_hashes(root)
+            self.assertEqual(hashes, {
+                str(payload): hashlib.sha256(b'library bytes').hexdigest(),
+                str(link): hashlib.sha256(os.fsencode(target)).hexdigest(),
+            })
 
 
 class Channel:
@@ -930,7 +950,7 @@ class ShadowBackupRegression(unittest.TestCase):
                         patch.object(guest.sys, 'path', list(sys.path)), \
                         patch.object(guest.importlib.util, 'spec_from_file_location', return_value=Mock()), \
                         patch.object(guest.importlib.util, 'module_from_spec', return_value=driver), \
-                        patch.object(guest, 'digest', return_value='same-helper'), \
+                        patch.object(guest, 'file_digest', return_value='same-helper'), \
                         patch.object(guest.Path, 'is_socket', return_value=True), \
                         patch.object(guest.subprocess, 'run', side_effect=run), \
                         patch.object(guest.subprocess, 'check_output', side_effect=output):
