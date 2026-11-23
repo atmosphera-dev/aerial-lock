@@ -4,7 +4,7 @@ import AerialLock.SettingsTest
 import InterActive
 import InterActive.Components
 import InterActive.Foundation as IA
-import "../qml/revamp" as UI
+import "../qml" as UI
 
 TestCase {
     id: test
@@ -14,11 +14,11 @@ TestCase {
     visible: true
     when: windowShown
     readonly property var pages: [
-        { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/revamp/icons/sky.svg") },
-        { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/revamp/icons/stack.svg") },
-        { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/revamp/icons/download.svg") },
-        { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/revamp/icons/lock.svg") },
-        { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/revamp/icons/info.svg") }
+        { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/icons/sky.svg") },
+        { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/icons/stack.svg") },
+        { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/icons/download.svg") },
+        { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/icons/lock.svg") },
+        { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/icons/info.svg") }
     ]
     UI.Shell {
         id: shell
@@ -66,14 +66,14 @@ TestCase {
     SignalSpy { id: pageRequest; target: Harness; signalName: "pageRequested" }
     Component { id: statusComponent; UI.StatusHeader { x: 237; y: 24; width: 379 } }
     Component { id: meterComponent; UI.StorageMeter { x: 237; y: 300; width: 180 } }
-    Component { id: resourceIcon; IA.Icon { x: 260; y: 50; width: 22; height: 22; source: "qrc:/settings/qml/revamp/icons/sky.svg" } }
+    Component { id: resourceIcon; IA.Icon { x: 260; y: 50; width: 22; height: 22; source: "qrc:/settings/qml/icons/sky.svg" } }
     Component {
         id: bannerComponent
         IAStatusBanner {
             x: 237; y: 82; width: 379
             title: "The screen doesn't lock by itself"
             message: "Automatic locking needs the aerial-idle service, and it isn't running."
-            iconSource: Qt.resolvedUrl("../qml/revamp/icons/alert.svg")
+            iconSource: Qt.resolvedUrl("../qml/icons/alert.svg")
             actionText: "Open About"
         }
     }
@@ -198,11 +198,17 @@ TestCase {
         mouseClick(findChild(overview, "overviewPrimary"));
         tryVerify(() => Harness.cache.activity.length > 0 && Harness.cache.activity[0].error);
         tryVerify(() => findChild(overview, "activity-" + Harness.cache.activity[0].path) !== null);
-        overview.viewport.contentY = Math.max(0, overview.viewport.contentHeight - overview.viewport.height);
         verify(waitForPolish(test.Window.window));
         const activity = findChild(overview, "activity-" + Harness.cache.activity[0].path);
+        const action = findChild(activity, "activityAction");
+        const viewport = overview.viewport;
+        const center = () => action.mapToItem(viewport, action.width / 2, action.height / 2);
+        // The failing job is first in Recent activity, not necessarily at the end of the page.
+        viewport.contentY = Math.max(0, Math.min(viewport.contentHeight - viewport.height,
+            viewport.contentY + center().y - viewport.height / 2));
+        tryVerify(() => center().y >= 0 && center().y < viewport.height);
         pageRequest.clear();
-        mouseClick(findChild(activity, "activityAction"));
+        mouseClick(action);
         compare(pageRequest.count, 1); compare(pageRequest.signalArguments[0][0], "sources");
         compare(findChild(overview, "overviewReady").text, Harness.statusModel.facts.readyCountText);
         compare(findChild(overview, "overviewNextCheck").text, Harness.statusModel.facts.nextCheckText);
@@ -281,6 +287,10 @@ TestCase {
                 verify(waitForPolish(test.Window.window));
                 const state = findChild(unavailable, "emptyState");
                 const point = state.mapToItem(unavailable, 0, 0);
+                const retry = findChild(unavailable, "connectionRetry");
+                verify(retry.visible);
+                compare(state.contentItem.mapToItem(unavailable, 0, 0).x,
+                    retry.mapToItem(unavailable, 0, 0).x);
                 verify(state.width <= 420);
                 verify(point.x >= 24 && point.y >= 24);
                 verify(point.x + state.width <= unavailable.width - 24);

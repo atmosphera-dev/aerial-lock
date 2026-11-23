@@ -1,16 +1,28 @@
 #include "fixture.h"
 #include "window-controller.h"
 #include <QApplication>
+#include <QDBusConnectionInterface>
+#include <QDBusReply>
 #include <QImage>
 #include <QFileInfo>
-#include <QPalette>
+#include <QSaveFile>
+#include <Appearance.h>
 #include <QQuickWindow>
 #include <QQuickItem>
 #include <QJsonArray>
-#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QtQuickTest>
 using namespace Aerial::Settings;
+namespace {
+bool saveJson(const QString &path, const QJsonDocument &document)
+{
+    QSaveFile file(path);
+    const auto data = document.toJson();
+    if (file.open(QIODevice::WriteOnly) && file.write(data) == data.size() && file.commit()) return true;
+    qCritical() << "could not publish visual evidence:" << path << file.errorString();
+    return false;
+}
+}
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
@@ -26,18 +38,25 @@ int main(int argc, char **argv)
     }
     const bool pages = argc == 4 && QString::fromLocal8Bit(argv[1]) == "--pages";
     if (argc != 3 && !pages) return 2;
-    const bool dark = QString::fromLocal8Bit(argv[pages ? 2 : 1]) == "dark";
+    const auto scheme = QString::fromLocal8Bit(argv[pages ? 2 : 1]);
+    if (scheme != "dark" && scheme != "light") return 2;
     const auto destination = QString::fromLocal8Bit(argv[pages ? 3 : 2]);
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor(dark ? "#070722" : "#e6e8fa"));
-    palette.setColor(QPalette::Base, QColor(dark ? "#11112d" : "#f4f5ff"));
-    palette.setColor(QPalette::WindowText, QColor(dark ? "#f3edf7" : "#0e0e43"));
-    palette.setColor(QPalette::Text, palette.color(QPalette::WindowText));
-    palette.setColor(QPalette::PlaceholderText, QColor(dark ? "#7c80b4" : "#6c70a3"));
-    palette.setColor(QPalette::Mid, QColor(dark ? "#21215f" : "#c6c9f2"));
-    palette.setColor(QPalette::Accent, QColor(dark ? "#fff59b" : "#5d65f5"));
-    palette.setColor(QPalette::Highlight, QColor(dark ? "#a9aefe" : "#5d65f5"));
-    palette.setColor(QPalette::HighlightedText, QColor(dark ? "#0e0e43" : "#ffffff"));
+    if (pages && (!QDir().mkpath(destination)
+            || !QDir(destination).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot))) {
+        qCritical() << "page captures require an empty output directory:" << destination;
+        return 1;
+    }
+    // Like the acceptance wrapper, capture on a private bus without an
+    // appearance portal. The production bridge alone owns the IA singleton.
+    auto *bus = QDBusConnection::sessionBus().interface();
+    const auto portal = bus ? bus->isServiceRegistered("org.freedesktop.portal.Desktop") : QDBusReply<bool>();
+    if (!portal.isValid() || portal.value()) {
+        qCritical() << "run settings-visual-probe through Tests/run-settings-test.py for a private appearance bus";
+        return 1;
+    }
+    auto palette = QApplication::palette();
+    palette.setColor(QPalette::Window, QColor(scheme == "dark" ? "#202124" : "#f4f5f7"));
+    palette.setColor(QPalette::Highlight, QColor("#5795ec"));
     QApplication::setPalette(palette);
     registerTypes();
     Test::Fixture fixture;
@@ -57,10 +76,12 @@ int main(int argc, char **argv)
         if (!QTest::qWaitFor([&] { return !fixture.control("automatic").value("pending").toBool(); })) return 1;
     }
     WindowController window(*fixture.controller);
-    window.open();
+    window.open({}, pages ? SettingsController::OverviewPage : SettingsController::DownloadsPage);
     QQuickWindow *quick = nullptr;
     for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
     if (!quick || !QTest::qWaitForWindowExposed(quick)) return 1;
+    auto *appearance = qmlEngine(quick)->singletonInstance<InterActive::Appearance *>("InterActive.Foundation", "Appearance");
+    if (!appearance || appearance->scheme() != scheme) return 1;
     QProcess inventory;
     inventory.start("niri", {"msg", "-j", "windows"});
     if (!inventory.waitForFinished() || inventory.exitCode()) return 1;
@@ -71,7 +92,7 @@ int main(int argc, char **argv)
         if (candidate.value("pid").toInteger() != app.applicationPid()) continue;
         const auto id = QString::number(candidate.value("id").toInteger());
         nativeWindow = id;
-        for (const QStringList &command : {QStringList{"move-window-to-floating", "--id", id}, QStringList{"set-window-width", "--id", id, "960"}, QStringList{"set-window-height", "--id", id, "941"}}) {
+        for (const QStringList &command : {QStringList{"move-window-to-floating", "--id", id}, QStringList{"set-window-width", "--id", id, "920"}, QStringList{"set-window-height", "--id", id, "760"}}) {
             QProcess resize;
             resize.start("niri", QStringList{"msg", "action"} + command);
             if (!resize.waitForFinished() || resize.exitCode()) return 1;
@@ -84,13 +105,14 @@ int main(int argc, char **argv)
         const auto panel = fixture.controller->panel();
         const bool sourceOpen = fixture.controller->sources()->sheetOpen();
         const bool cleanupOpen = fixture.controller->cache()->cleanup().value("visible").toBool();
-        const QStringList pages{"downloadsPage", "sourcesPage", "cachePage", "lockPage", "aboutPage"};
+        const QStringList pages{"overviewPage", "sourcesPage", "downloadsPage", "lockPage", "aboutPage"};
         const auto expected = [&] {
-            const auto name = panel == "settings" ? pages.value(page) : QString("servicePanel");
+            if (appearance->scheme() != scheme) return false;
+            const auto name = (panel == "settings" || page == SettingsController::AboutPage) ? pages.value(page) : QString("servicePanel");
             auto *item = quick->findChild<QQuickItem *>(name);
             if (name.isEmpty() || !item || !item->isVisible() || item->width() <= 0 || item->height() <= 0
                 || fixture.controller->panel() != panel || quick->property("page").toInt() != page) return false;
-            for (const auto &sheet : {qMakePair(QString("sourceSheet"), sourceOpen), qMakePair(QString("cleanupSheet"), cleanupOpen)}) {
+            for (const auto &sheet : {qMakePair(QString("sourceSheet"), sourceOpen), qMakePair(QString("cleanupDialog"), cleanupOpen)}) {
                 auto *popup = quick->findChild<QObject *>(sheet.first);
                 if (!popup || popup->property("visible").toBool() != sheet.second || popup->property("opened").toBool() != sheet.second) return false;
             }
@@ -103,7 +125,6 @@ int main(int argc, char **argv)
             && expected() && !QQuickTest::qIsPolishScheduled(quick);
     };
     const auto captureNative = [&](const QString &path) {
-        if (!ready(quick->property("page").toInt())) return false;
         QProcess focus; focus.start("niri", {"msg", "action", "focus-window", "--id", nativeWindow});
         if (!focus.waitForFinished() || focus.exitCode()) return false;
         QProcess capture; capture.start("niri", {"msg", "action", "screenshot-window", "--path", path});
@@ -112,54 +133,89 @@ int main(int argc, char **argv)
             QFile file(path); return file.open(QIODevice::ReadOnly) && file.readAll().endsWith(QByteArray::fromHex("49454e44ae426082"));
         }, 5000);
     };
-    if (!ready(0)) return 1;
+    if (!ready(window.page())) return 1;
     if (pages) {
-        if (!QDir().mkpath(destination)) return 1;
-        QJsonObject geometry;
-        const QStringList names{"downloads", "sources", "cache", "lock", "about"};
-        for (int i = 0; i < names.size(); ++i) {
-            quick->setProperty("page", i);
-            if (!ready(i)) return 1;
-            bool sidebarAligned = false;
-            std::function<void(QQuickItem *)> inspect = [&](QQuickItem *item) {
-                if (item->objectName() == "sidebarStatus" && item->isVisible()) {
-                    const auto gap = quick->height() - item->mapToScene({0, item->height()}).y();
-                    sidebarAligned = qAbs(gap - 16) <= 1;
+        const QStringList names{"overview", "sources", "downloads", "lock-screen", "about"};
+        const auto resize = [&](int width, int height) {
+            for (const auto &[axis, value] : {std::pair{"width", width}, std::pair{"height", height}}) {
+                QProcess command;
+                command.start("niri", {"msg", "action", QString("set-window-") + axis, "--id", nativeWindow, QString::number(value)});
+                if (!command.waitForFinished() || command.exitCode()) return false;
+            }
+            return QTest::qWaitFor([&] { return quick->size() == QSize(width, height); }, 5000);
+        };
+        const auto metrics = [&] {
+            QJsonArray items;
+            std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
+                if (!item->isVisible()) return;
+                if (!item->objectName().isEmpty()) {
+                    const auto origin = item->mapToScene({0, 0});
+                    items << QJsonObject{{"name", item->objectName()}, {"x", origin.x()}, {"y", origin.y()},
+                        {"width", item->width()}, {"height", item->height()}, {"contentX", item->property("contentX").toDouble()},
+                        {"contentY", item->property("contentY").toDouble()}, {"contentHeight", item->property("contentHeight").toDouble()}};
                 }
-                if (item->objectName() == "pageTitle" && item->isVisible()) {
-                    const auto point = item->mapToScene({0, 0});
-                    geometry[names[i]] = QJsonObject{{"titleY", point.y()}, {"titleHeight", item->height()}, {"headingHeight", item->parentItem()->height()}, {"headingY", item->parentItem()->mapToScene({0, 0}).y()}};
-                }
-                for (auto *child : item->childItems()) inspect(child);
+                for (auto *child : item->childItems()) visit(child);
             };
-            inspect(quick->contentItem());
-            if (!sidebarAligned) return 1;
-            if (!captureNative(destination + '/' + names[i] + ".png")) return 1;
-            if (i == 3) {
-                // The supported reference-height window scrolls on this page.
-                // Also retain a full lower-window frame, never a stitched crop.
-                std::function<QQuickItem *(QQuickItem *)> scrollable = [&](QQuickItem *item) -> QQuickItem * {
-                    if (!item->isVisible()) return nullptr;
-                    if (item->inherits("QQuickFlickable") && item->property("contentHeight").toDouble() > item->height()) return item;
-                    for (auto *child : item->childItems()) if (auto *found = scrollable(child)) return found;
-                    return nullptr;
-                };
-                auto *item = scrollable(quick->contentItem());
-                if (!item) return 1;
-                const auto top = item->property("contentY");
-                item->setProperty("contentY", item->property("contentHeight").toDouble() - item->height());
-                if (!captureNative(destination + "/lock-options.png")) return 1;
-                item->setProperty("contentY", top);
+            visit(quick->contentItem());
+            return items;
+        };
+        QJsonArray frames;
+        const auto shot = [&](const QString &name) {
+            const auto path = destination + '/' + name;
+            const QDeadlineTimer deadline(5000);
+            do {
+                if (!ready(quick->property("page").toInt())) break;
+                const auto before = metrics();
+                const auto size = quick->size();
+                QTemporaryDir pending(destination + "/.capture-XXXXXX");
+                if (!pending.isValid()) break;
+                const auto png = pending.filePath("frame.png");
+                if (!captureNative(png) || appearance->scheme() != scheme) break;
+                // Preview decoding can finish between the repaint and Niri's
+                // capture. Discard those bytes and only publish a stable pair.
+                if (before != metrics() || size != quick->size()) continue;
+                if (!QFile::rename(png, path + ".png") || !saveJson(path + ".json", QJsonDocument(before))) break;
+                frames << QJsonObject{{"name", name}, {"image", name + ".png"}, {"geometry", name + ".json"},
+                    {"width", size.width()}, {"height", size.height()}, {"scheme", scheme}};
+                return true;
+            } while (!deadline.hasExpired());
+            qCritical() << "could not publish a stable capture:" << name;
+            return false;
+        };
+        const auto page = [&](SettingsController::Page target) { window.open({}, target); };
+        for (const bool minimum : {false, true}) {
+            if (!resize(minimum ? 640 : 920, minimum ? 480 : 760)) return 1;
+            const auto prefix = minimum ? QStringLiteral("min-") : QString();
+            for (const auto target : {SettingsController::OverviewPage, SettingsController::SourcesPage,
+                     SettingsController::DownloadsPage, SettingsController::LockPage, SettingsController::AboutPage}) {
+                page(target);
+                const auto name = prefix + names[target];
+                if (!shot(name)) return 1;
+                QQuickItem *viewport = nullptr;
+                for (auto *candidate : quick->findChildren<QQuickItem *>("pageViewport"))
+                    if (candidate->isVisible()) { viewport = candidate; break; }
+                if (!viewport) return 1;
+                const auto range = viewport->property("contentHeight").toDouble() - viewport->height();
+                if (range > 0 && (target == SettingsController::DownloadsPage || target == SettingsController::LockPage)) {
+                    if (!minimum || target == SettingsController::DownloadsPage) {
+                        viewport->setProperty("contentY", range / 2);
+                        if (!shot(name + "-middle")) return 1;
+                    }
+                }
+                if (range > 0 && (target == SettingsController::DownloadsPage || target == SettingsController::LockPage
+                        || (minimum && (target == SettingsController::OverviewPage || target == SettingsController::AboutPage)))) {
+                    viewport->setProperty("contentY", range);
+                    if (!shot(name + "-end")) return 1;
+                    viewport->setProperty("contentY", 0);
+                }
             }
         }
-        quick->setProperty("page", 1);
+        if (!resize(920, 760)) return 1;
+        page(SettingsController::SourcesPage);
         fixture.controller->sources()->begin(); fixture.controller->sources()->field("name", "Drone flights");
         fixture.controller->sources()->field("source", "https://example.org/drones/manifest.json");
-        if (!captureNative(destination + "/source-sheet.png")) return 1;
+        if (!shot("add-source")) return 1;
         fixture.controller->sources()->dismiss();
-        const auto shot = [&](const QString &name) {
-            return captureNative(destination + '/' + name + ".png");
-        };
         auto *sources = fixture.controller->sources();
         sources->begin("drones");
         if (!shot("source-edit")) return 1;
@@ -184,7 +240,7 @@ int main(int argc, char **argv)
         sources->begin(); sources->field("name", "Keep my draft"); sources->field("source", "not a URL"); sources->save();
         if (sources->draft().value("error").toString().isEmpty() || !shot("source-validation")) return 1;
         sources->dismiss();
-        quick->setProperty("page", 2);
+        page(SettingsController::DownloadsPage);
         if (!shot("cache-empty-paused")) return 1;
         fixture.controller->cache()->prepareCleanup();
         if (!QTest::qWaitFor([&] { return fixture.controller->cache()->cleanup().value("state") == "confirm"; })) return 1;
@@ -193,7 +249,7 @@ int main(int argc, char **argv)
         fixture.cli({"content", "resume"});
         if (!QTest::qWaitFor([&] { return fixture.controller->status().startsWith("Waiting"); })) return 1;
         if (!shot("cache-waiting")) return 1;
-        quick->setProperty("page", 3);
+        page(SettingsController::LockPage);
         const auto customDir = QFileInfo(fixture.paths.config).absolutePath() + "/themes";
         QDir().mkpath(customDir);
         QFile custom(customDir + "/Macintosh.qml");
@@ -215,7 +271,7 @@ int main(int argc, char **argv)
         QFile obstruction(fixture.paths.state);
         if (!obstruction.open(QIODevice::WriteOnly)) return 1;
         obstruction.write("Owned visual fixture obstruction\n"); obstruction.close();
-        quick->setProperty("page", 2);
+        page(SettingsController::DownloadsPage);
         if (!start() || !QTest::qWaitFor([&] { return fixture.controller->serviceProperties().value("DeferReason") == "StorageError"; })) return 1;
         if (!shot("cache-storage-error")) return 1;
         if (!stop() || !obstruction.remove() || !QDir().rename(fixture.paths.state + ".retained", fixture.paths.state) || !start()) return 1;
@@ -234,29 +290,17 @@ int main(int argc, char **argv)
         if (!QTest::qWaitFor([&] { return fixture.controller->panel() == "diagnostic"; })) return 1;
         if (!shot("settings-unreadable")) return 1;
         if (!config.setPermissions(permissions) || !QTest::qWaitFor([&] { return fixture.controller->panel() == "settings"; })) return 1;
-        quick->setProperty("page", 1); sources->begin(); sources->field("name", "Draft survives owner loss");
+        page(SettingsController::SourcesPage); sources->begin(); sources->field("name", "Draft survives owner loss");
         if (!stop() || !shot("source-draft-owner-loss")) return 1;
         sources->dismiss();
-        if (!shot("service-unavailable")) return 1;
-        QFile receipt(destination + "/geometry.json"); if (!receipt.open(QIODevice::WriteOnly)) return 1;
-        receipt.write(QJsonDocument(geometry).toJson());
+        page(SettingsController::OverviewPage);
+        if (!shot("unavailable") || !resize(640, 480) || !shot("min-unavailable")) return 1;
+        if (!saveJson(destination + "/manifest.json",
+                QJsonDocument(QJsonObject{{"schema", 1}, {"qt", qVersion()}, {"fixture", "owned-service"}, {"frames", frames}}))) return 1;
     } else {
         const auto image = quick->grabWindow();
-        if (image.isNull() || !image.save(destination)) return 1;
+        if (image.isNull() || appearance->scheme() != scheme || !image.save(destination)) return 1;
     }
-    QQmlComponent paletteProbe(qmlEngine(quick));
-    paletteProbe.setData("import QtQuick\nimport \"qrc:/settings/qml/components\" as UI\nQtObject { readonly property color selected: UI.Style.selectionText\n readonly property color accent: UI.Style.accentText\n readonly property color direct: UI.Style.colors.highlightedText }", QUrl("qrc:/settings/palette-receipt.qml"));
-    std::unique_ptr<QObject> paletteObject(paletteProbe.create());
-    if (!paletteObject) return 1;
-    QFile paletteReceipt(destination + (pages ? "/palette.json" : ".palette.json"));
-    if (!paletteReceipt.open(QIODevice::WriteOnly)) return 1;
-    paletteReceipt.write(QJsonDocument(QJsonObject{{"requestedHighlightedText", palette.color(QPalette::HighlightedText).name()},
-        {"applicationHighlightedText", QApplication::palette().color(QPalette::HighlightedText).name()},
-        {"styleHighlightedText", paletteObject->property("selected").value<QColor>().name()},
-        {"styleAccentText", paletteObject->property("accent").value<QColor>().name()},
-        {"styleDirectHighlightedText", paletteObject->property("direct").value<QColor>().name()}}).toJson());
-    if (paletteObject->property("selected").value<QColor>() != palette.color(QPalette::HighlightedText)
-        || paletteObject->property("accent").value<QColor>() != palette.color(QPalette::HighlightedText)) return 1;
     // Natural window teardown and reconstruction exercise the production owner,
     // independently of tray lifetime (which is qualified in P6).
     quick->close();

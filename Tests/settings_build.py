@@ -5,7 +5,7 @@ from pathlib import Path
 from owned_instance import digest
 
 BASE_PROBES = ("settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe",
-               "settings-appearance-probe", "settings-revamp-probe", "virtual-pointer-probe", "interactive-runtime-probe")
+               "settings-appearance-probe", "virtual-pointer-probe", "interactive-runtime-probe")
 
 def source_identity(root, freeze):
     files = freeze["files"]

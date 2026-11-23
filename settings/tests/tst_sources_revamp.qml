@@ -4,7 +4,7 @@ import QtTest
 import AerialLock.SettingsTest
 import InterActive
 import InterActive.Foundation as IA
-import "../qml/revamp" as UI
+import "../qml" as UI
 
 TestCase {
     id: test
@@ -27,11 +27,11 @@ TestCase {
         anchors.fill: parent
         currentPage: "sources"
         pages: [
-            { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/revamp/icons/sky.svg") },
-            { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/revamp/icons/stack.svg") },
-            { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/revamp/icons/download.svg") },
-            { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/revamp/icons/lock.svg") },
-            { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/revamp/icons/info.svg") }
+            { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/icons/sky.svg") },
+            { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/icons/stack.svg") },
+            { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/icons/download.svg") },
+            { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/icons/lock.svg") },
+            { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/icons/info.svg") }
         ]
         UI.SourcesPage {
             id: page
@@ -223,6 +223,34 @@ TestCase {
         Harness.sources.save();
         verify(Harness.sources.sheetOpen); verify(Harness.sources.draft.error.length > 0);
         compare(findChild(dialog, "sourceName").text, "Keep my draft");
+    }
+    function test_conflictingSaveKeepsDraftAndGuardsMalformedConfig() {
+        Harness.sources.begin(""); tryCompare(dialog, "opened", true);
+        const name = findChild(dialog, "sourceName");
+        name.forceActiveFocus(); keyClick(Qt.Key_A); keyClick(Qt.Key_B); keyClick(Qt.Key_C);
+        compare(Harness.sources.draft.name, "abc");
+        compare(findChild(dialog, "sourceFormat").Accessible.name, "Format");
+        compare(findChild(dialog, "sourceQuality").Accessible.name, "Highest quality");
+        Harness.sources.field("source", "https://example.org/list.json");
+        const previous = Harness.controls["cache.rotationDays"].value;
+        let broken = false;
+        try {
+            Harness.externalEdit("cache.rotationDays", JSON.stringify(previous === 1 ? 7 : 1));
+            Harness.sources.save(); verify(Harness.sources.draft.pending);
+            for (const field of ["sourceName", "sourceAddress", "sourceFormat", "sourceQuality"])
+                verify(!findChild(dialog, field).enabled, field);
+            settled(); verify(dialog.visible && Harness.sources.draft.error.length > 0);
+            for (const field of ["sourceName", "sourceAddress", "sourceFormat", "sourceQuality"])
+                verify(findChild(dialog, field).enabled, field);
+            Harness.breakConfig(); broken = true;
+            tryCompare(Harness, "panel", "diagnostic");
+            compare(name.text, "abc"); verify(dialog.visible); verify(Harness.brokenBytesUnchanged());
+        } finally {
+            if (broken) Harness.repairConfig();
+            tryCompare(Harness, "panel", "settings");
+            Harness.externalEdit("cache.rotationDays", JSON.stringify(previous));
+            keyClick(Qt.Key_Escape); tryCompare(dialog, "visible", false);
+        }
     }
     function geometry(popup) {
         verify(waitForPolish(test.Window.window));

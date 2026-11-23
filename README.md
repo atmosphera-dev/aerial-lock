@@ -35,7 +35,7 @@ Qt6 Network, a session D-Bus provider, `libarchive` and FFmpeg libraries.
 they do not require curl, Python or tar. Python remains test tooling.
 The Aerial settings app requires Qt >= 6.12.0, including Widgets (`qt6-base`),
 Quick, Controls and Shapes (`qt6-declarative`), and SVG (`qt6-svg`). Its private
-InterActive runtime is built from the complete pinned source in this tree;
+InterActive runtime is built offline from the complete pinned source in this tree;
 no system InterActive package or global import-path setting is needed.
 Its choosers and links use the desktop's
 `xdg-desktop-portal` when one is present; nothing else needs it.
@@ -129,8 +129,13 @@ prevents service startup/activation; unlike pause, it also prevents manual fetch
 ### The Aerial settings app
 
 Launch **Aerial** from your application launcher, or run `aerial-settings`.
-Starting it again raises the open window. Its pages are Downloads, Sources,
-Cache & status, Lock screen and About. It is a client of the `aerial` service:
+Starting it again raises the open window. **Overview** shows service status,
+ready videos, storage and recent activity. **Sources** manages video sources;
+**Downloads** controls checks, quality and storage; **Lock screen** controls
+themes and locking; **About** includes the optional tray and service actions.
+The window follows the desktop light/dark appearance and accent live where
+the settings portal provides them, with the Qt palette as a fallback.
+It is a client of the `aerial` service:
 the service writes every setting and does every download, so closing the window
 (or the app crashing) never stops downloads, aerial-idle or a running lock.
 
@@ -142,10 +147,10 @@ the service writes every setting and does every download, so closing the window
   and partial downloads, is not downloaded or refreshed, and is skipped from the
   next lock on; a lock that is already showing keeps its videos. With every
   source off, or none, locks show solid colour.
-- **Service problems.** If `aerial` is masked, stopped or its config file is
-  broken, the window says so and offers the recovery: Start service and the
-  unmask command, or Open folder and Try again for a file you fix yourself. A
-  broken file is never rewritten by the app.
+- **Service problems.** If `aerial` is unavailable, use Try again, or Start
+  service when a user manager is available. A masked service must first be
+  unmasked manually. If the settings file needs repair, the window offers Open
+  folder and Try again; it never rewrites the broken file.
 - **Folder and file choosers, Open folder and links** use the desktop's
   `xdg-desktop-portal`. Without a portal those actions report an error; local
   sources can still be added with `aerialctl config set sources ...`.

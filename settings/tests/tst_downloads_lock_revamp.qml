@@ -3,7 +3,7 @@ import QtQuick.Templates as T
 import QtTest
 import InterActive.Foundation as IA
 import AerialLock.SettingsTest
-import "../qml/revamp" as UI
+import "../qml" as UI
 
 TestCase {
     id: test
@@ -13,15 +13,16 @@ TestCase {
     visible: true
     when: windowShown
     property string currentPage: "downloads"
+    UI.IdleDialog { id: idleDialog; parent: test }
     UI.Shell {
         id: shell
         anchors.fill: parent
         pages: [
-            { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/revamp/icons/movie.svg") },
-            { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/revamp/icons/stack.svg") },
-            { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/revamp/icons/download.svg") },
-            { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/revamp/icons/lock.svg") },
-            { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/revamp/icons/info.svg") }
+            { key: "overview", title: "Overview", icon: Qt.resolvedUrl("../qml/icons/movie.svg") },
+            { key: "sources", title: "Sources", icon: Qt.resolvedUrl("../qml/icons/stack.svg") },
+            { key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("../qml/icons/download.svg") },
+            { key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("../qml/icons/lock.svg") },
+            { key: "about", title: "About", icon: Qt.resolvedUrl("../qml/icons/info.svg") }
         ]
         currentPage: test.currentPage
         UI.DownloadsPage { id: downloads; anchors.fill: parent; visible: test.currentPage === "downloads"; controller: Harness }
@@ -128,6 +129,7 @@ TestCase {
         const dialog = findChild(downloads, "cleanupDialog");
         mouseClick(findChild(downloads, "prepareCleanup"));
         tryCompare(dialog, "opened", true);
+        tryCompare(dialog, "activeFocus", true);
         tryVerify(() => Harness.cache.cleanup.state === "confirm");
         verify(Harness.cache.cleanup.message.startsWith("Can remove "));
         keyClick(Qt.Key_Escape); tryCompare(dialog, "visible", false);
@@ -184,8 +186,8 @@ TestCase {
         verify(findChild(lock, "idleNotice").visible);
         // Do not start a real lock; native installed-unit tests exercise the
         // action and explicit confirmation against an owned no-lock unit.
-        Harness.idleConfirmationRequested();
-        const dialog = findChild(lock, "idleDialog");
+        idleDialog.open();
+        const dialog = idleDialog;
         tryCompare(dialog, "opened", true);
         compare(dialog.standardButton(T.Dialog.Apply).text, "Turn on");
         keyClick(Qt.Key_Escape); tryCompare(dialog, "visible", false);

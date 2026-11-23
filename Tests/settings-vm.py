@@ -128,6 +128,36 @@ def native(args):
         else:
             raise RuntimeError("compositor did not finish the PNG capture")
         return str(path)
+    def application_property(name):
+        return run(["gdbus", "call", "--session", "--dest", "org.aeriallock.AerialSettings",
+                    "--object-path", "/org/aeriallock/AerialSettings", "--method",
+                    "org.freedesktop.DBus.Properties.Get", "org.freedesktop.Application", name],
+                   env=env, capture_output=True, text=True).stdout.strip()
+
+    def open_downloads(window):
+        wid = str(window["id"])
+        for action in ("move-window-to-floating", "center-window"):
+            run(["niri", "msg", "action", action, "--id", wid], env=env, capture_output=True)
+        time.sleep(.4)  # Allow compositor animation to settle before pointer input.
+        window = next(w for w in windows() if str(w["id"]) == wid)
+        def ipc(topic):
+            return json.loads(run(["niri", "msg", "-j", topic], env=env, capture_output=True, text=True).stdout)
+        output_name = next(w["output"] for w in ipc("workspaces") if w["id"] == window["workspace_id"])
+        logical = ipc("outputs")[output_name]["logical"]
+        tx, ty = window["layout"]["tile_pos_in_workspace_view"]
+        wx, wy = window["layout"]["window_offset_in_tile"]
+        # Click inside the Downloads sidebar row at the reference appearance.
+        x, y = round(tx + wx + 90), round(ty + wy + 151)
+        probe = owned.check_binary(owned.paths["build"] / "virtual-pointer-probe")
+        reply = run([str(probe), output_name], env=env, capture_output=True, text=True,
+                    input=f"move {x} {y} {logical['width']} {logical['height']}\nclick left\n")
+        assert "VIRTUAL_POINTER_CLICKED" in reply.stdout, reply.stdout
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if application_property("Page") == "(<2>,)":
+                return
+            time.sleep(.03)
+        raise RuntimeError("native sidebar click did not open Downloads")
     try:
         with PrivateRuntime("bus") as runtime:
             config = output / "bus.conf"
@@ -148,7 +178,8 @@ def native(args):
             window = wait_window(app)
             run(["niri", "msg", "action", "set-window-width", "--id", str(window["id"]), "960"], env=env, capture_output=True)
             time.sleep(.5)
-            first = capture(window, "downloads")
+            first = capture(window, "overview")
+            assert application_property("Page") == "(<0>,)", "cold-load must open Overview"
             forwarded = run([str(binary)], env=env, capture_output=True, text=True)
             require_quiet(forwarded.stderr, version)
             assert len([w for w in windows() if w["pid"] == app.pid]) == 1
@@ -172,11 +203,11 @@ def native(args):
                 raise RuntimeError("activation-token forwarding did not raise/focus the existing window")
             run(["niri", "msg", "action", "close-window", "--id", str(peer_window["id"])], env=env, capture_output=True)
             assert peer.wait(timeout=10) == 0
+            open_downloads(window)
             run([str(source / "cli/aerialctl"), "config", "set", "acquisition.checkIntervalSeconds", "12345"], env=env, capture_output=True)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                reply = run(["gdbus", "call", "--session", "--dest", "org.aeriallock.AerialSettings", "--object-path", "/org/aeriallock/AerialSettings", "--method", "org.freedesktop.DBus.Properties.Get", "org.freedesktop.Application", "IntervalText"], env=env, capture_output=True, text=True)
-                if reply.stdout.strip() == "(<'Custom: 12345'>,)": break
+                if application_property("IntervalText") == "(<'Custom: 12345'>,)": break
                 time.sleep(.03)
             else: raise RuntimeError("existing Downloads control did not display Custom: 12345")
             second = capture(window, "downloads-cli-custom")
@@ -186,8 +217,7 @@ def native(args):
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     assert app.poll() is None, "existing settings app exited"
-                    reply = run(["gdbus", "call", "--session", "--dest", "org.aeriallock.AerialSettings", "--object-path", "/org/aeriallock/AerialSettings", "--method", "org.freedesktop.DBus.Properties.Get", "org.freedesktop.Application", "Panel"], env=env, capture_output=True, text=True)
-                    if reply.stdout.strip() == "(<'" + expected + "'>,)":
+                    if application_property("Panel") == "(<'" + expected + "'>,)":
                         return
                     time.sleep(.03)
                 raise RuntimeError("existing app did not report panel: " + expected)

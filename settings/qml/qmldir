@@ -15,6 +15,7 @@ SettingsChoice 1.0 SettingsChoice.qml
 PreferenceRow 1.0 PreferenceRow.qml
 CheckGroup 1.0 CheckGroup.qml
 SettingsDialog 1.0 SettingsDialog.qml
+IdleDialog 1.0 IdleDialog.qml
 CleanupDialog 1.0 CleanupDialog.qml
 DownloadsPage 1.0 DownloadsPage.qml
 ThemeTile 1.0 ThemeTile.qml

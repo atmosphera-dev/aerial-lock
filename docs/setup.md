@@ -179,6 +179,11 @@ different profile rather than importing the caller's environment or paths.
 
 ## Aerial settings app and tray
 
+The Aerial window opens on Overview. Sources, Downloads, Lock screen and About
+remain separate pages; storage options and cleanup are under Downloads. The
+window follows desktop appearance live. Closing it has no effect on the
+background service, automatic locking or the optional tray.
+
 The Aerial app changes user units only when you click. Neither the tray nor
 aerial-idle is enabled by installation or by opening the window; the content
 service keeps the startup behavior described above.
@@ -187,7 +192,7 @@ service keeps the startup behavior described above.
 |---|---|---|
 | 1 | About > Show tray icon on | Shows the icon now, then `enable` + `start` of `aerial-tray.service` for later graphical logins. If the window is already open, that unit run hands the tray to the window's process and exits. |
 | 2 | Show tray icon off, or Hide tray icon in the tray menu | `disable` of `aerial-tray.service`; the icon goes away, an open window stays open |
-| 3 | Lock screen > Idle Turn on | `enable --now aerial-idle.service` |
+| 3 | Overview notice or Lock screen > Turn on, then confirm | `enable --now aerial-idle.service` |
 | 4 | Lock screen > Restart aerial-idle | `restart aerial-idle.service`, when saved idle settings need applying or startup freshness is uncertain |
 | 5 | Start service (service unavailable panel) | `start aerial.service`; a masked unit stays masked until you run `systemctl --user unmask aerial.service` |
 

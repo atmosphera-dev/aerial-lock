@@ -7,11 +7,12 @@ Notable user-facing changes are recorded here, following
 
 ### Added
 
-- **Aerial**, a settings app (`aerial-settings`) for downloads, sources, cache,
-  lock screen and idle options. Changes save at once through the `aerial`
-  service; closing the app never stops downloads or a lock.
+- **Aerial**, a desktop-themed settings app (`aerial-settings`) with an Overview
+  of download status and activity, and pages for sources, downloads, storage
+  and locking. Changes save through the `aerial` service; closing the window
+  never stops downloads or a lock.
 - An optional tray icon with download status, Fetch now/Stop, Pause/Resume and
-  Open settings. It is off until turned on in About.
+  Open Aerial. It is off until turned on in About.
 - Video sources can be switched off without removing them or their cache.
 
 ## [0.3.0] - 2026-11-19

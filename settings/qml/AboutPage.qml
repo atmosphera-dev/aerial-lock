@@ -20,7 +20,7 @@ PageScaffold {
             objectName: "aboutIcon"
             Layout.preferredWidth: 56
             Layout.preferredHeight: 56
-            source: "../../assets/icons/128.png"
+            source: "../assets/icons/128.png"
         }
         ColumnLayout {
             Layout.fillWidth: true

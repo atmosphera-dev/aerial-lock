@@ -186,21 +186,4 @@ PageScaffold {
             }
         }
     }
-    SettingsDialog {
-        id: idleDialog
-        objectName: "idleDialog"
-        title: "Turn on automatic locking"
-        standardButtons: T.Dialog.Apply | T.Dialog.Cancel
-        onOpened: standardButton(T.Dialog.Apply).text = "Turn on"
-        onApplied: { root.controller.confirmIdleEnable(); close(); }
-        IALabel {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: "Use one idle owner. If swayidle, hypridle or another daemon already handles locking, turn that setup off yourself before enabling aerial-idle. Aerial will not change other daemons or desktop configuration."
-        }
-    }
-    Connections {
-        target: root.controller
-        function onIdleConfirmationRequested() { if (root.visible) idleDialog.open(); }
-    }
 }

@@ -210,10 +210,14 @@ private slots:
         QVERIFY(xml.contains("a(iiay) IconPixmap")); QVERIFY(xml.contains("(sa(iiay)ss) ToolTip")); QVERIFY(xml.contains("readonly o Menu"));
         result = request(owner, "/MenuBar", "com.canonical.dbusmenu", "GetLayout", {0, -1, QStringList{}});
         QCOMPARE(result.type(), QDBusMessage::ReplyMessage); QCOMPARE(result.signature(), QString("u(ia{sv}av)"));
-        const auto layout = qdbus_cast<MenuLayout>(result.arguments()[1]); QCOMPARE(layout.children.size(), 7);
+        const auto layout = qdbus_cast<MenuLayout>(result.arguments()[1]); QCOMPARE(layout.children.size(), 6);
         auto item = [&](int index) { return qdbus_cast<MenuLayout>(layout.children[index].variant()); };
-        QCOMPARE(item(0).properties.value("label").toString(), f.controller->status()); QCOMPARE(item(1).properties.value("type").toString(), QString("separator"));
-        for (int index : {0, 2, 3, 5, 6}) QVERIFY(item(index).properties.value("enabled").toBool());
+        QCOMPARE(item(0).properties.value("label").toString(), QString("Open Aerial"));
+        QCOMPARE(item(1).properties.value("type").toString(), QString("separator"));
+        QCOMPARE(item(2).properties.value("label").toString(), QString("Fetch videos now"));
+        QCOMPARE(item(3).properties.value("label").toString(), QString("Resume automatic downloads"));
+        QCOMPARE(item(5).properties.value("label").toString(), QString("Hide tray icon"));
+        for (int index : {0, 2, 3, 5}) QVERIFY(item(index).properties.value("enabled").toBool());
         result = request(owner, "/MenuBar", "com.canonical.dbusmenu", "GetGroupProperties", {QVariant::fromValue(MenuIds{item(0).id, item(2).id}), QStringList{"label"}});
         QCOMPARE(result.signature(), QString("a(ia{sv})")); QCOMPARE(qdbus_cast<MenuPropertiesList>(result.arguments()[0]).size(), 2);
         result = request(owner, "/MenuBar", "com.canonical.dbusmenu", "GetProperty", {item(2).id, "label"}); QCOMPARE(result.signature(), QString("v"));
@@ -230,9 +234,9 @@ private slots:
         QCOMPARE(event(0).type(), QDBusMessage::ReplyMessage); QTRY_VERIFY(window.hasWindow());
         QPointer<QQuickWindow> first;
         for (auto *w : QGuiApplication::topLevelWindows()) if (auto *q = qobject_cast<QQuickWindow *>(w)) first = q;
-        QVERIFY(first); QCOMPARE(first->property("page").toInt(), 2); QPointer<QQmlEngine> engine = qmlEngine(first); QVERIFY(engine);
+        QVERIFY(first); QCOMPARE(window.page(), int(SettingsController::OverviewPage)); QPointer<QQmlEngine> engine = qmlEngine(first); QVERIFY(engine);
         first->close(); QTRY_VERIFY(!window.hasWindow()); QVERIFY(first.isNull()); QVERIFY(engine.isNull());
-        event(5); QTRY_VERIFY(window.hasWindow());
+        event(0); QTRY_VERIFY(window.hasWindow());
         QPointer<QQuickWindow> closingWindow;
         for (auto *w : QGuiApplication::topLevelWindows()) if (auto *q = qobject_cast<QQuickWindow *>(w)) closingWindow = q;
         QVERIFY(closingWindow); QPointer<QQmlEngine> closingEngine = qmlEngine(closingWindow); QVERIFY(closingEngine);
@@ -261,9 +265,15 @@ private slots:
         };
         QSaveFile broken(f.paths.config); QVERIFY(broken.open(QIODevice::WriteOnly)); broken.write("{\n broken\n"); QVERIFY(broken.commit());
         QTRY_COMPARE(status(), QString("NeedsAttention"));
+        auto label = [&](int index) {
+            const auto reply = request(newOwner, "/MenuBar", "com.canonical.dbusmenu", "GetProperty", {item(index).id, "label"});
+            return reply.type() == QDBusMessage::ReplyMessage ? qdbus_cast<QDBusVariant>(reply.arguments().first()).variant().toString() : QString();
+        };
+        QTRY_COMPARE(label(2), QString("Check service status"));
+        QCOMPARE(label(3), QString("Review settings"));
         QSaveFile repair(f.paths.config); QVERIFY(repair.open(QIODevice::WriteOnly)); repair.write("{\"sources\":[],\"acquisition\":{\"automatic\":{\"enabled\":false}}}"); QVERIFY(repair.commit());
         QTRY_COMPARE(status(), QString("Active"));
-        QCOMPARE(request(newOwner, "/MenuBar", "com.canonical.dbusmenu", "Event", {item(6).id, "clicked", QVariant::fromValue(QDBusVariant(0)), uint(0)}).type(), QDBusMessage::ReplyMessage);
+        QCOMPARE(request(newOwner, "/MenuBar", "com.canonical.dbusmenu", "Event", {item(5).id, "clicked", QVariant::fromValue(QDBusVariant(0)), uint(0)}).type(), QDBusMessage::ReplyMessage);
         QTRY_VERIFY(!tray.enabled()); QVERIFY(window.hasWindow()); QVERIFY(f.daemon.state() == QProcess::Running);
         QTRY_VERIFY(!tray.keepsAlive()); tray.show(); QVERIFY(!tray.enabled()); // Late startup forward after Hide settled.
         tray.setEnabled(true); QVERIFY(tray.enabled());

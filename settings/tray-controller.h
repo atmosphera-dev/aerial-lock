@@ -70,8 +70,7 @@ private:
 class TrayController : public QObject {
     Q_OBJECT
 public:
-    enum class Projection { Legacy, Revamp };
-    TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent = nullptr, std::function<bool()> desktopAvailable = {}, Projection projection = Projection::Legacy);
+    TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent = nullptr, std::function<bool()> desktopAvailable = {});
     bool enabled() const { return desired; }
     bool keepsAlive() const { return desired || persistencePending; }
     void show(); // Startup/forwarding: no persistence change.
@@ -95,13 +94,12 @@ private:
     SettingsController &settings;
     QDBusConnection bus;
     std::function<bool()> desktopAvailable;
-    Projection projection;
     QString watcherOwner, problem;
     quint64 generation = 0;
     bool hostPending = false, hostDirty = false, explicitlyHidden = false;
     bool desired = false, available = false, persistencePending = false, pendingDesired = false;
     QMenu menu;
-    QAction *summary = nullptr, *transfer, *pause, *open, *hide;
+    QAction *transfer, *pause, *open, *hide;
     std::unique_ptr<TrayItem> item;
 };
 }

@@ -56,9 +56,9 @@ int main(int argc, char **argv)
     Client::ServiceConnection service(bus, paths, source);
     const bool idle = mode == "idle" || mode == "idle-existing";
     SettingsController settings(service);
-    WindowController window(settings, QUrl(idle ? "qrc:/settings/qml/Main.qml" : "qrc:/settings/qml/revamp/SettingsWindow.qml"));
+    WindowController window(settings);
     ApplicationActivation activation(window, readConfig(paths).profile);
-    TrayController tray(settings, bus, nullptr, {}, TrayController::Projection::Revamp);
+    TrayController tray(settings, bus);
     if (!bus.registerObject("/org/aeriallock/AerialSettings", &activation, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllProperties)
         || !bus.registerService("org.aeriallock.AerialSettings")) return 1;
     QObject::connect(&activation, &ApplicationActivation::trayRequested, &tray, &TrayController::show);
@@ -70,7 +70,8 @@ int main(int argc, char **argv)
         return value;
     };
     if (!require(QTest::qWaitFor([&] { return settings.panel() == "settings" && settings.systemd()->available() && (idle || settings.tray().value("available").toBool()); }, 15000), "native dependencies")) return 1;
-    window.open({}, idle ? SettingsController::LockPage : SettingsController::AboutPage);
+    window.open({}, mode == "idle" ? SettingsController::OverviewPage
+        : idle ? SettingsController::LockPage : SettingsController::AboutPage);
     QQuickWindow *quick = nullptr;
     for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
     if (!quick || !QTest::qWaitForWindowExposed(quick)) return 1;
@@ -113,7 +114,11 @@ int main(int argc, char **argv)
         const auto idleUnit = [&] { return settings.systemd()->units().value("aerial-idle.service").toMap(); };
         if (!require(QTest::qWaitFor([&] { return settings.systemd()->idle().value("action") == "enableStart"; }, 15000), "idle initially off")) return 1;
         if (!capture("idle-off")) return 1;
-        auto *action = control("idle-action"); if (!require(action, "idle Turn on button")) return 1;
+        const auto idleAction = [&] {
+            auto *notice = control(window.page() == SettingsController::OverviewPage ? "notice-idle" : "idleNotice");
+            return notice ? find(notice, "iaBannerAction") : nullptr;
+        };
+        auto *action = idleAction(); if (!require(action, "idle Turn on button")) return 1;
         QString existingBeforeEnable;
         if (mode == "idle-existing") {
             if (!require(QTest::qWaitFor([&] { return idleUnit().value("active") == "active" && !idleUnit().value("invocation").toString().isEmpty(); }, 15000), "existing invocation before Turn on")) return 1;
@@ -131,7 +136,7 @@ int main(int argc, char **argv)
             receipt["enabledExistingInvocation"] = QJsonObject::fromVariantMap(idleUnit());
             const auto existing = idleUnit().value("invocation").toString();
             if (!require(!existing.isEmpty(), "existing idle invocation is nonempty before Restart")) return 1;
-            operations.clear(); action = control("idle-action"); if (!require(action, "existing idle Restart button")) return 1;
+            operations.clear(); action = idleAction(); if (!require(action, "existing idle Restart button")) return 1;
             click(action);
             if (!require(settle("Restart existing idle"), "existing idle restart succeeds")) return 1;
             if (!require(QTest::qWaitFor([&] { const auto id = idleUnit().value("invocation").toString(); return !id.isEmpty() && id != existing; }, 15000), "existing idle gets a new invocation")) return 1;
@@ -149,7 +154,7 @@ int main(int argc, char **argv)
         if (!require(operations.isEmpty() && idleUnit().value("invocation") == before && idleUnit().value("active") == "active", "save never restarts idle")) return 1;
         receipt["afterSave"] = QJsonObject::fromVariantMap(idleUnit());
         if (!capture("idle-restart")) return 1;
-        action = control("idle-action"); if (!require(action, "idle Restart button")) return 1;
+        action = idleAction(); if (!require(action, "idle Restart button")) return 1;
         click(action);
         if (!require(settle("Restart completes"), "Restart succeeds")) return 1;
         if (!require(QTest::qWaitFor([&] { const auto id = idleUnit().value("invocation").toString(); return !id.isEmpty() && id != before; }, 15000) && !settings.systemd()->idle().value("fresh").toBool(), "restart reaches a new invocation without claiming configuration acknowledgement")) return 1;

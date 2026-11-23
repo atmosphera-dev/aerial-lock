@@ -335,6 +335,23 @@ def install(fixture, runtime):
             make(prefix, "install", *options)
             assert all(path.read_text() == "foreign\n" for path in foreign)
             assert enabled.is_symlink() and os.readlink(enabled) == "../aerial-tray.service"
+        if fixture.settings and label == "private":
+            # Removing the build directory is equivalent to an unavailable
+            # SETTINGS_BUILD. First reject a mismatched BINDIR without damage.
+            payload = {p.relative_to(stage) for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
+            wrong = subprocess.run(["make", "-C", str(tree), "uninstall", f"PREFIX={prefix}",
+                f"DESTDIR={stage}", f"INTERACTIVE_ROOT={private}", "BINDIR=/nonexistent/aerial/bin"],
+                capture_output=True, text=True, timeout=30)
+            assert wrong.returncode != 0 and "another executable layout" in wrong.stderr, wrong.stderr
+            assert payload == {p.relative_to(stage) for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
+            receipt = stage / prefix.relative_to("/") / "share/licenses/aerial-lock/interactive/install-manifest.txt"
+            receipt.rename(root / "retained-install-manifest.txt")
+            missing = subprocess.run(["make", "-C", str(tree), "uninstall", f"PREFIX={prefix}", *options],
+                capture_output=True, text=True, timeout=30)
+            assert missing.returncode != 0 and "Missing private runtime install manifest" in missing.stderr, missing.stderr
+            (root / "retained-install-manifest.txt").rename(receipt)
+            assert payload == {p.relative_to(stage) for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
+            options.append("SETTINGS_BUILD=" + str(root / "missing-build"))
         make(prefix, "uninstall", *options)
         remaining = {p for p in stage.rglob("*") if p.is_file() or p.is_symlink()}
         assert remaining == foreign and all(p.read_text() == "foreign\n" for p in foreign), f"{label} uninstall: {remaining ^ foreign}"

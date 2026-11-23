@@ -48,7 +48,7 @@ def retire_http(server, thread, releases):
 
 def tray(owned, output):
     root, source = owned.paths["root"], owned.paths["source"]
-    binary = owned.check_binary(owned.paths["build"] / "settings-revamp-probe")
+    binary = owned.check_binary(owned.paths["source"] / "settings/aerial-settings")
     env = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none")
     env.pop("QT_QPA_PLATFORM", None)
     owned.check_session(owned.record["session"], env)

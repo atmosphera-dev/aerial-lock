@@ -40,7 +40,7 @@ def unit_start_usec(run, unit):
 def units(owned, output):
     source, build = owned.paths["source"], owned.paths["build"]
     probe = owned.check_binary(build / "settings-units-probe")
-    binary = owned.check_binary(owned.paths["build"] / "settings-revamp-probe")
+    binary = owned.check_binary(owned.paths["source"] / "settings/aerial-settings")
     idle_binary = owned.check_binary(source / "idle/aerial-idle")
     user = "aerial-ui-unit-" + str(os.getpid())
     home = output / "home"

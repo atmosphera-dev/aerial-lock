@@ -45,7 +45,10 @@ media licenses are not replaced by Aerial's repository MIT license.
 
 ## InterActive
 
-The settings app privately links InterActive 0.1.1 under LGPL-3.0-or-later.
+The settings app privately links the InterActive 0.1.1 shared library under
+LGPL-3.0-or-later. Its library and QML files are installed under the app's
+private `lib/aerial-lock/interactive/{lib,qml}` tree, not as a system module.
+The vendored source builds offline with Qt SVG and ShaderTools.
 Its complete signed-tag source, including the pinned Material Color Utilities
 subset under Apache-2.0, is in `third_party/interactive`. See its `VENDOR.md`
 for tag, commit, tree and archive identities, `LICENSE.md` for provenance, and

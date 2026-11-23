@@ -52,19 +52,6 @@ bool same(const TrayImages &a, const TrayImages &b)
     for (int i = 0; i < a.size(); ++i) if (a[i].width != b[i].width || a[i].height != b[i].height || a[i].bytes != b[i].bytes) return false;
     return true;
 }
-QIcon actionIcon(const QString &name)
-{
-    QPixmap image(24, 24); image.fill(Qt::transparent); QPainter p(&image); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QApplication::palette().color(QPalette::WindowText), 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    if (name == "pause") { p.drawLine(8, 5, 8, 19); p.drawLine(16, 5, 16, 19); }
-    else if (name == "stop") p.drawRoundedRect(QRectF(6, 6, 12, 12), 1, 1);
-    else if (name == "play") { QPolygonF points{QPointF(8, 5), QPointF(19, 12), QPointF(8, 19), QPointF(8, 5)}; p.drawPolyline(points); }
-    else if (name == "download") { p.drawLine(12, 3, 12, 16); p.drawLine(7, 11, 12, 16); p.drawLine(17, 11, 12, 16); p.drawLine(4, 18, 4, 21); p.drawLine(4, 21, 20, 21); p.drawLine(20, 21, 20, 18); }
-    else if (name == "cache") { p.drawEllipse(QRectF(4, 3, 16, 6)); p.drawLine(4, 6, 4, 18); p.drawLine(20, 6, 20, 18); p.drawArc(QRectF(4, 15, 16, 6), 180 * 16, 180 * 16); p.drawArc(QRectF(4, 9, 16, 6), 180 * 16, 180 * 16); }
-    else if (name == "hide") { QPainterPath eye; eye.moveTo(2, 12); eye.cubicTo(8, 3, 16, 3, 22, 12); eye.cubicTo(16, 21, 8, 21, 2, 12); p.drawPath(eye); p.drawEllipse(QPointF(12, 12), 3, 3); p.drawLine(3, 3, 21, 21); }
-    else { p.drawEllipse(QPointF(12, 12), 7, 7); p.drawEllipse(QPointF(12, 12), 2.5, 2.5); for (int i = 0; i < 8; ++i) { p.save(); p.translate(12, 12); p.rotate(i * 45); p.drawLine(0, 7, 0, 10); p.restore(); } }
-    return QIcon(image);
-}
 }
 TrayItem::TrayItem(QMenu &actions, const QString &watcher, QObject *parent)
     : QObject(parent), connectionName("aerial-sni-" + QUuid::createUuid().toString(QUuid::WithoutBraces)),
@@ -101,28 +88,23 @@ void TrayItem::ContextMenu(int x, int y)
 }
 void TrayItem::Scroll(int, const QString &) {} // No scrolling action is advertised.
 
-TrayController::TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent, std::function<bool()> desktopAvailable, Projection projection)
-    : QObject(parent), settings(settings), bus(std::move(bus)), desktopAvailable(std::move(desktopAvailable)), projection(projection)
+TrayController::TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent, std::function<bool()> desktopAvailable)
+    : QObject(parent), settings(settings), bus(std::move(bus)), desktopAvailable(std::move(desktopAvailable))
 {
     if (!this->desktopAvailable) this->desktopAvailable = [] { return QSystemTrayIcon::isSystemTrayAvailable(); };
-    if (projection == Projection::Revamp) open = menu.addAction("Open Aerial");
-    else {
-        summary = menu.addAction(settings.status());
-        connect(summary, &QAction::triggered, this, [this] { emit openRequested(2, {}); });
-    }
+    open = menu.addAction("Open Aerial");
     menu.addSeparator(); transfer = menu.addAction("Fetch now"); pause = menu.addAction("Pause downloads"); menu.addSeparator();
-    if (projection == Projection::Legacy) open = menu.addAction("Open settings");
     hide = menu.addAction("Hide tray icon");
-    connect(open, &QAction::triggered, this, [this] { emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : -1, {}); });
+    connect(open, &QAction::triggered, this, [this] { emit openRequested(SettingsController::OverviewPage, {}); });
     connect(transfer, &QAction::triggered, this, [this] {
         const auto id = this->settings.statusModel()->facts().value("primaryActionId").toString();
-        if (this->projection == Projection::Legacy ? this->settings.panel() == "settings" : !id.isEmpty()) this->settings.dispatchAction(id);
-        else { emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : 2, {}); this->settings.dispatchAction("retry-service"); }
+        if (!id.isEmpty()) this->settings.dispatchAction(id);
+        else { emit openRequested(SettingsController::OverviewPage, {}); this->settings.dispatchAction("retry-service"); }
     });
     connect(pause, &QAction::triggered, this, [this] {
         const auto id = this->settings.statusModel()->facts().value("secondaryActionId").toString();
-        if (this->projection == Projection::Legacy ? this->settings.panel() == "settings" : !id.isEmpty()) this->settings.dispatchAction(id);
-        else emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : SettingsController::AboutPage, {});
+        if (!id.isEmpty()) this->settings.dispatchAction(id);
+        else emit openRequested(SettingsController::OverviewPage, {});
     });
     connect(hide, &QAction::triggered, this, [this] { setEnabled(false); });
     connect(&settings, &SettingsController::changed, this, &TrayController::sample);
@@ -220,20 +202,9 @@ QString TrayController::badge(const QVariantMap &p, bool downloading, bool pause
 }
 void TrayController::sample()
 {
-    const bool ready = settings.panel() == "settings", downloading = settings.cache()->facts().value("downloading").toBool();
-    const bool paused = !settings.controls().value("automatic").toMap().value("on").toBool();
     const auto facts = settings.statusModel()->facts();
-    if (projection == Projection::Legacy) {
-        summary->setText(settings.status()); summary->setIcon(actionIcon("cache"));
-        transfer->setText(!ready ? "Open service recovery" : downloading ? "Stop download" : "Fetch now"); transfer->setIcon(actionIcon(downloading ? "stop" : "download"));
-        pause->setText(!ready ? "Open settings" : paused ? "Resume downloads" : "Pause downloads"); pause->setIcon(actionIcon(paused ? "play" : "pause"));
-        open->setIcon(actionIcon("settings")); hide->setIcon(actionIcon("hide"));
-    } else {
-        const auto label = facts.value("primaryActionLabel").toString();
-        const auto automaticLabel = facts.value("secondaryActionLabel").toString();
-        transfer->setText(label.isEmpty() ? "Fetch videos now" : label);
-        pause->setText(automaticLabel.isEmpty() ? (paused ? "Resume automatic downloads" : "Pause automatic downloads") : automaticLabel);
-    }
+    transfer->setText(facts.value("primaryActionId").toString().isEmpty() ? "Check service status" : facts.value("primaryActionLabel").toString());
+    pause->setText(facts.value("secondaryActionId").toString().isEmpty() ? "Review settings" : facts.value("secondaryActionLabel").toString());
     if (item) {
         item->update(facts.value("attention").toBool() ? "NeedsAttention" : "Active", pixmaps(facts.value("badge").toString()), pixmaps("problem"), tooltip());
     }
@@ -242,7 +213,7 @@ QString TrayController::tooltip() const
 {
     // The status line, then the ready count unless the status already ends with it.
     const auto facts = settings.statusModel()->facts();
-    const auto status = projection == Projection::Revamp ? facts.value("summary").toString() : settings.status();
+    const auto status = facts.value("summary").toString();
     const auto ready = facts.value("ready").toString();
     return status.endsWith(ready) ? status : status + '\n' + ready;
 }

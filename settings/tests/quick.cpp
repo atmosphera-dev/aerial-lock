@@ -239,16 +239,18 @@ public:
     }
     Q_INVOKABLE void externalEdit(const QString &key, const QString &json) { fixture.cli({"config", "set", key, json}); }
     Q_INVOKABLE void configureTray(bool available, bool on, bool persistent = false) { setTrayState({{"available", available}, {"on", on}, {"persistent", persistent}, {"message", "Desktop tray fixture"}}); }
-    Q_INVOKABLE void replacePreview(const QString &color)
+    Q_INVOKABLE QString replacePreview(const QString &color)
     {
         const auto directory = QFileInfo(fixture.paths.config).absolutePath() + "/themes";
         if (!QDir().mkpath(directory + "/previews")) qFatal("preview directory failed");
         const auto theme = directory + "/Macintosh.qml", preview = directory + "/previews/Macintosh.png";
-        if (color.isEmpty()) { QFile::remove(theme); QFile::remove(preview); return; }
+        if (color.isEmpty()) { QFile::remove(theme); QFile::remove(preview); return {}; }
         QFile file(theme); if (!file.open(QIODevice::WriteOnly)) qFatal("theme fixture failed");
         file.write("never execute this theme fixture"); file.close();
         QImage image(16, 10, QImage::Format_RGB32); image.fill(QColor(color));
         if (!image.save(preview)) qFatal("preview fixture failed");
+        QFile png(preview); if (!png.open(QIODevice::ReadOnly)) qFatal("preview fixture readback failed");
+        return "data:image/png;base64," + QString::fromLatin1(png.readAll().toBase64());
     }
     Q_INVOKABLE void stopService() { fixture.daemon.terminate(); if (!fixture.daemon.waitForFinished(5000)) qFatal("fixture did not stop"); }
     Q_INVOKABLE void startService() { fixture.daemon.start(QString(AERIAL_SETTINGS_TEST_SOURCE) + "/companion/aerial", {}); if (!fixture.daemon.waitForStarted()) qFatal("fixture did not start"); }

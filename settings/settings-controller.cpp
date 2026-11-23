@@ -226,7 +226,7 @@ void SettingsController::dispatchAction(const QString &id, const QString &source
     if (!id.isEmpty() && id == facts.value("secondaryActionId")) { edit("automatic", id == "resume-downloads"); return; }
     if (id == "open-sources" || id == "open-about") { emit pageRequested(id.mid(5)); return; }
     if (id == "retry-service") { retry(); return; }
-    if (id == "start-service") { systemdController.operate("aerial.service", "start"); return; }
+    if (id == "start-service" && panel() == "unavailable") { systemdController.operate("aerial.service", "start"); return; }
     if (id == "restart-service") { systemdController.operate("aerial.service", "restart"); return; }
     if (id == "open-settings-folder") { openSettingsFolder(); return; }
     if (id == "open-cache-folder") { openCacheFolder(); return; }

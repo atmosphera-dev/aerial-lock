@@ -24,7 +24,7 @@ Rectangle {
             Image {
                 Layout.preferredWidth: 28
                 Layout.preferredHeight: 28
-                source: "../../assets/icons/64.png"
+                source: "../assets/icons/64.png"
                 sourceSize: Qt.size(56, 56)
             }
             IALabel {

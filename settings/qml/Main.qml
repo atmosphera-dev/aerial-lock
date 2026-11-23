@@ -1,114 +1,133 @@
 import QtQuick
 import QtQuick.Controls as C
-import QtQuick.Layouts
 import AerialLock.Settings
-import "components" as UI
+import InterActive
+import InterActive.Foundation as IA
+
 C.ApplicationWindow {
     id: root
     required property SettingsController controller
-    property int page: 0
-    readonly property string intervalText: downloads.intervalText
-    width: 960
-    height: 900
-    minimumWidth: 720
-    minimumHeight: 540
+    property int page: SettingsController.OverviewPage
+    readonly property string intervalText: controller.controls["acquisition.checkIntervalSeconds"].choices[
+        controller.controls["acquisition.checkIntervalSeconds"].selected]?.label ?? ""
+    readonly property var destinations: [
+        { index: SettingsController.OverviewPage, key: "overview", title: "Overview", icon: Qt.resolvedUrl("icons/sky.svg") },
+        { index: SettingsController.SourcesPage, key: "sources", title: "Sources", icon: Qt.resolvedUrl("icons/stack.svg") },
+        { index: SettingsController.DownloadsPage, key: "downloads", title: "Downloads", icon: Qt.resolvedUrl("icons/download.svg") },
+        { index: SettingsController.LockPage, key: "lock", title: "Lock screen", icon: Qt.resolvedUrl("icons/lock.svg") },
+        { index: SettingsController.AboutPage, key: "about", title: "About", icon: Qt.resolvedUrl("icons/info.svg") }
+    ]
+    readonly property bool connected: controller.panel === "settings"
+    readonly property bool configurationBlocked: controller.panel === "diagnostic"
+    width: 920
+    height: 760
+    minimumWidth: 640
+    minimumHeight: 480
     title: "Aerial"
-    visible: true
-    color: UI.Style.window
-    RowLayout {
-        anchors.fill: parent
-        spacing: 0
-        Item {
-            Layout.preferredWidth: 224
-            Layout.fillHeight: true
-            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: UI.Style.line }
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                anchors.topMargin: 16
-                anchors.bottomMargin: 16
-                spacing: 2
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 8
-                    Layout.topMargin: 4
-                    Layout.bottomMargin: 18
-                    spacing: 10
-                    UI.AppIcon {}
-                    UI.Label { text: "Aerial"; font.pixelSize: 17; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                }
-                Repeater {
-                    model: root.controller.panel === "settings" ? [{ title: "Downloads", icon: "download" }, { title: "Sources", icon: "stack" }, { title: "Cache & status", icon: "database" }, { title: "Lock screen", icon: "lock" }, { title: "About", icon: "info" }] : []
-                    C.AbstractButton {
-                        id: navigation
-                        required property int index
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 38
-                        padding: 12
-                        text: modelData.title
-                        background: Rectangle {
-                            radius: 10
-                            color: root.page === navigation.index ? UI.Style.selection : "transparent"
-                            border.width: navigation.visualFocus ? 2 : 0
-                            border.color: UI.Style.accent
-                        }
-                        contentItem: RowLayout {
-                            spacing: 12
-                            UI.Glyph { name: navigation.modelData.icon; color: root.page === navigation.index ? UI.Style.selectionText : UI.Style.text }
-                            UI.Label { Layout.fillWidth: true; text: navigation.text; font.weight: Font.Medium; color: root.page === navigation.index ? UI.Style.selectionText : UI.Style.text }
-                        }
-                        onClicked: root.page = index
-                    }
-                }
-                Item { Layout.fillHeight: true; Layout.minimumHeight: 24 }
-                UI.StatusSummary { objectName: "sidebarStatus"; Layout.fillWidth: true; text: root.controller.status; onClicked: root.page = 2 }
-            }
+
+    function select(key: string): void {
+        const destination = destinations.find(entry => entry.key === key);
+        if (destination) page = destination.index;
+    }
+
+    Shell {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: portalFeedback.visible ? portalFeedback.top : parent.bottom
+        pages: root.connected ? root.destinations : root.destinations.filter(entry => entry.key === "overview" || entry.key === "about")
+        currentPage: root.destinations.find(entry => entry.index === root.page)?.key ?? "overview"
+        onSelected: key => root.select(key)
+        Overview {
+            objectName: "overviewPage"
+            anchors.fill: parent
+            visible: root.connected && root.page === SettingsController.OverviewPage
+            facts: root.controller.statusModel.facts
+            notices: root.controller.notices.entries
+            activity: root.controller.cache.activity
+            onActionRequested: (actionId, sourceId) => root.controller.dispatchAction(actionId, sourceId)
         }
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 32
-                anchors.rightMargin: 32
-                anchors.topMargin: 22
-                anchors.bottomMargin: 32
-                Downloads { id: downloads; objectName: "downloadsPage"; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 0; controller: root.controller }
-                Sources { objectName: "sourcesPage"; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 1; controller: root.controller }
-                Cache { objectName: "cachePage"; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 2; controller: root.controller; onDownloadsRequested: root.page = 0 }
-                Lock { objectName: "lockPage"; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 3; controller: root.controller }
-                About { objectName: "aboutPage"; Layout.fillWidth: true; Layout.fillHeight: true; visible: root.controller.panel === "settings" && root.page === 4; controller: root.controller }
-                ColumnLayout {
-                    objectName: "servicePanel"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: root.controller.panel !== "settings"
-                    spacing: 10
-                    Item { Layout.fillHeight: true }
-                    UI.Glyph { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 28; Layout.preferredHeight: 28; name: "alert" }
-                    UI.Label { Layout.fillWidth: true; text: root.controller.panel === "diagnostic" ? "Settings need attention" : "The aerial service isn't running"; font.pixelSize: 19; font.bold: true; horizontalAlignment: Text.AlignHCenter }
-                    UI.Label { Layout.fillWidth: true; text: root.controller.panel === "diagnostic" ? "Fix the settings file, then try again. The file is left unchanged." : "Settings and downloads need it. Starting it doesn't change any settings."; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
-                    UI.Label { Layout.fillWidth: true; text: root.controller.diagnostic; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
-                    UI.Label { Layout.fillWidth: true; visible: root.controller.panel === "unavailable"; text: "If it is masked, run systemctl --user unmask aerial, then try again."; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 13 }
-                    UI.Button { objectName: "connectionRetry"; Layout.alignment: Qt.AlignHCenter; primary: true; text: "Try again"; onClicked: root.controller.retry() }
-                    UI.Button { objectName: "serviceStart"; Layout.alignment: Qt.AlignHCenter; visible: root.controller.panel === "unavailable" && root.controller.systemd.available; text: "Start service"; onClicked: root.controller.systemd.operate("aerial.service", "start") }
-                    UI.Button { Layout.alignment: Qt.AlignHCenter; visible: root.controller.panel === "diagnostic"; text: "Open folder"; onClicked: root.controller.openSettingsFolder() }
-                    UI.Label { Layout.fillWidth: true; visible: text.length > 0; text: root.controller.systemd.error; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
-                    Item { Layout.fillHeight: true }
-                }
-                UI.Label { objectName: "portalError"; Layout.fillWidth: true; visible: text.length > 0; text: root.controller.portal.error; wrapMode: Text.WordWrap }
-            }
+        SourcesPage {
+            objectName: "sourcesPage"
+            anchors.fill: parent
+            visible: root.connected && root.page === SettingsController.SourcesPage
+            sourceModel: root.controller.sources.rowModel
+            busy: root.controller.sources.busy
+            error: root.controller.sources.error
+            onAddRequested: root.controller.sources.begin("")
+            onToggled: (id, on) => root.controller.sources.toggle(id, on)
+            onEditRequested: id => root.controller.sources.begin(id)
+            onRemoveRequested: id => root.controller.sources.remove(id)
+            onCheckRequested: id => root.controller.sources.retry(id)
+            onOrderStarted: id => root.controller.sources.beginReorder(id)
+            onMoveRequested: (id, delta) => root.controller.sources.move(id, delta)
+            onDroppedBefore: id => root.controller.sources.dropBefore(id)
+        }
+        DownloadsPage {
+            objectName: "downloadsPage"
+            anchors.fill: parent
+            visible: root.connected && root.page === SettingsController.DownloadsPage
+            controller: root.controller
+        }
+        LockScreenPage {
+            objectName: "lockPage"
+            anchors.fill: parent
+            visible: root.connected && root.page === SettingsController.LockPage
+            controller: root.controller
+        }
+        AboutPage {
+            objectName: "aboutPage"
+            anchors.fill: parent
+            visible: root.page === SettingsController.AboutPage
+            controller: root.controller
+        }
+        EmptyPage {
+            objectName: "servicePanel"
+            anchors.fill: parent
+            visible: !root.connected && root.page !== SettingsController.AboutPage
+            title: root.configurationBlocked ? "Settings need attention" : "The aerial service isn't available"
+            description: root.configurationBlocked
+                ? "Fix the settings file, then try again. The file is left unchanged.\n\n" + root.controller.diagnostic
+                : root.controller.diagnostic
+            actionText: "Try again"
+            secondaryText: root.configurationBlocked ? "Open folder"
+                : root.controller.systemd.available ? "Start service" : ""
+            error: root.controller.systemd.error
+            onActionRequested: root.controller.dispatchAction("retry-service")
+            onSecondaryRequested: root.controller.dispatchAction(root.configurationBlocked ? "open-settings-folder" : "start-service")
         }
     }
-    SourceSheet { objectName: "sourceSheet"; sources: root.controller.sources; parent: C.Overlay.overlay }
-    CleanupSheet { objectName: "cleanupSheet"; cache: root.controller.cache; parent: C.Overlay.overlay }
+    IALabel {
+        id: portalFeedback
+        objectName: "portalError"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: Insets.edge
+        visible: text.length > 0
+        text: root.controller.portal.error
+        foregroundColor: IA.Appearance.colors.secondaryText
+        wrapMode: Text.Wrap
+    }
+    AddSourceDialog {
+        objectName: "sourceSheet"
+        parent: C.Overlay.overlay
+        visible: root.controller.sources.sheetOpen
+        draft: root.controller.sources.draft
+        appleAvailable: root.controller.sources.appleAvailable
+        onFieldEdited: (key, value) => root.controller.sources.field(key, value)
+        onChoosePathRequested: root.controller.sources.choosePath()
+        onSaveRequested: root.controller.sources.save()
+        onDismissed: root.controller.sources.dismiss()
+    }
+    IdleDialog {
+        id: idleDialog
+        objectName: "idleDialog"
+        onConfirmed: root.controller.confirmIdleEnable()
+    }
     Connections {
         target: root.controller
-        function onPageRequested(page: string) {
-            const index = ({ sources: 1, about: 4 })[page];
-            if (index !== undefined) root.page = index;
-        }
+        function onPageRequested(key: string): void { root.select(key); }
+        function onIdleConfirmationRequested(): void { idleDialog.open(); }
     }
 }

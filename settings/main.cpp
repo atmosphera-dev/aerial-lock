@@ -48,11 +48,7 @@ int main(int argc, char **argv)
     Aerial::Settings::registerTypes();
     Aerial::Client::ServiceConnection service(bus, paths, AERIAL_COMPANION_DATADIR);
     Aerial::Settings::SettingsController settings(service);
-#ifdef AERIAL_SETTINGS_REVAMP_PROBE
-    Aerial::Settings::WindowController window(settings, QUrl("qrc:/settings/qml/revamp/SettingsWindow.qml"));
-#else
     Aerial::Settings::WindowController window(settings);
-#endif
     Aerial::Settings::ApplicationActivation activation(window, profile);
     if (!bus.registerObject("/org/aeriallock/AerialSettings", &activation, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllProperties)) return 1;
     constexpr auto name = "org.aeriallock.AerialSettings";
@@ -82,11 +78,7 @@ int main(int argc, char **argv)
         });
         return app.exec();
     }
-#ifdef AERIAL_SETTINGS_REVAMP_PROBE
-    Aerial::Settings::TrayController tray(settings, bus, nullptr, {}, Aerial::Settings::TrayController::Projection::Revamp);
-#else
     Aerial::Settings::TrayController tray(settings, bus);
-#endif
     const auto quitIfUnused = [&] { if (!window.hasWindow() && !tray.keepsAlive()) app.quit(); };
     QObject::connect(&window, &Aerial::Settings::WindowController::closed, &app, quitIfUnused);
     QObject::connect(&tray, &Aerial::Settings::TrayController::changed, &app, quitIfUnused);

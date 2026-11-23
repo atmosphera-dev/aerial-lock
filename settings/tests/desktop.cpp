@@ -277,9 +277,24 @@ private slots:
         for (auto *candidate : QGuiApplication::topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
         QVERIFY(quick); QVERIFY(QTest::qWaitForWindowExposed(quick));
         auto *retry = quick->findChild<QQuickItem *>("connectionRetry"); QVERIFY(retry); QVERIFY(retry->isVisible());
-        auto *start = quick->findChild<QQuickItem *>("serviceStart"); QVERIFY(start); QVERIFY(!start->isVisible());
+        auto *secondary = quick->findChild<QQuickItem *>("recoverySecondary"); QVERIFY(secondary);
+        QVERIFY(!secondary->isVisible()); QVERIFY(secondary->property("text").toString().isEmpty());
+        const auto click = [&](QQuickItem *item) {
+            QTest::mouseClick(quick, Qt::LeftButton, Qt::NoModifier, item->mapToScene({item->width() / 2, item->height() / 2}).toPoint());
+        };
+        const auto find = [](auto &&self, QQuickItem *item, const QString &name) -> QQuickItem * {
+            if (item->objectName() == name) return item;
+            for (auto *child : item->childItems()) if (auto *result = self(self, child, name)) return result;
+            return nullptr;
+        };
+        auto *about = find(find, quick->contentItem(), "navigation-about"); QVERIFY(about && about->isVisible());
+        click(about); QTRY_COMPARE(window.page(), int(SettingsController::AboutPage));
+        QVERIFY(!retry->isVisible());
+        auto *overview = find(find, quick->contentItem(), "navigation-overview"); QVERIFY(overview && overview->isVisible());
+        click(overview); QTRY_COMPARE(window.page(), int(SettingsController::OverviewPage));
+        QVERIFY(retry->isVisible());
         QVERIFY(configure(false)); QVERIFY(!fixture.service->ready());
-        QTest::mouseClick(quick, Qt::LeftButton, Qt::NoModifier, retry->mapToScene({retry->width() / 2, retry->height() / 2}).toPoint());
+        click(retry);
         QTRY_VERIFY(fixture.service->ready()); QCOMPARE(fixture.service->uniqueOwner(), owner);
         QCOMPARE(fixture.controller->panel(), QString("settings"));
         quick->close(); QTRY_VERIFY(!window.hasWindow());
@@ -379,6 +394,8 @@ private slots:
         QTRY_VERIFY(manager.available());
         QTRY_COMPARE(manager.units().value("aerial-idle.service").toMap().value("active").toString(), QString("active"));
         QCOMPARE(manager.idle().value("action").toString(), QString("enableStart"));
+        QCOMPARE(manager.idle().value("actionLabel").toString(), QString("Enable at login"));
+        QVERIFY(manager.idle().value("message").toString().contains("running but is not enabled"));
         manager.operate("aerial-idle.service", "enableStart");
         QTRY_COMPARE(operations.size(), 1); QVERIFY(operations.takeFirst()[2].toBool());
         QVERIFY(!manager.idle().value("fresh").toBool());
@@ -598,7 +615,7 @@ int main(int argc, char **argv)
         if (mode == "--native-choose") fixture->controller->sources()->choosePath();
         else if (about) {
             registerTypes();
-            window = std::make_unique<WindowController>(*fixture->controller, QUrl("qrc:/settings/qml/revamp/SettingsWindow.qml"));
+            window = std::make_unique<WindowController>(*fixture->controller);
             window->open({}, SettingsController::AboutPage);
             QQuickWindow *quick = nullptr;
             for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;

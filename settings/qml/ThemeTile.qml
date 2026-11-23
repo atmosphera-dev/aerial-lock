@@ -26,6 +26,7 @@ T.AbstractButton {
             visible: image.status === Image.Ready
             Image {
                 id: image
+                objectName: "themePreviewImage"
                 source: root.preview
                 sourceSize: Qt.size(Math.max(1, Math.ceil(thumbnail.width * root.Screen.devicePixelRatio)),
                     Math.max(1, Math.ceil(thumbnail.height * root.Screen.devicePixelRatio)))
