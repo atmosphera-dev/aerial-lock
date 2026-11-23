@@ -5,6 +5,7 @@
 #include <QUrl>
 #include <QUuid>
 #include <QFileInfo>
+#include <QSet>
 
 namespace Aerial::Settings {
 namespace {
@@ -17,8 +18,31 @@ QString failure(const QString &name)
 {
     if (name.endsWith(".AcceptedResultUnavailable")) return "The previous service accepted this source change, but its result is unavailable. Check the source list before trying again.";
     return name.endsWith(".Conflict") ? "Changed elsewhere. Your draft is kept. Close and reopen to edit the latest source list."
-        : "Couldn't save sources: " + name.section('.', -1) + ". Your draft is kept.";
+        : "Couldn't save sources. Your draft is kept. Check the source details and try again.";
 }
+}
+QVariant SourceRows::data(const QModelIndex &index, int role) const
+{
+    return index.isValid() && index.row() >= 0 && index.row() < entries.size() && role == Qt::UserRole ? entries[index.row()] : QVariant();
+}
+void SourceRows::synchronize(const QVariantList &next)
+{
+    const auto id = [](const QVariant &entry) { return entry.toMap().value("id").toString(); };
+    QSet<QString> retained;
+    for (const auto &entry : next) retained.insert(id(entry));
+    for (int i = entries.size() - 1; i >= 0; --i) if (!retained.contains(id(entries[i]))) {
+        beginRemoveRows({}, i, i); entries.removeAt(i); endRemoveRows();
+    }
+    for (int i = 0; i < next.size(); ++i) {
+        int at = i;
+        while (at < entries.size() && id(entries[at]) != id(next[i])) ++at;
+        if (at == entries.size()) {
+            beginInsertRows({}, i, i); entries.insert(i, next[i]); endInsertRows();
+        } else {
+            if (at != i) { beginMoveRows({}, at, at, {}, i); entries.move(at, i); endMoveRows(); }
+            if (entries[i] != next[i]) { entries[i] = next[i]; emit dataChanged(index(i), index(i), {Qt::UserRole}); }
+        }
+    }
 }
 SourcesController::SourcesController(Client::ServiceConnection &service, PortalClient &portal, QObject *parent) : QObject(parent), service(service), portal(portal)
 {
@@ -31,20 +55,23 @@ SourcesController::SourcesController(Client::ServiceConnection &service, PortalC
     });
     connect(&service, &Client::ServiceConnection::changed, this, [this] {
         auto rows = computeRows();
-        if (rows != shown) { shown = std::move(rows); emit rowsChanged(); }
+        if (rows != shown) { shown = std::move(rows); stableRows.synchronize(shown); emit rowsChanged(); }
         emit changed();
     });
     connect(&service, &Client::ServiceConnection::mutationFinished, this, [this](quint64 id, const QVariant &, const QString &error) {
         if (id == refresh) { refresh = 0; actionProblem = error.isEmpty() ? QString() : error.endsWith(".AcceptedResultUnavailable")
-            ? "The previous service accepted the retry. Check Recent activity before trying again." : "Couldn't retry: " + error.section('.', -1); emit changed(); }
+            ? "The previous service accepted the retry. Check Recent activity before trying again." : "Couldn't check this source. Try again."; emit changed(); }
         if (id != pending) return;
         pending = 0;
         auto &issue = savingSheet ? problem : actionProblem;
         if (error.isEmpty()) { issue.clear(); if (savingSheet) { opened = false; fields = {}; captured = {}; } }
-        else issue = savingSheet || error.endsWith(".AcceptedResultUnavailable") ? failure(error) : "Couldn't update sources: " + error.section('.', -1);
+        else issue = savingSheet || error.endsWith(".AcceptedResultUnavailable") ? failure(error) : error.endsWith(".Conflict")
+            ? "Changed elsewhere. Reopen the source menu or start dragging again. No entries were changed."
+            : "Couldn't update sources. No entries were changed. Try again.";
         this->service.refresh(); emit changed();
     });
     shown = computeRows();
+    stableRows.synchronize(shown);
 }
 QJsonArray SourcesController::sources() const
 {
@@ -72,7 +99,9 @@ QVariantList SourcesController::computeRows() const
         }
         const bool failing = row.value("enabled", true).toBool() && !error.isEmpty();
         if (failing) description = ServiceText::reason(error);
-        row["description"] = description; row["canRetry"] = remote && failing;
+        row["description"] = description; row["canRetry"] = remote && failing; row["problem"] = failing;
+        row["pathDetail"] = !remote && !failing && localPaths.contains(row.value("id").toString());
+        row["canMoveUp"] = !result.isEmpty(); row["canMoveDown"] = result.size() + 1 < service.snapshot().sources.size();
         row["glyph"] = type == "apple" ? "tv" : type == "folder" ? "folder" : type == "file" ? "movie" : "world";
         result << row;
     }
@@ -88,6 +117,13 @@ QVariantMap SourcesController::draft() const
     auto result = fields.toVariantMap();
     result["editing"] = !editing.isEmpty(); result["pending"] = pending != 0;
     result["error"] = problem;
+    QVariantList qualities{QVariantMap{{"label", "Same as Downloads"}, {"value", 0}},
+        QVariantMap{{"label", "1080p"}, {"value", 1080}}, QVariantMap{{"label", "4K"}, {"value", 2160}}};
+    const int quality = fields.value("maxResolution").toInt();
+    if (quality && quality != 1080 && quality != 2160) qualities.append(QVariantMap{{"label", QString::number(quality) + "p"}, {"value", quality}});
+    result["qualityChoices"] = qualities;
+    result["qualitySelected"] = !quality ? 0 : quality == 1080 ? 1 : quality == 2160 ? 2 : 3;
+    result["qualityInherited"] = !fields.contains("maxResolution");
     return result;
 }
 void SourcesController::begin(const QString &id)
@@ -178,15 +214,28 @@ void SourcesController::remove(const QString &id)
 void SourcesController::retry(const QString &id) { if (service.ready() && !refresh) { actionProblem.clear(); refresh = service.refreshSources({id}); emit changed(); } }
 void SourcesController::beginReorder(const QString &id)
 {
+    if (pending || !service.ready()) return;
     dragged = sources(); dragId = id; dragRevision = service.snapshot().revision; dragOwner = service.uniqueOwner();
+}
+void SourcesController::reorderTo(int to)
+{
+    const auto from = indexOf(dragged, dragId);
+    auto list = dragged; const auto rev = dragRevision, capturedOwner = dragOwner;
+    dragId.clear(); dragged = {}; dragRevision.clear(); dragOwner.clear();
+    if (pending || from < 0 || to < 0 || to >= list.size() || from == to) return;
+    const auto moved = list.takeAt(from); list.insert(to, moved);
+    submit(list, rev, capturedOwner, false);
 }
 void SourcesController::dropBefore(const QString &id)
 {
     const auto from = indexOf(dragged, dragId); const auto to = id.isEmpty() ? dragged.size() : indexOf(dragged, id);
-    if (from >= 0 && to >= 0 && from != to && from + 1 != to) {
-        auto moved = dragged.takeAt(from); dragged.insert(to > from ? to - 1 : to, moved);
-        submit(dragged, dragRevision, dragOwner, false);
-    }
-    dragId.clear(); dragged = {};
+    reorderTo(to > from ? to - 1 : to);
+}
+void SourcesController::move(const QString &id, int delta)
+{
+    if (pending || (delta != -1 && delta != 1)) return;
+    if (dragId != id) beginReorder(id);
+    const auto from = indexOf(dragged, id);
+    reorderTo(from < 0 ? -1 : from + delta);
 }
 }

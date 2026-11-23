@@ -13,6 +13,7 @@
 using namespace Aerial::Settings;
 class QuickHarness : public SettingsController {
     Q_OBJECT
+    Q_PROPERTY(QAbstractItemModel *referenceSources READ referenceSources CONSTANT)
 public:
     Aerial::Settings::Test::Fixture &fixture;
     InterActive::Appearance &appearanceState;
@@ -20,17 +21,31 @@ public:
     std::unique_ptr<QPointingDevice> unrelatedTouch{QTest::createTouchDevice()};
     QPointer<QQuickWindow> touchWindow;
     QPointer<const QPointingDevice> touchDevice;
+    SourceRows referenceRows{this};
+    QAbstractItemModel *referenceSources() { return &referenceRows; }
     QuickHarness(Aerial::Settings::Test::Fixture &fixture, InterActive::Appearance &appearanceState)
         : SettingsController(*fixture.service), fixture(fixture), appearanceState(appearanceState)
     {
         if (!appearance(false)) qFatal("could not initialize the test appearance");
+        QVariantList rows;
+        const auto row = [](const char *id, const char *name, const char *description, const char *glyph, bool enabled, bool problem) {
+            return QVariantMap{{"id", id}, {"name", name}, {"description", description}, {"glyph", glyph}, {"enabled", enabled}, {"problem", problem}, {"canRetry", problem}, {"pathDetail", qstrcmp(id, "folder") == 0}};
+        };
+        rows << row("apple", "Apple TV", "Apple aerials, 9 of 112 downloaded", "tv", true, false)
+            << row("community", "Community 2026", "Community pack, 5 of 40 downloaded", "world", true, false)
+            << row("folder", "My videos", "Folder, /home/alex/Videos/Aerial footage/Iceland 2025", "folder", true, false)
+            << row("drone", "Drone flights", "Couldn't reach example.org. Try again from the menu.", "world", false, true);
+        for (int i = 0; i < rows.size(); ++i) { auto entry = rows[i].toMap(); entry["canMoveUp"] = i > 0; entry["canMoveDown"] = i + 1 < rows.size(); rows[i] = entry; }
+        referenceRows.synchronize(rows);
     }
     Q_INVOKABLE QObject *iconIn(QObject *object)
     {
-        if (!object) return nullptr;
-        if (object->metaObject()->indexOfProperty("source") >= 0 && object->metaObject()->indexOfProperty("available") >= 0
-            && object->metaObject()->indexOfProperty("mirrored") >= 0) return object;
-        for (auto *child : object->children()) if (auto *icon = iconIn(child)) return icon;
+        const auto *item = qobject_cast<QQuickItem *>(object);
+        if (!item || !item->isVisible()) return nullptr;
+        if (item->metaObject()->indexOfProperty("source") >= 0 && item->metaObject()->indexOfProperty("available") >= 0
+            && item->metaObject()->indexOfProperty("mirrored") >= 0) return object;
+        // Follow the painted tree, not ownership (which also reaches hidden popup visuals).
+        for (auto *child : item->childItems()) if (auto *icon = iconIn(child)) return icon;
         return nullptr;
     }
     Q_INVOKABLE bool nativeRendering(QObject *object)
@@ -122,7 +137,9 @@ public:
             }
             for (auto *descendant : child->childItems()) visit(descendant);
         };
-        visit(item);
+        // Item popups are reparented to the window overlay. Inventory the same
+        // full frame we grab, including their actual header/body/footer items.
+        visit(item->window()->contentItem());
         QFile report(directory + '/' + name + ".json");
         if (!report.open(QIODevice::WriteOnly) || report.write(QJsonDocument(geometry).toJson()) < 0) return false;
         return item->window()->grabWindow().save(directory + '/' + name + ".png");

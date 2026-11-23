@@ -48,7 +48,7 @@ quint64 PortalClient::dispatch(const QString &interface, const QString &method, 
             return;
         }
         if (!requests.contains(path)) return; // Response may precede the method reply.
-        if (reply.isError()) { complete(path, {}, false, "Desktop portal unavailable: " + reply.error().name().section('.', -1)); return; }
+        if (reply.isError()) { complete(path, {}, false, "The desktop portal is unavailable. Your fields are kept; try again."); return; }
         const auto actual = reply.value().path();
         if (actual != path) {
             auto request = requests.take(path); request.path = actual; request.owner = message.service(); requests.insert(actual, request);

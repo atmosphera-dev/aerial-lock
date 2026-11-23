@@ -6,6 +6,7 @@ Module {
         exports: ["AerialLock.SettingsTest/Harness 1.0"]
         isCreatable: false
         isSingleton: true
+        Property { name: "referenceSources"; type: "QAbstractItemModel"; isPointer: true; isReadonly: true }
         Method { name: "nativeRendering"; type: "bool"; Parameter { name: "item"; type: "QObject"; isPointer: true } }
         Method { name: "iconIn"; type: "QObject"; isPointer: true; Parameter { name: "item"; type: "QObject"; isPointer: true } }
         Method { name: "inkPixels"; type: "int"; Parameter { name: "item"; type: "QObject"; isPointer: true } }

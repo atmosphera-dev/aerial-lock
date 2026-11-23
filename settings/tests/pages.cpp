@@ -1,6 +1,7 @@
 #include "fixture.h"
 #include <QImage>
 #include <QSaveFile>
+#include <QAbstractItemModelTester>
 #include <limits>
 #include <sys/stat.h>
 using namespace Aerial;
@@ -153,6 +154,73 @@ private slots:
         const auto before = bytes(f.paths.config); s->begin(id); s->field("name", "Not saved"); s->dismiss();
         QCOMPARE(bytes(f.paths.config), before);
     }
+    void sourceKeyboardAndDragShareOneTransaction()
+    {
+        Fixture f; QVERIFY(f.start()); auto *s = f.controller->sources();
+        const QJsonArray original{
+            QJsonObject{{"id", "a"}, {"name", "A"}, {"type", "folder"}, {"source", f.root.path()}, {"enabled", false}, {"future", QJsonObject{{"kept", 17}}}},
+            QJsonObject{{"id", "b"}, {"name", "B"}, {"type", "folder"}, {"source", f.root.path()}, {"enabled", true}},
+            QJsonObject{{"id", "c"}, {"name", "C"}, {"type", "folder"}, {"source", f.root.path()}, {"enabled", true}}};
+        const auto publish = [&](const QJsonArray &array) { f.cli({"config", "set", "sources", QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact))}); };
+        publish(original); QTRY_COMPARE(s->rows().size(), 3);
+        QAbstractItemModelTester tester(s->rowModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QPersistentModelIndex identity(s->rowModel()->index(0, 0));
+        QSignalSpy resets(s->rowModel(), &QAbstractItemModel::modelReset);
+        const auto before = bytes(f.paths.config);
+        s->move("a", -1); s->move("c", 1); s->move("a", 2); s->move("missing", 1);
+        QCOMPARE(bytes(f.paths.config), before); QVERIFY(!s->busy());
+        s->beginReorder("a"); s->move("a", 1); QVERIFY(s->busy());
+        s->move("a", 1); s->beginReorder("b"); s->dropBefore(""); // no second write while pending
+        QTRY_VERIFY(!s->busy());
+        auto moved = original; moved.removeAt(0); moved.insert(1, original[0]);
+        QCOMPARE(saved(f), moved); QTRY_COMPARE(identity.row(), 1);
+        QCOMPARE(identity.data(Qt::UserRole).toMap().value("id").toString(), QString("a"));
+        s->move("a", -1); QTRY_VERIFY(!s->busy()); QCOMPARE(saved(f), original);
+        s->beginReorder("a"); s->dropBefore("c"); QTRY_VERIFY(!s->busy()); QCOMPARE(saved(f), moved);
+        publish(original); QTRY_COMPARE(s->rows().first().toMap().value("id").toString(), QString("a"));
+        QCOMPARE(identity.row(), 0); QCOMPARE(resets.size(), 0);
+        QVERIFY(!s->rows().first().toMap().value("canMoveUp").toBool());
+        QVERIFY(!s->rows().last().toMap().value("canMoveDown").toBool());
+    }
+    void sourceOrderCaptureRejectsExternalRevisionAndOwner_data()
+    {
+        QTest::addColumn<bool>("menu"); QTest::newRow("menu") << true; QTest::newRow("drag") << false;
+    }
+    void sourceOrderCaptureRejectsExternalRevisionAndOwner()
+    {
+        QFETCH(bool, menu); Fixture f; QVERIFY(f.start()); auto *s = f.controller->sources();
+        f.cli({"config", "set", "sources", "[{\"id\":\"a\",\"name\":\"A\",\"type\":\"folder\",\"source\":\"/home/tester/Videos\"},{\"id\":\"b\",\"name\":\"B\",\"type\":\"folder\",\"source\":\"/home/tester/Videos\"}]"});
+        QTRY_COMPARE(s->rows().size(), 2);
+        const auto act = [&] { if (menu) s->move("a", 1); else s->dropBefore(""); };
+        s->beginReorder("a");
+        f.cli({"config", "set", "cache.rotationDays", "1"});
+        const auto before = bytes(f.paths.config); act(); QTRY_VERIFY(!s->busy());
+        QVERIFY(!s->error().isEmpty()); QCOMPARE(bytes(f.paths.config), before);
+        s->beginReorder("a"); const auto owner = f.service->uniqueOwner();
+        f.daemon.terminate(); QVERIFY(f.daemon.waitForFinished()); QTRY_VERIFY(!f.service->ready());
+        f.daemon.start(QString(AERIAL_SETTINGS_TEST_SOURCE) + "/companion/aerial", {}); QVERIFY(f.daemon.waitForStarted());
+        QTRY_VERIFY(f.service->ready() && f.service->uniqueOwner() != owner);
+        act(); QVERIFY(!s->busy()); QVERIFY(s->error().contains("service changed")); QCOMPARE(bytes(f.paths.config), before);
+    }
+    void customSourceQualityIsAnExactDraftChoice()
+    {
+        Fixture f; QVERIFY(f.start()); auto *s = f.controller->sources();
+        f.cli({"config", "set", "sources", "[{\"id\":\"custom\",\"name\":\"Custom\",\"type\":\"community\",\"source\":\"https://example.org/pack.json\",\"maxResolution\":1080}]"});
+        QTRY_COMPARE(s->rows().size(), 1); s->begin("custom");
+        // The current schema accepts 1080/2160 only. Even a not-yet-valid
+        // custom draft must display exactly, survive rejection and not save 0.
+        s->field("maxResolution", 1440);
+        const auto draft = s->draft(), choice = draft.value("qualityChoices").toList()[draft.value("qualitySelected").toInt()].toMap();
+        QCOMPARE(choice.value("value").toInt(), 1440); QCOMPARE(choice.value("label").toString(), QString("1440p"));
+        QVERIFY(!draft.value("qualityInherited").toBool()); s->save(); QTRY_VERIFY(!s->busy());
+        QVERIFY(s->sheetOpen()); QVERIFY(!s->draft().value("error").toString().isEmpty());
+        QCOMPARE(s->draft().value("maxResolution").toInt(), 1440);
+        QCOMPARE(saved(f).first().toObject().value("maxResolution").toInt(), 1080);
+        s->field("maxResolution", 2160); s->save(); QTRY_VERIFY(!s->sheetOpen());
+        QCOMPARE(saved(f).first().toObject().value("maxResolution").toInt(), 2160);
+        s->begin("custom"); s->field("maxResolution", 0); QVERIFY(s->draft().value("qualityInherited").toBool());
+        QCOMPARE(s->draft().value("qualitySelected").toInt(), 0); s->dismiss();
+    }
     void existingLocalPathsSurviveRename_data()
     {
         QTest::addColumn<QString>("type"); QTest::addColumn<QString>("path");
@@ -240,7 +308,7 @@ private slots:
         f.service->mutationFinished(1, {}, "org.aeriallock.Test.RetryFailed");
         QCOMPARE(s->draft().value("error").toString(), QString());
         QCOMPARE(s->draft().value("name").toString(), QString("Draft B"));
-        QVERIFY(s->error().contains("RetryFailed"));
+        QCOMPARE(s->error(), QString("Couldn't check this source. Try again."));
     }
     void sourceDismissalIsIdempotent()
     {
@@ -263,7 +331,7 @@ private slots:
     }
     void sourceWritesNeverReplaceALossyProjection_data()
     {
-        QTest::addColumn<QString>("action"); for (const auto *action : {"toggle", "remove", "append", "reorder"}) QTest::newRow(action) << QString(action);
+        QTest::addColumn<QString>("action"); for (const auto *action : {"toggle", "remove", "append", "reorder", "move"}) QTest::newRow(action) << QString(action);
     }
     void sourceWritesNeverReplaceALossyProjection()
     {
@@ -277,6 +345,7 @@ private slots:
         if (action == "toggle") s->toggle("a", false);
         else if (action == "remove") s->remove("a");
         else if (action == "reorder") { s->beginReorder("a"); s->dropBefore(""); }
+        else if (action == "move") s->move("a", 1);
         else { s->begin(); s->field("name", "New"); s->field("source", "https://example.org/new.json"); s->save(); }
         QTRY_VERIFY(!s->busy()); QCOMPARE(bytes(f.paths.config), before); QVERIFY(s->error().contains("omitted"));
     }

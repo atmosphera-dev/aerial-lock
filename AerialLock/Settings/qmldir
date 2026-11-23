@@ -1,2 +1,3 @@
 module AerialLock.Settings
+depends QtQml.Models 6.5
 typeinfo settings.qmltypes

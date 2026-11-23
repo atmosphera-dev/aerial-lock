@@ -95,6 +95,7 @@ TestCase {
         compare(findChild(action, "iaLabel").truncated, false);
         const message = findChild(banner, "iaBannerMessage");
         compare(message.fontPixelSize, IA.Appearance.typography.supportingSize);
+        verify(Qt.colorEqual(message.foregroundColor, IA.Appearance.colors.secondaryText));
         if (data.w === 379) verify(message.contentHeight > message.font.pixelSize * 1.5, "Description wraps instead");
         const icon = findChild(banner, "iaBannerIcon"), title = findChild(banner, "iaBannerTitle");
         fuzzyCompare(icon.mapToItem(banner, 0, icon.height / 2).y, title.mapToItem(banner, 0, title.height / 2).y, 0.1);

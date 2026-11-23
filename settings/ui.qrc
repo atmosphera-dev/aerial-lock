@@ -11,6 +11,16 @@
 <file>qml/revamp/StorageMeter.qml</file>
 <file>qml/revamp/Overview.qml</file>
 <file>qml/revamp/EmptyPage.qml</file>
+<file>qml/revamp/SourcesPage.qml</file>
+<file>qml/revamp/SourceRow.qml</file>
+<file>qml/revamp/AddSourceDialog.qml</file>
+<file>qml/revamp/icons/grip.svg</file>
+<file>qml/revamp/icons/dots.svg</file>
+<file>qml/revamp/icons/plus.svg</file>
+<file>qml/revamp/icons/tv.svg</file>
+<file>qml/revamp/icons/world.svg</file>
+<file>qml/revamp/icons/folder.svg</file>
+<file>qml/revamp/icons/movie.svg</file>
 <file>qml/revamp/icons/sky.svg</file>
 <file>qml/revamp/icons/stack.svg</file>
 <file>qml/revamp/icons/download.svg</file>

@@ -23,6 +23,7 @@ ColumnLayout {
         visible: text.length > 0
         text: root.description
         fontPixelSize: IA.Appearance.typography.supportingSize
+        foregroundColor: IA.Appearance.colors.secondaryText
     }
     IALabel {
         Layout.fillWidth: true

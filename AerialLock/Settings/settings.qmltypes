@@ -50,6 +50,7 @@ Module {
         exports: ["AerialLock.Settings/SourcesController 1.0"]
         isCreatable: false
         Property { name: "rows"; type: "QVariantList"; isReadonly: true }
+        Property { name: "rowModel"; type: "QAbstractItemModel"; isPointer: true; isReadonly: true }
         Property { name: "draft"; type: "QVariantMap"; isReadonly: true }
         Property { name: "sheetOpen"; type: "bool"; isReadonly: true }
         Property { name: "appleAvailable"; type: "bool"; isReadonly: true }
@@ -67,6 +68,7 @@ Module {
         Method { name: "retry"; Parameter { name: "id"; type: "QString" } }
         Method { name: "beginReorder"; Parameter { name: "id"; type: "QString" } }
         Method { name: "dropBefore"; Parameter { name: "id"; type: "QString" } }
+        Method { name: "move"; Parameter { name: "id"; type: "QString" } Parameter { name: "delta"; type: "int" } }
     }
     Component {
         name: "Aerial::Settings::StatusModel"

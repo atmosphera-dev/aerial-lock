@@ -1,3 +1,4 @@
 module AerialLock.SettingsTest
 depends AerialLock.Settings 1.0
+depends QtQml.Models 6.5
 typeinfo settings-test.qmltypes
