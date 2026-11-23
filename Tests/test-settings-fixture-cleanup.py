@@ -441,8 +441,10 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(module.release_transfer(event, failures, "dark", .01))
         self.assertFalse(module.menu_stopped({}))
         self.assertFalse(module.menu_stopped({"count": 1, "entries": []}))
-        self.assertTrue(module.menu_stopped({"count": 1, "entries": [{"text": "Fetch now"}] * 7}))
-        self.assertFalse(module.menu_stopped({"count": 1, "entries": [{"text": "Stop download"}] * 7}))
+        menu = [{"text": text} for text in ("Open Aerial", "", "Fetch videos now", "Resume automatic downloads", "", "Hide tray icon")]
+        self.assertTrue(module.menu_stopped({"count": 1, "entries": menu}))
+        menu[2]["text"] = "Stop download"
+        self.assertFalse(module.menu_stopped({"count": 1, "entries": menu}))
 
     def test_transfer_retirement_observes_late_handler_failures(self):
         spec = importlib.util.spec_from_file_location("tray", Path(__file__).with_name("settings-native-tray.py"))

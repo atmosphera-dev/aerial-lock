@@ -54,9 +54,11 @@ int main(int argc, char **argv)
     registerTypes();
     const auto paths = ConfigPaths::environment(source);
     Client::ServiceConnection service(bus, paths, source);
-    SettingsController settings(service); WindowController window(settings);
+    const bool idle = mode == "idle" || mode == "idle-existing";
+    SettingsController settings(service);
+    WindowController window(settings, QUrl(idle ? "qrc:/settings/qml/Main.qml" : "qrc:/settings/qml/revamp/SettingsWindow.qml"));
     ApplicationActivation activation(window, readConfig(paths).profile);
-    TrayController tray(settings, bus);
+    TrayController tray(settings, bus, nullptr, {}, TrayController::Projection::Revamp);
     if (!bus.registerObject("/org/aeriallock/AerialSettings", &activation, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllProperties)
         || !bus.registerService("org.aeriallock.AerialSettings")) return 1;
     QObject::connect(&activation, &ApplicationActivation::trayRequested, &tray, &TrayController::show);
@@ -67,9 +69,8 @@ int main(int argc, char **argv)
         if (!value) fprintf(stderr, "%s; manager=%s\n", label, qPrintable(settings.systemd()->error()));
         return value;
     };
-    const bool idle = mode == "idle" || mode == "idle-existing";
     if (!require(QTest::qWaitFor([&] { return settings.panel() == "settings" && settings.systemd()->available() && (idle || settings.tray().value("available").toBool()); }, 15000), "native dependencies")) return 1;
-    window.open({}, idle ? 3 : 4);
+    window.open({}, idle ? SettingsController::LockPage : SettingsController::AboutPage);
     QQuickWindow *quick = nullptr;
     for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
     if (!quick || !QTest::qWaitForWindowExposed(quick)) return 1;
@@ -180,6 +181,15 @@ int main(int argc, char **argv)
             tray.show();
             if (!require(!tray.enabled() && !settings.tray().value("visible").toBool(), "late startup forward keeps completed Hide")) return 1;
             receipt["aboutClickAndHideRace"] = true;
+            const auto invocation = [&] { return settings.systemd()->units().value("aerial.service").toMap().value("invocation").toString(); };
+            if (!require(QTest::qWaitFor([&] { return !invocation().isEmpty(); }, 15000), "background service invocation")) return 1;
+            const auto before = invocation();
+            auto *restart = control("aboutRestart"); if (!require(restart, "About background service Restart")) return 1;
+            operations.clear(); click(restart);
+            if (!require(settle("About background service Restart completes") && operations.last()[0].toString() == "aerial.service"
+                && operations.last()[1].toString() == "restart", "About restarts background service")) return 1;
+            if (!require(QTest::qWaitFor([&] { return service.ready() && !invocation().isEmpty() && invocation() != before; }, 15000), "new service invocation and reconnect")) return 1;
+            receipt["aboutServiceRestart"] = QJsonObject{{"before", before}, {"after", invocation()}};
         }
     }
     quick->close(); if (!QTest::qWaitFor([&] { return !window.hasWindow(); })) return 1;

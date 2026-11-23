@@ -90,9 +90,9 @@ def portals(owned, output):
                 return value
             time.sleep(.05)
         raise RuntimeError("not observed: " + label)
-    def spawn(argv, name):
+    def spawn(argv, name, environment=None):
         handle = (output / (name + ".log")).open("wb"); handles.append(handle)
-        process = subprocess.Popen(argv, env=env, stdout=handle, stderr=handle); processes.append(process)
+        process = subprocess.Popen(argv, env=env if environment is None else environment, stdout=handle, stderr=handle); processes.append(process)
         return process
     def close(window):
         run(["niri", "msg", "action", "close-window", "--id", str(window["id"])], capture_output=True)
@@ -177,9 +177,12 @@ def portals(owned, output):
                 owned_windows.discard(window["id"])
                 results.append(json.loads(receipt.read_text()))
             before = {w["id"] for w in windows()}
-            process = spawn([str(probe), "--native-folder", str(folder), "accepted", str(output / "open-folder.json")], "open-folder")
+            folder_receipt = output / "open-folder.json"
+            process = spawn([str(probe), "--native-about-folder", "config", "accepted", str(folder_receipt)], "open-folder",
+                            dict(env, QT_WAYLAND_TEXT_INPUT_PROTOCOL="zwp_text_input_v1"))
             assert process.wait(timeout=20) == 0, (output / "open-folder.log").read_text()
-            manager = wait(lambda: next((w for w in windows() if w["id"] not in before and folder.name in w["title"]), None), "file manager at selected folder")
+            about_folder = Path(json.loads(folder_receipt.read_text())["folder"])
+            manager = wait(lambda: next((w for w in windows() if w["id"] not in before and about_folder.name in w["title"]), None), "file manager at About settings folder")
             owned_windows.add(manager["id"]); results.append({"fileManager": manager})
             close(manager)
             before = {w["id"] for w in windows()}

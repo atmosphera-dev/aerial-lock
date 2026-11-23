@@ -1,6 +1,7 @@
 <RCC><qresource prefix="/settings">
 <file>qml/Main.qml</file>
 <file>qml/revamp/qmldir</file>
+<file>qml/revamp/SettingsWindow.qml</file>
 <file>qml/revamp/Insets.qml</file>
 <file>qml/revamp/Shell.qml</file>
 <file>qml/revamp/Sidebar.qml</file>
@@ -22,6 +23,8 @@
 <file>qml/revamp/DownloadsPage.qml</file>
 <file>qml/revamp/ThemeTile.qml</file>
 <file>qml/revamp/LockScreenPage.qml</file>
+<file>qml/revamp/AboutPage.qml</file>
+<file>qml/revamp/icons/external.svg</file>
 <file>qml/revamp/icons/checkcircle.svg</file>
 <file>qml/revamp/icons/grip.svg</file>
 <file>qml/revamp/icons/dots.svg</file>

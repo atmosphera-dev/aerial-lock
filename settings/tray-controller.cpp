@@ -101,23 +101,32 @@ void TrayItem::ContextMenu(int x, int y)
 }
 void TrayItem::Scroll(int, const QString &) {} // No scrolling action is advertised.
 
-TrayController::TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent, std::function<bool()> desktopAvailable)
-    : QObject(parent), settings(settings), bus(std::move(bus)), desktopAvailable(std::move(desktopAvailable))
+TrayController::TrayController(SettingsController &settings, QDBusConnection bus, QObject *parent, std::function<bool()> desktopAvailable, Projection projection)
+    : QObject(parent), settings(settings), bus(std::move(bus)), desktopAvailable(std::move(desktopAvailable)), projection(projection)
 {
     if (!this->desktopAvailable) this->desktopAvailable = [] { return QSystemTrayIcon::isSystemTrayAvailable(); };
-    summary = menu.addAction(settings.status()); menu.addSeparator(); transfer = menu.addAction("Fetch now"); pause = menu.addAction("Pause downloads"); menu.addSeparator(); open = menu.addAction("Open settings"); hide = menu.addAction("Hide tray icon");
-    connect(summary, &QAction::triggered, this, [this] { emit openRequested(2, {}); });
-    connect(open, &QAction::triggered, this, [this] { emit openRequested(-1, {}); });
+    if (projection == Projection::Revamp) open = menu.addAction("Open Aerial");
+    else {
+        summary = menu.addAction(settings.status());
+        connect(summary, &QAction::triggered, this, [this] { emit openRequested(2, {}); });
+    }
+    menu.addSeparator(); transfer = menu.addAction("Fetch now"); pause = menu.addAction("Pause downloads"); menu.addSeparator();
+    if (projection == Projection::Legacy) open = menu.addAction("Open settings");
+    hide = menu.addAction("Hide tray icon");
+    connect(open, &QAction::triggered, this, [this] { emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : -1, {}); });
     connect(transfer, &QAction::triggered, this, [this] {
-        if (this->settings.panel() == "settings") this->settings.dispatchAction(this->settings.statusModel()->facts().value("primaryActionId").toString());
-        else { emit openRequested(2, {}); this->settings.dispatchAction("retry-service"); }
+        const auto id = this->settings.statusModel()->facts().value("primaryActionId").toString();
+        if (this->projection == Projection::Legacy ? this->settings.panel() == "settings" : !id.isEmpty()) this->settings.dispatchAction(id);
+        else { emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : 2, {}); this->settings.dispatchAction("retry-service"); }
     });
     connect(pause, &QAction::triggered, this, [this] {
-        if (this->settings.panel() == "settings") this->settings.dispatchAction(this->settings.statusModel()->facts().value("secondaryActionId").toString());
-        else emit openRequested(4, {});
+        const auto id = this->settings.statusModel()->facts().value("secondaryActionId").toString();
+        if (this->projection == Projection::Legacy ? this->settings.panel() == "settings" : !id.isEmpty()) this->settings.dispatchAction(id);
+        else emit openRequested(this->projection == Projection::Revamp ? SettingsController::OverviewPage : SettingsController::AboutPage, {});
     });
     connect(hide, &QAction::triggered, this, [this] { setEnabled(false); });
     connect(&settings, &SettingsController::changed, this, &TrayController::sample);
+    connect(settings.statusModel(), &StatusModel::changed, this, &TrayController::sample);
     connect(&settings, &SettingsController::trayChangeRequested, this, &TrayController::setEnabled);
     connect(settings.systemd(), &SystemdController::changed, this, &TrayController::publish);
     connect(settings.systemd(), &SystemdController::operationFinished, this, [this](const QString &unit, const QString &, bool success) {
@@ -125,7 +134,7 @@ TrayController::TrayController(SettingsController &settings, QDBusConnection bus
         persistencePending = false;
         if (pendingDesired != desired) { persist(); return; }
         // Failed persistence must not disappear with a tray-only process.
-        if (!success) emit openRequested(4, {});
+        if (!success) emit openRequested(SettingsController::AboutPage, {});
         publish(); emit changed();
     });
     auto *watcher = new QDBusServiceWatcher(Watcher, this->bus, QDBusServiceWatcher::WatchForOwnerChange, this);
@@ -213,19 +222,28 @@ void TrayController::sample()
 {
     const bool ready = settings.panel() == "settings", downloading = settings.cache()->facts().value("downloading").toBool();
     const bool paused = !settings.controls().value("automatic").toMap().value("on").toBool();
-    summary->setText(settings.status()); summary->setIcon(actionIcon("cache"));
-    transfer->setText(!ready ? "Open service recovery" : downloading ? "Stop download" : "Fetch now"); transfer->setIcon(actionIcon(downloading ? "stop" : "download"));
-    pause->setText(!ready ? "Open settings" : paused ? "Resume downloads" : "Pause downloads"); pause->setIcon(actionIcon(paused ? "play" : "pause"));
-    open->setIcon(actionIcon("settings")); hide->setIcon(actionIcon("hide"));
+    const auto facts = settings.statusModel()->facts();
+    if (projection == Projection::Legacy) {
+        summary->setText(settings.status()); summary->setIcon(actionIcon("cache"));
+        transfer->setText(!ready ? "Open service recovery" : downloading ? "Stop download" : "Fetch now"); transfer->setIcon(actionIcon(downloading ? "stop" : "download"));
+        pause->setText(!ready ? "Open settings" : paused ? "Resume downloads" : "Pause downloads"); pause->setIcon(actionIcon(paused ? "play" : "pause"));
+        open->setIcon(actionIcon("settings")); hide->setIcon(actionIcon("hide"));
+    } else {
+        const auto label = facts.value("primaryActionLabel").toString();
+        const auto automaticLabel = facts.value("secondaryActionLabel").toString();
+        transfer->setText(label.isEmpty() ? "Fetch videos now" : label);
+        pause->setText(automaticLabel.isEmpty() ? (paused ? "Resume automatic downloads" : "Pause automatic downloads") : automaticLabel);
+    }
     if (item) {
-        const auto facts = settings.statusModel()->facts();
         item->update(facts.value("attention").toBool() ? "NeedsAttention" : "Active", pixmaps(facts.value("badge").toString()), pixmaps("problem"), tooltip());
     }
 }
 QString TrayController::tooltip() const
 {
     // The status line, then the ready count unless the status already ends with it.
-    const auto status = settings.status(), ready = settings.cache()->facts().value("ready").toString();
+    const auto facts = settings.statusModel()->facts();
+    const auto status = projection == Projection::Revamp ? facts.value("summary").toString() : settings.status();
+    const auto ready = facts.value("ready").toString();
     return status.endsWith(ready) ? status : status + '\n' + ready;
 }
 void TrayController::publish()
@@ -236,6 +254,11 @@ void TrayController::publish()
         : desired && !persistent ? "Shown for this session. Startup is not enabled; check the user unit."
         : "Status and quick actions in the tray. Comes back each time you log in when turned on.";
     if (!problem.isEmpty()) message += " " + problem;
-    settings.setTrayState({{"available", available}, {"on", desired}, {"visible", bool(item)}, {"persistent", persistent}, {"message", message}});
+    const auto note = !available ? QString("No desktop tray was found. The startup preference is kept until a tray returns.")
+        : !settings.systemd()->available() ? QString("No systemd user manager. Use compositor autostart to keep the tray icon across logins.")
+        : desired && !persistent ? QString("Shown for this session. Startup is not enabled.") : QString("Status and quick actions in the panel, from login.");
+    const auto error = settings.systemd()->operationErrors().value("aerial-tray.service").toString();
+    settings.setTrayState({{"available", available}, {"on", desired}, {"visible", bool(item)}, {"persistent", persistent}, {"message", message},
+        {"note", note}, {"pending", persistencePending}, {"error", problem.isEmpty() && settings.systemd()->available() ? error : problem}});
 }
 }

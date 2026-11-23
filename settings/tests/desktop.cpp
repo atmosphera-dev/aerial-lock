@@ -501,6 +501,31 @@ private slots:
         // The first operation's already-armed timer cannot complete this or a later operation.
         QTest::qWait(750); QCOMPARE(done.size(), 2);
     }
+    void timedOutRestartErrorRequiresNewInvocation()
+    {
+        const QString unit = "aerial-idle.service";
+        PeerProcess peer; QVERIFY(peer.ready());
+        peer.configure({{"idleFile", "enabled"}, {"idleActive", "active"}, {"hold", true}});
+        SystemdController manager(QDBusConnection::sessionBus(), nullptr, 300);
+        const auto invocation = [&] { return manager.units().value(unit).toMap().value("invocation").toString(); };
+        QTRY_VERIFY(!invocation().isEmpty());
+        const auto before = invocation();
+        QSignalSpy done(&manager, &SystemdController::operationFinished);
+        manager.operate(unit, "restart");
+        QTRY_COMPARE(done.size(), 1); QVERIFY(!done.first()[2].toBool());
+        QVERIFY(manager.operationErrors().contains(unit));
+        peer.configure({{"hold", true}, {"failProperties", true}}); manager.refresh();
+        QTRY_COMPARE(manager.units().value(unit).toMap().value("active").toString(), QString("unknown"));
+        QVERIFY(manager.operationErrors().contains(unit));
+        peer.configure({{"hold", true}}); peer.call("ExternalUnit", {unit});
+        QTRY_COMPARE(invocation(), before);
+        QVERIFY(manager.operationErrors().contains(unit));
+        peer.call("Late"); peer.call("ExternalUnit", {unit});
+        QTRY_VERIFY(!invocation().isEmpty() && invocation() != before);
+        QTRY_VERIFY(!manager.operationErrors().contains(unit));
+        QVERIFY(manager.error().isEmpty());
+        QCOMPARE(done.size(), 1);
+    }
     void disableBothStartupScopes()
     {
         PeerProcess peer; QVERIFY(peer.ready()); peer.configure({{"trayFile", "enabled"}, {"bothScopes", true}});
@@ -546,9 +571,12 @@ int main(int argc, char **argv)
         std::unique_ptr<Aerial::Settings::Test::Fixture> fixture;
         PortalClient standalone(QDBusConnection::sessionBus());
         PortalClient *portal = &standalone;
-        if (mode == "--native-choose") {
+        const bool about = mode == "--native-about-folder";
+        if (mode == "--native-choose" || about) {
             const auto address = qEnvironmentVariable("AERIAL_TEST_SERVICE_BUS"); if (address.isEmpty()) return 2;
-            fixture = std::make_unique<Aerial::Settings::Test::Fixture>();
+            fixture = about ? std::make_unique<Aerial::Settings::Test::Fixture>(QFileInfo(output).absolutePath() + "/about-folder-XXXXXX")
+                            : std::make_unique<Aerial::Settings::Test::Fixture>();
+            if (about) fixture->root.setAutoRemove(false); // Retain the folder until the desktop consumer is observed.
             fixture->environment.insert("DBUS_SESSION_BUS_ADDRESS", address);
             const auto bus = QDBusConnection::connectToBus(address, "native-source-fixture");
             if (!fixture->start(bus)) {
@@ -558,8 +586,9 @@ int main(int argc, char **argv)
             }
             auto *sources = fixture->controller->sources();
             portal = fixture->controller->portal();
-            sources->begin(); sources->field("type", value); sources->field("name", "Portal selection");
+            if (!about) { sources->begin(); sources->field("type", value); sources->field("name", "Portal selection"); }
         }
+        std::unique_ptr<WindowController> window;
         QObject::connect(portal, &PortalClient::finished, &app, [&](quint64, const QString &path, bool cancelled, const QString &error) {
             receipt = {{"path", path}, {"cancelled", cancelled}, {"error", error}};
             accepted = expected == "closed" ? !cancelled && path.isEmpty() && !error.isEmpty()
@@ -567,12 +596,24 @@ int main(int argc, char **argv)
             complete = true;
         });
         if (mode == "--native-choose") fixture->controller->sources()->choosePath();
+        else if (about) {
+            registerTypes();
+            window = std::make_unique<WindowController>(*fixture->controller, QUrl("qrc:/settings/qml/revamp/SettingsWindow.qml"));
+            window->open({}, SettingsController::AboutPage);
+            QQuickWindow *quick = nullptr;
+            for (auto *candidate : app.topLevelWindows()) if ((quick = qobject_cast<QQuickWindow *>(candidate))) break;
+            if (!quick || !QTest::qWaitForWindowExposed(quick)) return 1;
+            auto *button = quick->findChild<QQuickItem *>("about-config");
+            if (!button || !button->isVisible()) return 1;
+            QTest::mouseClick(quick, Qt::LeftButton, {}, button->mapToScene({button->width() / 2, button->height() / 2}).toPoint());
+        }
         else if (mode == "--native-folder") portal->openFolder(value);
         else if (mode == "--native-link") portal->openLink(value);
         else return 2;
         if (!QTest::qWaitFor([&] { return complete; }, 60000)) return 1;
         if (!accepted) { fprintf(stderr, "Unexpected portal outcome: %s\n", QJsonDocument(receipt).toJson(QJsonDocument::Compact).constData()); return 1; }
-        if (fixture) {
+        if (about) receipt["folder"] = QFileInfo(fixture->paths.config).absolutePath();
+        if (mode == "--native-choose") {
             auto *sources = fixture->controller->sources();
             if (expected == "cancel" || expected == "closed") {
                 if (!sources->draft().value("source").toString().isEmpty()) return 1;

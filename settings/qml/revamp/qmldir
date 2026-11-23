@@ -19,3 +19,4 @@ CleanupDialog 1.0 CleanupDialog.qml
 DownloadsPage 1.0 DownloadsPage.qml
 ThemeTile 1.0 ThemeTile.qml
 LockScreenPage 1.0 LockScreenPage.qml
+AboutPage 1.0 AboutPage.qml

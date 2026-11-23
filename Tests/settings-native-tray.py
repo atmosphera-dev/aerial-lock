@@ -16,7 +16,7 @@ from settings_fixture_cleanup import Cleanup, HostLease, stop_process
 
 def menu_stopped(snapshot):
     entries = snapshot.get("entries", [])
-    return snapshot.get("count") == 1 and len(entries) == 7 and not any(e.get("text") == "Stop download" for e in entries)
+    return snapshot.get("count") == 1 and len(entries) == 6 and not any(e.get("text") == "Stop download" for e in entries)
 
 
 def release_transfer(event, failures, group, seconds=60):
@@ -48,7 +48,7 @@ def retire_http(server, thread, releases):
 
 def tray(owned, output):
     root, source = owned.paths["root"], owned.paths["source"]
-    binary = owned.check_binary(source / "settings/aerial-settings")
+    binary = owned.check_binary(owned.paths["build"] / "settings-revamp-probe")
     env = dict(os.environ, **owned.record["environment"], LIBGL_ALWAYS_SOFTWARE="1", QSG_RHI_BACKEND="opengl", NO_AT_BRIDGE="1", GTK_A11Y="none")
     env.pop("QT_QPA_PLATFORM", None)
     owned.check_session(owned.record["session"], env)
@@ -166,10 +166,15 @@ def tray(owned, output):
                 wait(lambda: info().get("count") == 0, "real Quickshell watcher")
                 lease_host(host, host_file)
                 app = spawn([str(binary), "--tray"], "app-" + palette)
-                wait(lambda: len(info().get("entries", [])) == 7 and info().get("iconReady"), "real SNI and DBusMenu consumer")
+                wait(lambda: len(info().get("entries", [])) == 6 and info().get("iconReady"), "real SNI and DBusMenu consumer")
                 assert not app_windows(), "--tray must not create a window"
                 assert info()["count"] == 1 and info()["title"] == "Aerial"
                 assert info()["tooltipTitle"] == "Aerial" and "videos ready" in info()["tooltip"]
+                entries = info()["entries"]
+                assert [e["separator"] for e in entries] == [False, True, False, False, True, False], entries
+                actions = [e for e in entries if not e["separator"]]
+                assert all(e["enabled"] for e in actions), actions
+                assert [e["text"] for e in actions] == ["Open Aerial", "Fetch videos now", "Resume automatic downloads", "Hide tray icon"], actions
                 run([str(binary), "--tray"], capture_output=True)
                 assert info()["count"] == 1 and not app_windows()
                 time.sleep(.3); snap("badge-paused")
@@ -178,17 +183,17 @@ def tray(owned, output):
                     call("quit"); assert host.wait(timeout=10) == 0
                     assert app.poll() is None
                     host = spawn(["qs", "-p", str(host_file)], "host-dark-replacement", environment=host_environment()); hosts.append((host, host_file))
-                    wait(lambda: info().get("count") == 1 and len(info().get("entries", [])) == 7 and info().get("iconReady"), "re-registration with a replacement watcher")
+                    wait(lambda: info().get("count") == 1 and len(info().get("entries", [])) == 6 and info().get("iconReady"), "re-registration with a replacement watcher")
                     lease_host(host, host_file)
                     observations.append({"replacementHost": info()})
                 call("trigger", 3); wait(lambda: cli("config", "show").get("acquisition", {}).get("automatic", {}).get("enabled") is True, "Resume persisted by service")
-                wait(lambda: any(e.get("text") == "Pause downloads" for e in info().get("entries", [])), "tray observes resumed state")
+                wait(lambda: any(e.get("text") == "Pause automatic downloads" for e in info().get("entries", [])), "tray observes resumed state")
                 call("trigger", 3); wait(lambda: cli("config", "show")["acquisition"]["automatic"]["enabled"] is False, "Pause persisted by service")
-                call("trigger", 0); first = wait(lambda: app_windows(), "status opens Cache & status")[0]
+                call("trigger", 0); first = wait(lambda: app_windows(), "Open Aerial shows Overview")[0]
                 selected = run(["gdbus", "call", "--session", "--dest", "org.aeriallock.AerialSettings", "--object-path", "/org/aeriallock/AerialSettings", "--method", "org.freedesktop.DBus.Properties.Get", "org.freedesktop.Application", "Page"], capture_output=True, text=True).stdout.strip()
-                assert selected == "(<2>,)", "Status must open Cache & status: " + selected
+                assert selected == "(<0>,)", "Open Aerial must select Overview: " + selected
                 close_windows(); assert app.poll() is None
-                call("trigger", 5); reopened = wait(lambda: app_windows(), "fresh settings window")[0]
+                call("activate"); reopened = wait(lambda: app_windows(), "fresh settings window")[0]
                 assert reopened["id"] != first["id"]
                 close_windows()
                 position = info()
@@ -253,7 +258,7 @@ def tray(owned, output):
                     wait(lambda: any(e.get("text") == "Stop download" for e in info().get("entries", [])), "second manual acquisition")
                 assert not app_windows(), "no settings window before primary activation"
                 call("activate"); wait(lambda: app_windows(), "primary activation creates a window")
-                call("trigger", 6)
+                call("trigger", 5)
                 wait(lambda: info().get("count") == 0, "Hide removes SNI without killing its window")
                 assert app.poll() is None and app_windows()
                 close_windows(); assert app.wait(timeout=10) == 0
@@ -266,7 +271,7 @@ def tray(owned, output):
                     wait(lambda: cli("status").get("DeferReason") in ("None", "") and "Up to date" in info().get("tooltip", ""), "dark up to date", 40)
                     time.sleep(.3); snap("badge-ready")
                     cli("config", "set", "acquisition.automatic.enabled", "false")
-                    call("trigger", 6)
+                    call("trigger", 5)
                     # Without a user manager the failed startup change opens About.
                     wait(lambda: app.poll() is not None or app_windows(), "Hide settles")
                     if app.poll() is None:

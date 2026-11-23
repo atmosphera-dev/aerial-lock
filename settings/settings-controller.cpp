@@ -32,6 +32,14 @@ SettingsController::SettingsController(Client::ServiceConnection &service, QObje
       cacheController(service), themeCatalog(service), systemdController(QDBusConnection::sessionBus()),
       noticesModel(service, sourceController, systemdController, *cacheController.statusModel())
 {
+    connect(&systemdController, &SystemdController::changed, this, &SettingsController::changed);
+    connect(&portalClient, &PortalClient::finished, this, [this](quint64 id, const QString &, bool, const QString &error) {
+        const auto target = aboutRequests.key(id);
+        if (target.isEmpty()) return;
+        aboutRequests.remove(target);
+        aboutErrors[target] = error;
+        emit changed();
+    });
     connect(this, &SettingsController::changed, this, [this] {
         const auto automatic = controls().value("automatic").toMap();
         statusModel()->setAutomaticIntent(automatic.value("on").toBool(), automatic.value("pending").toBool());
@@ -241,8 +249,35 @@ QVariantMap SettingsController::about() const
     const auto p = service.snapshot().properties;
     const auto paths = p.value("Paths").toMap();
     auto state = p.value("State").toString(); if (!state.isEmpty()) state[0] = state[0].toUpper();
+    const auto unit = systemdController.units().value("aerial.service").toMap();
+    const auto file = unit.value("fileState").toString();
+    const bool pending = systemdController.pending("aerial.service");
+    const auto observed = !service.ready() ? QString("Service not connected") : QString("aerial, running");
+    const auto note = !systemdController.available() ? QString("No systemd user manager. Restart aerial manually.")
+        : file.startsWith("masked") ? QString("The user unit is masked. Aerial will not unmask it.")
+        : file == "not-found" ? QString("The aerial user unit is not installed. Restart aerial manually.")
+        : file.isEmpty() || file == "unknown" ? QString("The user unit state is unavailable.") : QString();
+    const auto version = p.value("Version").toString();
     return {{"version", "aerial " + p.value("Version").toString() + ", interface version " + p.value("ApiVersion").toString()},
-        {"state", state}, {"config", paths.value("config")}, {"cache", paths.value("cache")}, {"paths", paths}};
+        {"release", version.isEmpty() ? "Version unavailable" : "Version " + version}, {"state", state},
+        {"serviceState", observed}, {"serviceNote", note}, {"canRestart", note.isEmpty()}, {"restarting", pending},
+        {"restartError", note.isEmpty() ? systemdController.operationErrors().value("aerial.service").toString() : QString()},
+        {"errors", aboutErrors}, {"config", paths.value("config").toString()}, {"cache", paths.value("cache").toString()}, {"paths", paths}};
+}
+void SettingsController::openAboutTarget(const QString &target)
+{
+    const auto paths = service.snapshot().properties.value("Paths").toMap();
+    quint64 id = 0;
+    if (target == "config" || target == "cache") {
+        auto path = paths.value(target).toString();
+        if (target == "config" && QFileInfo(path).isAbsolute()) path = QFileInfo(path).absolutePath();
+        id = portalClient.openFolder(path);
+    } else if (target == "legal") id = portalClient.openLink("https://aerialscreensaver.github.io/legal.html");
+    else if (target == "docs") id = portalClient.openLink("https://github.com/alexindigo/aerial-lock#readme");
+    else return;
+    if (id) aboutRequests[target] = id; else aboutRequests.remove(target);
+    aboutErrors[target] = id ? QString() : portalClient.error();
+    emit changed();
 }
 void SettingsController::setColor(const QString &text)
 {

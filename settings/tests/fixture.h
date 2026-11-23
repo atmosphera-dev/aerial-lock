@@ -14,6 +14,8 @@ struct Fixture {
     ConfigPaths paths;
     std::unique_ptr<Client::ServiceConnection> service;
     std::unique_ptr<SettingsController> controller;
+    Fixture() = default;
+    explicit Fixture(const QString &rootTemplate) : root(rootTemplate) {}
     bool start(QDBusConnection serviceBus = QDBusConnection::sessionBus())
     {
         const QString source = AERIAL_SETTINGS_TEST_SOURCE;

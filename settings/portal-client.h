@@ -13,8 +13,8 @@ public:
     ~PortalClient() override;
     QString error() const { return problem; }
     quint64 choose(bool directory);
-    Q_INVOKABLE void openFolder(const QString &path);
-    Q_INVOKABLE void openLink(const QString &url);
+    Q_INVOKABLE quint64 openFolder(const QString &path);
+    Q_INVOKABLE quint64 openLink(const QString &url);
     void cancel(quint64 id);
 signals:
     void changed();

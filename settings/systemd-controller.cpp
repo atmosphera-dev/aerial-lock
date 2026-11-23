@@ -43,6 +43,7 @@ void SystemdController::ownerChanged(const QString &, const QString &, const QSt
 void SystemdController::adopt(const QString &next)
 {
     ++generation; owner = next; connected = false; states.clear(); samples.clear();
+    problemsByUnit.clear(); recoveryByUnit.clear(); problemUnit.clear();
     const auto previous = operations; operations.clear();
     for (auto it = previous.begin(); it != previous.end(); ++it) emit operationFinished(it.key(), it->kind, false);
     if (owner.isEmpty()) { problem = "The systemd user manager is unavailable. Settings still work; start the programs manually or from compositor autostart."; emit changed(); return; }
@@ -88,6 +89,7 @@ void SystemdController::sample(const QString &unit)
         state["fileError"] = state.value("error");
         if (file.isError() && !missing) retrySample(unit, serial);
         states[unit] = state;
+        if (recoveryByUnit.value(unit).kind == "disable") checkRecovery(unit, serial);
         if (operations.contains(unit) && operations.value(unit).kind == "disable") checkOperation(unit);
         call("GetUnit", {unit}, [this, unit, serial](const QDBusMessage &message) {
             if (samples.value(unit) != serial) return;
@@ -97,7 +99,7 @@ void SystemdController::sample(const QString &unit)
                 if (reply.error().name() == "org.freedesktop.systemd1.NoSuchUnit") {
                     state["active"] = "inactive"; state["invocation"] = ""; state["path"] = "";
                 } else { state["active"] = "unknown"; state["invocation"] = ""; state["error"] = reply.error().name().section('.', -1); retrySample(unit, serial); }
-                states[unit] = state; checkOperation(unit); emit changed(); return;
+                states[unit] = state; checkRecovery(unit, serial); checkOperation(unit); emit changed(); return;
             }
             const auto path = reply.value().path(); const auto epoch = generation;
             auto request = Client::propertyCall(owner, path, "org.freedesktop.systemd1.Unit");
@@ -120,9 +122,9 @@ void SystemdController::sample(const QString &unit)
                         const QDBusPendingReply<QVariantMap> reply(message); auto state = states.value(unit).toMap();
                         if (reply.isError()) { state.remove("result"); state.remove("exitStatus"); state["error"] = reply.error().name().section('.', -1); retrySample(unit, serial); }
                         else { const auto p = Client::unpack(reply.value()).toMap(); state["result"] = p.value("Result"); state["exitStatus"] = p.value("ExecMainStatus"); }
-                        states[unit] = state; checkOperation(unit); emit changed();
+                        states[unit] = state; checkRecovery(unit, serial); checkOperation(unit); emit changed();
                     });
-                } else { checkOperation(unit); emit changed(); }
+                } else { checkRecovery(unit, serial); checkOperation(unit); emit changed(); }
             });
         });
     });
@@ -171,8 +173,9 @@ void SystemdController::operate(const QString &unit, const QString &operation)
 {
     if (!allowed.contains(unit) || !QStringList{"start", "restart", "enableStart", "disable"}.contains(operation) || operations.contains(unit)) return;
     if (unit == "aerial-idle.service" && idleWritesPending && operation != "disable") return;
-    if (!connected) { problem = "No systemd user manager. Run " + (unit == "aerial-tray.service" ? QString("aerial-settings --tray") : unit.section('.', 0, 0)) + " manually."; emit changed(); emit operationFinished(unit, operation, false); return; }
-    if (states.value(unit).toMap().value("fileState").toString().startsWith("masked")) { problem = unit + " is masked. Unmask it yourself only if intended, then try again."; emit changed(); emit operationFinished(unit, operation, false); return; }
+    recoveryByUnit.remove(unit); problemUnit = unit;
+    if (!connected) { problem = "No systemd user manager. Run " + (unit == "aerial-tray.service" ? QString("aerial-settings --tray") : unit.section('.', 0, 0)) + " manually."; problemsByUnit[unit] = problem; emit changed(); emit operationFinished(unit, operation, false); return; }
+    if (states.value(unit).toMap().value("fileState").toString().startsWith("masked")) { problem = unit + " is masked. Unmask it yourself only if intended, then try again."; problemsByUnit[unit] = "The user unit is masked. Aerial will not unmask it."; emit changed(); emit operationFinished(unit, operation, false); return; }
     const auto serial = ++operationSerial, epoch = generation;
     operations[unit] = {operation, {}, states.value(unit).toMap().value("invocation").toString(), false, {}, serial};
     QTimer::singleShot(operationTimeoutMs, this, [this, unit, serial, epoch] {
@@ -180,7 +183,7 @@ void SystemdController::operate(const QString &unit, const QString &operation)
         finish(unit, false, "Completion was not confirmed before the deadline. Check the unit state before trying again.");
         sample(unit);
     });
-    problem.clear(); emit changed();
+    problemsByUnit.remove(unit); problem.clear(); problemUnit.clear(); emit changed();
     if (operation == "start" || operation == "restart") { startJob(unit); return; }
     const bool enable = operation == "enableStart";
     const auto changedFiles = [this, unit, enable](const QDBusMessage &message) {
@@ -216,11 +219,41 @@ void SystemdController::startJob(const QString &unit)
 }
 void SystemdController::jobRemoved(uint, const QDBusObjectPath &job, const QString &unit, const QString &result, const QDBusMessage &message)
 {
-    if (message.service() != owner || !operations.contains(unit)) return;
+    if (message.service() != owner) return;
+    if (!operations.contains(unit)) {
+        if (recoveryByUnit.contains(unit)) sample(unit);
+        return;
+    }
     if (operations.value(unit).job.isEmpty()) { operations[unit].earlyJobs[job.path()] = result; return; }
     if (operations.value(unit).job != job.path()) return;
     if (result != "done") { finish(unit, false, "Job " + result); return; }
     operations[unit].jobDone = true; sample(unit);
+}
+void SystemdController::checkRecovery(const QString &unit, quint64 serial)
+{
+    const auto candidate = recoveryByUnit.constFind(unit);
+    if (candidate == recoveryByUnit.cend() || serial <= candidate->failedSample) return;
+    const auto state = states.value(unit).toMap();
+    const auto file = state.value("fileState").toString();
+    if (file.isEmpty() || file == "unknown" || !state.value("fileError").toString().isEmpty()) return;
+    // A read may clear feedback, but must not turn a failed operation into
+    // a success event. In particular, an already active invocation is not a restart.
+    if (candidate->kind == "disable") {
+        if (enabled(file)) return;
+    } else {
+        if (!state.value("error").toString().isEmpty() || file.startsWith("masked")) return;
+        if (candidate->kind == "enableStart" && !persistent(file)) return;
+        const auto invocation = state.value("invocation").toString();
+        const bool newInvocation = !invocation.isEmpty() && invocation != candidate->beforeInvocation;
+        const bool forwarded = unit == "aerial-tray.service" && state.value("active") == "inactive"
+            && newInvocation && state.value("result") == "success"
+            && state.contains("exitStatus") && state.value("exitStatus").toInt() == 0;
+        if (state.value("active") != "active" && !forwarded) return;
+        if (candidate->kind == "restart" && !newInvocation) return;
+    }
+    recoveryByUnit.remove(unit);
+    problemsByUnit.remove(unit);
+    if (problemUnit == unit) { problem.clear(); problemUnit.clear(); }
 }
 void SystemdController::checkOperation(const QString &unit)
 {
@@ -251,6 +284,11 @@ void SystemdController::finish(const QString &unit, bool success, const QString 
 {
     if (!operations.contains(unit)) return;
     const auto op = operations.take(unit); problem = success ? QString() : "Couldn't " + op.kind + " " + unit + ": " + error;
+    problemUnit = success ? QString() : unit;
+    if (!success) {
+        problemsByUnit[unit] = unit == "aerial-tray.service" ? "Couldn't save the startup preference. Check the user unit and try again." : "The user unit did not complete the action. Check its status and try again.";
+        recoveryByUnit[unit] = {op.kind, op.beforeInvocation, samples.value(unit)};
+    }
     emit changed(); emit operationFinished(unit, op.kind, success);
 }
 }

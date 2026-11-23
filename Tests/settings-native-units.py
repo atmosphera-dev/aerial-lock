@@ -40,7 +40,7 @@ def unit_start_usec(run, unit):
 def units(owned, output):
     source, build = owned.paths["source"], owned.paths["build"]
     probe = owned.check_binary(build / "settings-units-probe")
-    binary = owned.check_binary(source / "settings/aerial-settings")
+    binary = owned.check_binary(owned.paths["build"] / "settings-revamp-probe")
     idle_binary = owned.check_binary(source / "idle/aerial-idle")
     user = "aerial-ui-unit-" + str(os.getpid())
     home = output / "home"
@@ -195,7 +195,7 @@ def units(owned, output):
         forwarded = wait(lambda: (lambda unit: unit if unit["ActiveState"] == "inactive" and unit["InvocationID"] else None)(show("aerial-tray.service")), "forwarding unit exit")
         assert forwarded["Result"] == "success" and forwarded["ExecMainStatus"] == "0" and forwarded["InvocationID"] != before, forwarded
         wait(lambda: info().get("count") == 1, "forwarded tray shown by the window owner")
-        host_call("trigger", 6)
+        host_call("trigger", 5)
         wait(lambda: info().get("count") == 0 and show("aerial-tray.service")["UnitFileState"] == "disabled", "owner Hide disables startup")
         assert owner.poll() is None and any(w["id"] == owner_window["id"] for w in windows())
         run(["niri", "msg", "action", "close-window", "--id", str(owner_window["id"])], env=env, capture_output=True)
@@ -211,7 +211,7 @@ def units(owned, output):
         as_user(["gdbus", "call", "--session", "--dest", "org.aeriallock.AerialSettings", "--object-path", "/org/aeriallock/AerialSettings",
                  "--method", "org.freedesktop.Application.Activate", "{}"], capture_output=True)
         window = wait(tray_windows, "unit-owned settings window")[0]
-        host_call("trigger", 6)
+        host_call("trigger", 5)
         wait(lambda: info().get("count") == 0, "Hide unregisters")
         wait(lambda: show("aerial-tray.service")["UnitFileState"] == "disabled", "Hide disables startup")
         assert show("aerial-tray.service")["MainPID"] == str(pid) and tray_windows(), "Hide killed a window cgroup"

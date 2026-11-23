@@ -15,6 +15,7 @@ class SystemdController : public QObject {
     Q_PROPERTY(QVariantMap units READ units NOTIFY changed)
     Q_PROPERTY(QVariantMap idle READ idle NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    Q_PROPERTY(QVariantMap operationErrors READ operationErrors NOTIFY changed)
 public:
     explicit SystemdController(QDBusConnection bus, QObject *parent = nullptr, int operationTimeoutMs = 30000);
     bool available() const { return connected; }
@@ -23,6 +24,8 @@ public:
     // Only persistent enablement brings a unit back at the next login.
     bool persistentlyEnabled(const QString &unit) const;
     QString error() const { return problem; }
+    QVariantMap operationErrors() const { return problemsByUnit; }
+    bool pending(const QString &unit) const { return operations.contains(unit); }
     void setIdleWritesPending(bool pending);
     Q_INVOKABLE void operate(const QString &unit, const QString &operation);
     Q_INVOKABLE void refresh();
@@ -42,6 +45,10 @@ private:
         QMap<QString, QString> earlyJobs;
         quint64 serial = 0;
     };
+    struct Recovery {
+        QString kind, beforeInvocation;
+        quint64 failedSample;
+    };
     void discover();
     void adopt(const QString &owner);
     void subscribe();
@@ -52,10 +59,13 @@ private:
     void startJob(const QString &unit);
     void finish(const QString &unit, bool success, const QString &error = {});
     void checkOperation(const QString &unit);
+    void checkRecovery(const QString &unit, quint64 serial);
     QDBusConnection bus;
-    QString owner, problem;
+    QString owner, problem, problemUnit;
     QVariantMap states;
     QMap<QString, Operation> operations;
+    QVariantMap problemsByUnit;
+    QMap<QString, Recovery> recoveryByUnit;
     QMap<QString, quint64> samples;
     quint64 generation = 0;
     quint64 operationSerial = 0;

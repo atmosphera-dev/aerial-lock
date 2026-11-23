@@ -5,6 +5,7 @@ Module {
         prototype: "QObject"
         exports: ["AerialLock.Settings/SettingsController 1.0"]
         isCreatable: false
+        Enum { name: "Page"; values: ["OverviewPage", "SourcesPage", "DownloadsPage", "LockPage", "AboutPage"] }
         Property { name: "controls"; type: "QVariantMap"; isReadonly: true }
         Property { name: "panel"; type: "QString"; isReadonly: true }
         Property { name: "diagnostic"; type: "QString"; isReadonly: true }
@@ -28,6 +29,7 @@ Module {
         Signal { name: "trayChanged" }
         Signal { name: "trayChangeRequested"; Parameter { name: "on"; type: "bool" } }
         Method { name: "showTray"; Parameter { name: "on"; type: "bool" } }
+        Method { name: "openAboutTarget"; Parameter { name: "target"; type: "QString" } }
         Method { name: "setColor"; Parameter { name: "color"; type: "QString" } }
         Method { name: "canonicalColor"; type: "QString"; Parameter { name: "color"; type: "QString" } }
         Method { name: "openSettingsFolder" }
@@ -118,8 +120,8 @@ Module {
         isCreatable: false
         Property { name: "error"; type: "QString"; isReadonly: true }
         Signal { name: "changed" }
-        Method { name: "openFolder"; Parameter { name: "path"; type: "QString" } }
-        Method { name: "openLink"; Parameter { name: "url"; type: "QString" } }
+        Method { name: "openFolder"; type: "quint64"; Parameter { name: "path"; type: "QString" } }
+        Method { name: "openLink"; type: "quint64"; Parameter { name: "url"; type: "QString" } }
     }
     Component {
         name: "Aerial::Settings::SystemdController"

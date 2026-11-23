@@ -29,6 +29,8 @@ class SettingsController : public QObject {
     Q_PROPERTY(QVariantMap about READ about NOTIFY changed)
     Q_PROPERTY(QVariantMap tray READ tray NOTIFY trayChanged)
 public:
+    enum Page { OverviewPage = 0, SourcesPage, DownloadsPage, LockPage, AboutPage };
+    Q_ENUM(Page)
     explicit SettingsController(Client::ServiceConnection &service, QObject *parent = nullptr);
     QVariantMap controls() const;
     QString panel() const;
@@ -53,6 +55,7 @@ public:
     Q_INVOKABLE QString canonicalColor(const QString &color) const;
     Q_INVOKABLE void openSettingsFolder();
     Q_INVOKABLE void openCacheFolder();
+    Q_INVOKABLE void openAboutTarget(const QString &target);
     Q_INVOKABLE void edit(const QString &key, const QVariant &value);
     Q_INVOKABLE void choose(const QString &key, const QString &token);
     Q_INVOKABLE void retry();
@@ -83,6 +86,8 @@ private:
     QStringList editOrder;
     QString editOwner;
     QVariantMap trayState{{"available", false}, {"on", false}, {"persistent", false}, {"message", "No desktop tray was found."}};
+    QMap<QString, quint64> aboutRequests;
+    QVariantMap aboutErrors;
 };
 class StatusFormatter {
 public:

@@ -167,6 +167,9 @@ target_link_libraries(settings-quick-probe PRIVATE Qt6::QuickTest aerial-setting
 target_link_libraries(settings-desktop-probe PRIVATE aerial-settings-resources)
 add_dependencies(settings-desktop-probe settings-client-probe)
 add_executable(settings-visual-probe "${AERIAL_LOCK_SOURCE}/settings/tests/visual.cpp")
+add_executable(settings-revamp-probe "${AERIAL_LOCK_SOURCE}/settings/main.cpp")
+target_link_libraries(settings-revamp-probe PRIVATE aerial-settings-core aerial-settings-resources)
+target_compile_definitions(settings-revamp-probe PRIVATE AERIAL_SETTINGS_REVAMP_PROBE)
 target_link_libraries(settings-visual-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test Qt6::QuickTest)
 target_compile_definitions(settings-visual-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
 add_test(NAME settings-model COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-model-probe>")
@@ -183,7 +186,8 @@ add_test(NAME settings-systemd COMMAND ${settings_test_wrapper} "$<TARGET_FILE:s
     disablingCannotBeConfirmedByFailedFileRead enableStartRequiresPersistentEnablement delayedIdleSampleDoesNotConfirmSettings
     subscriptionRetriesWithoutOwnerChange alreadySubscribedIsReady idleRestartCannotConfirmAnUnknownUnitProfile
     failedFileStateReadRecoversWithoutAnOwnerChange missingIdleFileIsUnavailable failedPropertiesCannotClaimCachedActivity
-    idleLifecycleCannotOvertakeSettingsWrites jobDeadlineFencesLateSignalsAndReplies disableBothStartupScopes failedOperationKeepsDisplayReason trayStartupPersistenceIsNotSessionEnablement)
+    idleLifecycleCannotOvertakeSettingsWrites jobDeadlineFencesLateSignalsAndReplies timedOutRestartErrorRequiresNewInvocation
+    disableBothStartupScopes failedOperationKeepsDisplayReason trayStartupPersistenceIsNotSessionEnablement)
 add_test(NAME settings-single-instance COMMAND dbus-run-session -- "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-single-instance.py" "$<TARGET_FILE:aerial-settings>" "${AERIAL_LOCK_SOURCE}" "$<TARGET_FILE:settings-units-probe>")
 add_test(NAME settings-discovery COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-discovery.py" "$<TARGET_FILE:settings-desktop-probe>")
 add_executable(settings-tray-probe "${AERIAL_LOCK_SOURCE}/settings/tests/tray.cpp")

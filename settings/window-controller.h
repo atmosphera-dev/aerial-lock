@@ -2,6 +2,7 @@
 #include <QDBusContext>
 #include <QObject>
 #include <QVariantMap>
+#include <QUrl>
 #include <memory>
 class QQmlApplicationEngine;
 namespace Aerial::Settings {
@@ -10,6 +11,7 @@ class WindowController : public QObject {
     Q_OBJECT
 public:
     explicit WindowController(SettingsController &settings, QObject *parent = nullptr);
+    WindowController(SettingsController &settings, QUrl root, QObject *parent = nullptr);
     ~WindowController() override;
     void open(const QVariantMap &platform = {}, int page = -1);
     bool hasWindow() const;
@@ -20,6 +22,7 @@ signals:
     void closed();
 private:
     SettingsController &settings;
+    const QUrl root;
     std::unique_ptr<QQmlApplicationEngine> engine;
     bool closing = false;
     quint64 generation = 0;

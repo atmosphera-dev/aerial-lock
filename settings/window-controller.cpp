@@ -6,7 +6,10 @@
 #include <QQuickWindow>
 #include <QTimer>
 namespace Aerial::Settings {
-WindowController::WindowController(SettingsController &settings, QObject *parent) : QObject(parent), settings(settings) {}
+WindowController::WindowController(SettingsController &settings, QObject *parent)
+    : WindowController(settings, QUrl("qrc:/settings/qml/Main.qml"), parent) {}
+WindowController::WindowController(SettingsController &settings, QUrl root, QObject *parent)
+    : QObject(parent), settings(settings), root(std::move(root)) {}
 WindowController::~WindowController() = default;
 bool WindowController::hasWindow() const { return engine && !engine->rootObjects().isEmpty(); }
 QString WindowController::panel() const { return settings.panel(); }
@@ -22,7 +25,7 @@ void WindowController::open(const QVariantMap &platform, int page)
         configureInterActive(*engine);
         new AppearanceBridge(*engine);
         engine->setInitialProperties({{"controller", QVariant::fromValue(&settings)}});
-        engine->load(QUrl("qrc:/settings/qml/Main.qml"));
+        engine->load(root);
         if (engine->rootObjects().isEmpty()) { engine.reset(); emit closed(); return; }
         auto *window = qobject_cast<QQuickWindow *>(engine->rootObjects().first());
         connect(window, &QQuickWindow::closing, this, [this] {

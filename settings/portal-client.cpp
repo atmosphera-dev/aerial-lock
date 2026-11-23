@@ -63,19 +63,19 @@ quint64 PortalClient::choose(bool directory)
 {
     return dispatch("org.freedesktop.portal.FileChooser", "OpenFile", {QString(), directory ? "Choose a video folder" : "Choose a video file", directory}, true);
 }
-void PortalClient::openFolder(const QString &path)
+quint64 PortalClient::openFolder(const QString &path)
 {
-    if (!QDir::isAbsolutePath(path)) { problem = "The service did not provide an absolute folder path."; emit changed(); return; }
+    if (!QDir::isAbsolutePath(path)) { problem = "The service did not provide an absolute folder path."; emit changed(); return 0; }
     const int fd = ::open(QFile::encodeName(path).constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd < 0) { problem = "Couldn't open this folder. Check that it exists and is readable."; emit changed(); return; }
+    if (fd < 0) { problem = "Couldn't open this folder. Check that it exists and is readable."; emit changed(); return 0; }
     QDBusUnixFileDescriptor descriptor(fd); ::close(fd);
-    dispatch("org.freedesktop.portal.OpenURI", "OpenFile", {QString(), QVariant::fromValue(descriptor)}, false);
+    return dispatch("org.freedesktop.portal.OpenURI", "OpenFile", {QString(), QVariant::fromValue(descriptor)}, false);
 }
-void PortalClient::openLink(const QString &text)
+quint64 PortalClient::openLink(const QString &text)
 {
     const QUrl url(text, QUrl::StrictMode);
-    if (!url.isValid() || !QStringList{"http", "https"}.contains(url.scheme()) || url.host().isEmpty()) { problem = "This link is not an HTTP or HTTPS address."; emit changed(); return; }
-    dispatch("org.freedesktop.portal.OpenURI", "OpenURI", {QString(), url.toString(QUrl::FullyEncoded)}, false);
+    if (!url.isValid() || !QStringList{"http", "https"}.contains(url.scheme()) || url.host().isEmpty()) { problem = "This link is not an HTTP or HTTPS address."; emit changed(); return 0; }
+    return dispatch("org.freedesktop.portal.OpenURI", "OpenURI", {QString(), url.toString(QUrl::FullyEncoded)}, false);
 }
 void PortalClient::cancel(quint64 id)
 {
