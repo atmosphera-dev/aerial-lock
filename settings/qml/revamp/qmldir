@@ -11,3 +11,11 @@ EmptyPage 1.0 EmptyPage.qml
 SourcesPage 1.0 SourcesPage.qml
 SourceRow 1.0 SourceRow.qml
 AddSourceDialog 1.0 AddSourceDialog.qml
+SettingsChoice 1.0 SettingsChoice.qml
+PreferenceRow 1.0 PreferenceRow.qml
+CheckGroup 1.0 CheckGroup.qml
+SettingsDialog 1.0 SettingsDialog.qml
+CleanupDialog 1.0 CleanupDialog.qml
+DownloadsPage 1.0 DownloadsPage.qml
+ThemeTile 1.0 ThemeTile.qml
+LockScreenPage 1.0 LockScreenPage.qml

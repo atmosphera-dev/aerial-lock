@@ -20,6 +20,7 @@ class SettingsController : public QObject {
     Q_PROPERTY(Aerial::Settings::NoticesModel *notices READ notices CONSTANT)
     Q_PROPERTY(QString connectionObservation READ connectionObservation NOTIFY changed)
     Q_PROPERTY(QString powerObservation READ powerObservation NOTIFY changed)
+    Q_PROPERTY(QString downloadObservation READ downloadObservation NOTIFY changed)
     Q_PROPERTY(Aerial::Settings::SourcesController *sources READ sources CONSTANT)
     Q_PROPERTY(Aerial::Settings::CacheController *cache READ cache CONSTANT)
     Q_PROPERTY(Aerial::Settings::ThemeCatalog *themes READ themes CONSTANT)
@@ -37,6 +38,7 @@ public:
     NoticesModel *notices() { return &noticesModel; }
     QString connectionObservation() const;
     QString powerObservation() const;
+    QString downloadObservation() const;
     SourcesController *sources() { return &sourceController; }
     CacheController *cache() { return &cacheController; }
     ThemeCatalog *themes() { return &themeCatalog; }

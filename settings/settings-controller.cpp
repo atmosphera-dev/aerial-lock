@@ -169,6 +169,17 @@ QString SettingsController::powerObservation() const
     const auto power = service.snapshot().properties.value("Observations").toMap().value("power", "unknown").toString();
     return "Now: " + (power == "ac" ? QString("AC power.") : power == "battery" ? QString("Battery.") : QString("Unknown power source."));
 }
+QString SettingsController::downloadObservation() const
+{
+    const auto facts = service.snapshot().properties.value("Observations").toMap();
+    static const QMap<QString, QString> connections{{"ethernet", "Ethernet"}, {"wifi", "Wi-Fi"},
+        {"cellular", "Mobile broadband"}, {"bluetooth", "Bluetooth"}, {"vpn", "VPN"}, {"other", "Other connection"}};
+    static const QMap<QString, QString> powers{{"ac", "AC power"}, {"battery", "battery"}};
+    const auto connection = connections.value(facts.value("connectionType").toString(), "Unknown connection");
+    const auto metering = facts.value("metering").toString();
+    const auto power = powers.value(facts.value("power").toString(), "unknown power source");
+    return "Now: " + connection + (metering == "metered" ? " (metered)" : metering == "unmetered" ? "" : " (metering unknown)") + ", " + power + ".";
+}
 void SettingsController::edit(const QString &key, const QVariant &value)
 {
     if (!controls().contains(key) || panel() != "settings") return;

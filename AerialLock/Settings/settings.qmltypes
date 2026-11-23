@@ -17,6 +17,7 @@ Module {
         Method { name: "confirmIdleEnable" }
         Property { name: "connectionObservation"; type: "QString"; isReadonly: true }
         Property { name: "powerObservation"; type: "QString"; isReadonly: true }
+        Property { name: "downloadObservation"; type: "QString"; isReadonly: true }
         Property { name: "sources"; type: "Aerial::Settings::SourcesController"; isPointer: true; isReadonly: true }
         Property { name: "cache"; type: "Aerial::Settings::CacheController"; isPointer: true; isReadonly: true }
         Property { name: "themes"; type: "Aerial::Settings::ThemeCatalog"; isPointer: true; isReadonly: true }

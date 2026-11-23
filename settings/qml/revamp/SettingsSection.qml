@@ -22,6 +22,8 @@ ColumnLayout {
         Layout.minimumWidth: 0
         visible: text.length > 0
         text: root.description
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
         fontPixelSize: IA.Appearance.typography.supportingSize
         foregroundColor: IA.Appearance.colors.secondaryText
     }

@@ -14,6 +14,15 @@
 <file>qml/revamp/SourcesPage.qml</file>
 <file>qml/revamp/SourceRow.qml</file>
 <file>qml/revamp/AddSourceDialog.qml</file>
+<file>qml/revamp/SettingsChoice.qml</file>
+<file>qml/revamp/PreferenceRow.qml</file>
+<file>qml/revamp/CheckGroup.qml</file>
+<file>qml/revamp/SettingsDialog.qml</file>
+<file>qml/revamp/CleanupDialog.qml</file>
+<file>qml/revamp/DownloadsPage.qml</file>
+<file>qml/revamp/ThemeTile.qml</file>
+<file>qml/revamp/LockScreenPage.qml</file>
+<file>qml/revamp/icons/checkcircle.svg</file>
 <file>qml/revamp/icons/grip.svg</file>
 <file>qml/revamp/icons/dots.svg</file>
 <file>qml/revamp/icons/plus.svg</file>
