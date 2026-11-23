@@ -104,4 +104,11 @@ C.ApplicationWindow {
     }
     SourceSheet { objectName: "sourceSheet"; sources: root.controller.sources; parent: C.Overlay.overlay }
     CleanupSheet { objectName: "cleanupSheet"; cache: root.controller.cache; parent: C.Overlay.overlay }
+    Connections {
+        target: root.controller
+        function onPageRequested(page: string) {
+            const index = ({ sources: 1, about: 4 })[page];
+            if (index !== undefined) root.page = index;
+        }
+    }
 }

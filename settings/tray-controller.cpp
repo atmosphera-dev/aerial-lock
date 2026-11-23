@@ -109,11 +109,11 @@ TrayController::TrayController(SettingsController &settings, QDBusConnection bus
     connect(summary, &QAction::triggered, this, [this] { emit openRequested(2, {}); });
     connect(open, &QAction::triggered, this, [this] { emit openRequested(-1, {}); });
     connect(transfer, &QAction::triggered, this, [this] {
-        if (this->settings.panel() == "settings") this->settings.cache()->fetchOrStop();
-        else { emit openRequested(2, {}); this->settings.retry(); }
+        if (this->settings.panel() == "settings") this->settings.dispatchAction(this->settings.statusModel()->facts().value("primaryActionId").toString());
+        else { emit openRequested(2, {}); this->settings.dispatchAction("retry-service"); }
     });
     connect(pause, &QAction::triggered, this, [this] {
-        if (this->settings.panel() == "settings") this->settings.edit("automatic", !this->settings.controls().value("automatic").toMap().value("on").toBool());
+        if (this->settings.panel() == "settings") this->settings.dispatchAction(this->settings.statusModel()->facts().value("secondaryActionId").toString());
         else emit openRequested(4, {});
     });
     connect(hide, &QAction::triggered, this, [this] { setEnabled(false); });
@@ -203,16 +203,11 @@ void TrayController::reconcile()
 }
 bool TrayController::needsAttention(const QVariantMap &p)
 {
-    if (p.value("DeferReason") == "StorageError" || p.value("DeferReason") == "InvalidConfig") return true;
-    for (const auto &entry : p.value("SettingsDiagnostics").toList()) if (entry.toMap().value("severity") == "error") return true;
-    return false;
+    return StatusModel::needsAttention(p);
 }
 QString TrayController::badge(const QVariantMap &p, bool downloading, bool paused)
 {
-    if (needsAttention(p) || p.value("State") == "error") return "problem";
-    if (downloading) return "downloading";
-    if (paused || (p.value("DeferReason") != "None" && !p.value("DeferReason").toString().isEmpty())) return "paused";
-    return "ready";
+    return StatusModel::badge(p, downloading, paused);
 }
 void TrayController::sample()
 {
@@ -223,9 +218,8 @@ void TrayController::sample()
     pause->setText(!ready ? "Open settings" : paused ? "Resume downloads" : "Pause downloads"); pause->setIcon(actionIcon(paused ? "play" : "pause"));
     open->setIcon(actionIcon("settings")); hide->setIcon(actionIcon("hide"));
     if (item) {
-        const auto p = settings.serviceProperties();
-        const auto state = ready ? badge(p, downloading, paused) : "problem";
-        item->update(needsAttention(p) ? "NeedsAttention" : "Active", pixmaps(state), pixmaps("problem"), tooltip());
+        const auto facts = settings.statusModel()->facts();
+        item->update(facts.value("attention").toBool() ? "NeedsAttention" : "Active", pixmaps(facts.value("badge").toString()), pixmaps("problem"), tooltip());
     }
 }
 QString TrayController::tooltip() const

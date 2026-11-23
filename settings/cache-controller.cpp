@@ -1,5 +1,4 @@
 #include "cache-controller.h"
-#include "settings-controller.h"
 #include <QDateTime>
 #include <algorithm>
 #include <limits>
@@ -23,8 +22,9 @@ QString sumBytes(qulonglong a, qulonglong b)
     return QString::number(double((static_cast<long double>(a) + b) / 1000000000.L), 'f', 1) + " GB";
 }
 }
-CacheController::CacheController(Client::ServiceConnection &service, QObject *parent) : QObject(parent), service(service)
+CacheController::CacheController(Client::ServiceConnection &service, QObject *parent) : QObject(parent), service(service), statusProjection(service)
 {
+    connect(&statusProjection, &StatusModel::changed, this, &CacheController::changed);
     connect(&service, &Client::ServiceConnection::changed, this, &CacheController::sampled);
     connect(&service, &Client::ServiceConnection::mutationFinished, this, [this](quint64 id, const QVariant &result, const QString &error) {
         if (id == action) { action = 0; problem = error.isEmpty() ? QString() : error.endsWith(".AcceptedResultUnavailable")
@@ -47,11 +47,7 @@ QString CacheController::bytes(qulonglong value)
 }
 QVariantMap CacheController::transfer() const
 {
-    for (const auto &entry : service.snapshot().jobs) {
-        const auto job = entry.toMap();
-        if (job.value("Cancellable").toBool() && job.value("State").toString() == "downloading") return job;
-    }
-    return {};
+    return StatusModel::transfer(service.snapshot());
 }
 QVariantMap CacheController::storageFacts(const QVariantMap &p)
 {
@@ -81,18 +77,7 @@ QVariantMap CacheController::storageFacts(const QVariantMap &p)
 }
 QVariantMap CacheController::facts() const
 {
-    const auto p = service.snapshot().properties;
-    const auto current = transfer(); const auto details = current.value("Details").toMap();
-    const auto total = current.value("TotalBytes").toULongLong(), received = current.value("ReceivedBytes").toULongLong();
-    QVariantMap result{{"downloading", !current.isEmpty()}, {"title", !current.isEmpty() ? "Downloading " + details.value("assetTitle", "video").toString() : StatusFormatter::summary(service.snapshot())},
-        {"source", details.value("sourceName").toString()}, {"progressKnown", current.value("TotalKnown").toBool() && total > 0},
-        {"progress", total ? double(qMin(1.L, static_cast<long double>(received) / total)) : 0.0},
-        {"received", bytes(received)}, {"total", current.value("TotalKnown").toBool() ? bytes(total) : "unknown size"},
-        {"ready", StatusFormatter::ready(p.value("ReadyClips", 0).toULongLong())}, {"nextCheck", "Next check: " + localTime(p.value("NextCheck"))}, {"lastCheck", "Last check: " + localTime(p.value("LastCheck"))},
-        {"reason", p.value("DeferReason").toString()}};
-    const auto storage = storageFacts(p);
-    for (auto it = storage.cbegin(); it != storage.cend(); ++it) result.insert(it.key(), it.value());
-    return result;
+    return statusProjection.facts();
 }
 QVariantList CacheController::activity() const
 {

@@ -22,7 +22,7 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
-from settings_build import binary_paths, hashes, quick_test_inputs, source_identity, verify_build
+from settings_build import BASE_PROBES, binary_paths, hashes, quick_test_inputs, source_identity, verify_build
 from desktop_entry import exec_argument
 from settings_native_logs import accepted_warning, inspect_journal, inspect_text, journal_cursor, require_quiet
 
@@ -226,7 +226,7 @@ class CleanupTest(unittest.TestCase):
             source.mkdir(parents=True); build.mkdir(parents=True); (root / "run").mkdir(); (root / "tmp").mkdir()
             for directory in ("settings", "companion", "cli", "idle"): (source / directory).mkdir()
             input = source / "input.c"; input.write_text('#include <stdio.h>\nint main(void) { puts("old"); }\n')
-            names = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe", "interactive-runtime-probe"]
+            names = list(BASE_PROBES)
             synthetic_runtime_inventory(root)
             (source / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\nproject(provenance C)\n" + ''.join(f'add_executable({name} input.c)\n' for name in names))
             (source / "Makefile").write_text("all: settings/aerial-settings\nsettings/aerial-settings: input.c\n\t$(CC) input.c -o $@\n\tcp $@ companion/aerial\n\tcp $@ cli/aerialctl\n\tcp $@ idle/aerial-idle\nclean:\n\trm -f settings/aerial-settings companion/aerial cli/aerialctl idle/aerial-idle\n")
@@ -243,6 +243,19 @@ class CleanupTest(unittest.TestCase):
             self.assertIn("SETTINGS_BUILD_ATTESTED", result.stdout)
             for binary in [source / "settings/aerial-settings", *(build / name for name in names)]:
                 self.assertEqual(subprocess.check_output([str(binary)], text=True).strip(), "new source")
+    def test_private_wrapper_audits_canonical_logs_through_teardown(self):
+        wrapper = Path(__file__).with_name("run-settings-test.py")
+        known = ("AERIAL_QT|warning|qt.qpa.wayland.textinput|virtual void QtWaylandClient::QWaylandTextInputv3::disableSurface(wl_surface*) "
+                 "Trying to disable 0x123abc but 0x0 is focused")
+        for message, accepted in ((known, True), (known + " trailing", False),
+                                  (known.replace("qt.qpa.wayland.textinput", "other.category"), False),
+                                  ("AERIAL_QT|warning|test|unexpected teardown warning", False),
+                                  ("QWARN : legacy warning", False)):
+            code = "import atexit; atexit.register(print, " + repr(message) + ")"
+            for version in ("6.11.2", "6.12.0"):
+                result = subprocess.run([sys.executable, str(wrapper), "--qt-version", version, "--", sys.executable, "-c", code], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode == 0, accepted and version == "6.12.0", result.stdout + result.stderr)
+                self.assertIn(message, result.stdout)
     def test_private_bus_starts_with_percent_in_socket_path(self):
         with tempfile.TemporaryDirectory(prefix="address%&~-") as temporary:
             root = Path(temporary); config = root / "bus.conf"; config.write_text(bus_config(root / "bus"))

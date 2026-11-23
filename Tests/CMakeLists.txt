@@ -128,6 +128,9 @@ add_executable(connection-loss-probe connection-loss-probe.cpp)
 target_link_libraries(connection-loss-probe PRIVATE Qt6::Core pthread)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 if(AERIAL_BUILD_SETTINGS)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/settings-qt-version.txt" CONTENT "${Qt6Core_VERSION}\n")
+set(settings_test_wrapper "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py"
+    --qt-version "${Qt6Core_VERSION}" --)
 add_test(NAME interactive-vendor COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-update-interactive.py")
 add_executable(settings-portal-settings-peer settings-portal-settings-peer.cpp)
 target_link_libraries(settings-portal-settings-peer PRIVATE Qt6::Core Qt6::DBus)
@@ -166,12 +169,16 @@ add_dependencies(settings-desktop-probe settings-client-probe)
 add_executable(settings-visual-probe "${AERIAL_LOCK_SOURCE}/settings/tests/visual.cpp")
 target_link_libraries(settings-visual-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test Qt6::QuickTest)
 target_compile_definitions(settings-visual-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
-add_test(NAME settings-model COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-model-probe>")
+add_test(NAME settings-model COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-model-probe>")
+add_executable(settings-appearance-probe "${AERIAL_LOCK_SOURCE}/settings/tests/appearance.cpp")
+set_target_properties(settings-appearance-probe PROPERTIES AUTOMOC ON)
+target_link_libraries(settings-appearance-probe PRIVATE aerial-settings-core Qt6::Test)
+add_test(NAME settings-appearance COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-appearance-probe>")
 add_dependencies(settings-model-probe settings-client-probe)
-add_test(NAME settings-pages COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-pages-probe>")
-add_test(NAME settings-portals COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-desktop-probe>"
+add_test(NAME settings-pages COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-pages-probe>")
+add_test(NAME settings-portals COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-desktop-probe>"
     portals missingPortal cancelledPortalClosesLateAlternateHandleOnce sourceSaveWaitsForTheChooser portalFeedbackSurvivesPanelChanges connectionRetryWithoutSystemd)
-add_test(NAME settings-systemd COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-desktop-probe>"
+add_test(NAME settings-systemd COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-desktop-probe>"
     systemd enablingRunningIdleDoesNotConfirmSettings missingManager disablingDoesNotRequireRuntimeProperties
     disablingCannotBeConfirmedByFailedFileRead enableStartRequiresPersistentEnablement delayedIdleSampleDoesNotConfirmSettings
     subscriptionRetriesWithoutOwnerChange alreadySubscribedIsReady idleRestartCannotConfirmAnUnknownUnitProfile
@@ -183,11 +190,11 @@ add_executable(settings-tray-probe "${AERIAL_LOCK_SOURCE}/settings/tests/tray.cp
 set_target_properties(settings-tray-probe PROPERTIES AUTOMOC ON)
 target_link_libraries(settings-tray-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
 target_compile_definitions(settings-tray-probe PRIVATE AERIAL_SETTINGS_TEST_SOURCE="${AERIAL_LOCK_SOURCE}")
-add_test(NAME settings-tray COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-tray-probe>")
+add_test(NAME settings-tray COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-tray-probe>")
 add_test(NAME settings-tray-discovery COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-discovery.py" "$<TARGET_FILE:settings-tray-probe>" --discovery)
 add_executable(settings-units-probe "${AERIAL_LOCK_SOURCE}/settings/tests/units.cpp")
 target_link_libraries(settings-units-probe PRIVATE aerial-settings-core aerial-settings-resources Qt6::Test)
-add_test(NAME settings-qml COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run-settings-test.py" "$<TARGET_FILE:settings-quick-probe>" -input "${AERIAL_LOCK_SOURCE}/settings/tests" -import "${AERIAL_LOCK_SOURCE}")
+add_test(NAME settings-qml COMMAND ${settings_test_wrapper} "$<TARGET_FILE:settings-quick-probe>" -input "${AERIAL_LOCK_SOURCE}/settings/tests" -import "${AERIAL_LOCK_SOURCE}")
 add_test(NAME settings-fixture-cleanup COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test-settings-fixture-cleanup.py")
 endif()
 add_test(NAME auth-handoff-driver

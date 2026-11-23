@@ -5,6 +5,7 @@
 #include "sources-controller.h"
 #include "systemd-controller.h"
 #include "theme-catalog.h"
+#include "notices-model.h"
 #include <QObject>
 #include <QVariantMap>
 
@@ -15,6 +16,8 @@ class SettingsController : public QObject {
     Q_PROPERTY(QString panel READ panel NOTIFY changed)
     Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
+    Q_PROPERTY(Aerial::Settings::StatusModel *statusModel READ statusModel CONSTANT)
+    Q_PROPERTY(Aerial::Settings::NoticesModel *notices READ notices CONSTANT)
     Q_PROPERTY(QString connectionObservation READ connectionObservation NOTIFY changed)
     Q_PROPERTY(QString powerObservation READ powerObservation NOTIFY changed)
     Q_PROPERTY(Aerial::Settings::SourcesController *sources READ sources CONSTANT)
@@ -30,6 +33,8 @@ public:
     QString panel() const;
     QString diagnostic() const;
     QString status() const;
+    StatusModel *statusModel() { return cacheController.statusModel(); }
+    NoticesModel *notices() { return &noticesModel; }
     QString connectionObservation() const;
     QString powerObservation() const;
     SourcesController *sources() { return &sourceController; }
@@ -49,7 +54,11 @@ public:
     Q_INVOKABLE void edit(const QString &key, const QVariant &value);
     Q_INVOKABLE void choose(const QString &key, const QString &token);
     Q_INVOKABLE void retry();
+    Q_INVOKABLE void dispatchAction(const QString &id, const QString &sourceId = {});
+    Q_INVOKABLE void confirmIdleEnable();
 signals:
+    void pageRequested(const QString &page);
+    void idleConfirmationRequested();
     void changed();
     void trayChanged();
     void trayChangeRequested(bool on);
@@ -64,6 +73,7 @@ private:
     CacheController cacheController;
     ThemeCatalog themeCatalog;
     SystemdController systemdController;
+    NoticesModel noticesModel;
     QMap<quint64, Intent> intents;
     QMap<QString, quint64> latest;
     QMap<QString, QString> errors;

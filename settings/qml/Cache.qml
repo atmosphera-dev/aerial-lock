@@ -38,12 +38,12 @@ UI.Page {
                         Layout.fillWidth: true
                         visible: root.facts.downloading
                         UI.Label { Layout.fillWidth: true; text: "From " + root.facts.source; font.pixelSize: 13 }
-                        UI.Label { text: root.facts.received + " of " + root.facts.total; font.pixelSize: 13 }
+                        UI.Label { text: root.facts.detail; font.pixelSize: 13 }
                     }
                     UI.Label { Layout.fillWidth: true; visible: !root.facts.downloading; text: "Fetch now ignores connection, power and pause rules, never the cache limit or a source's quality band."; font.pixelSize: 13; wrapMode: Text.WordWrap }
                     UI.Button { visible: !root.facts.downloading; text: "Change in Downloads"; onClicked: root.downloadsRequested() }
                 }
-                UI.Button { text: root.facts.downloading ? "Stop download" : "Fetch now"; glyph: root.facts.downloading ? "x" : "download"; primary: !root.facts.downloading; onClicked: root.controller.cache.fetchOrStop() }
+                UI.Button { text: root.facts.downloading ? "Stop download" : "Fetch now"; glyph: root.facts.downloading ? "x" : "download"; primary: !root.facts.downloading; onClicked: root.controller.dispatchAction(root.facts.primaryActionId) }
             }
         }
         Flow {

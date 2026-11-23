@@ -9,6 +9,12 @@ Module {
         Property { name: "panel"; type: "QString"; isReadonly: true }
         Property { name: "diagnostic"; type: "QString"; isReadonly: true }
         Property { name: "status"; type: "QString"; isReadonly: true }
+        Property { name: "statusModel"; type: "Aerial::Settings::StatusModel"; isPointer: true; isReadonly: true }
+        Property { name: "notices"; type: "Aerial::Settings::NoticesModel"; isPointer: true; isReadonly: true }
+        Signal { name: "pageRequested"; Parameter { name: "page"; type: "QString" } }
+        Signal { name: "idleConfirmationRequested" }
+        Method { name: "dispatchAction"; Parameter { name: "id"; type: "QString" } Parameter { name: "sourceId"; type: "QString" } }
+        Method { name: "confirmIdleEnable" }
         Property { name: "connectionObservation"; type: "QString"; isReadonly: true }
         Property { name: "powerObservation"; type: "QString"; isReadonly: true }
         Property { name: "sources"; type: "Aerial::Settings::SourcesController"; isPointer: true; isReadonly: true }
@@ -61,6 +67,23 @@ Module {
         Method { name: "retry"; Parameter { name: "id"; type: "QString" } }
         Method { name: "beginReorder"; Parameter { name: "id"; type: "QString" } }
         Method { name: "dropBefore"; Parameter { name: "id"; type: "QString" } }
+    }
+    Component {
+        name: "Aerial::Settings::StatusModel"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/StatusModel 1.0"]
+        isCreatable: false
+        Property { name: "facts"; type: "QVariantMap"; isReadonly: true }
+        Signal { name: "changed" }
+    }
+    Component {
+        name: "Aerial::Settings::NoticesModel"
+        prototype: "QObject"
+        exports: ["AerialLock.Settings/NoticesModel 1.0"]
+        isCreatable: false
+        Property { name: "entries"; type: "QVariantList"; isReadonly: true }
+        Property { name: "idle"; type: "QVariantMap"; isReadonly: true }
+        Signal { name: "changed" }
     }
     Component {
         name: "Aerial::Settings::CacheController"

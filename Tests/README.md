@@ -38,6 +38,11 @@ Python 3.11 exception-API requirement. Cleanup preserves the original exception
 and prints retirement diagnostics when native exception notes are unavailable.
 `settings-model` checks Downloads transactions against a real private-bus service
 and CLI, including custom values, stale revisions and malformed-file recovery.
+It also checks the shared status/notices projections, semantic actions and pending
+intent parity. `settings-appearance` injects portal Settings peers, fences late
+snapshot replies and replaced owners, validates independent palette fallbacks,
+and measures live IA content/progress pixels without recreating controls. Native
+`controls` repeats that appearance proof on the real compositor.
 `settings-single-instance` exercises `org.freedesktop.Application` from separate
 processes, including profile isolation. `settings-qml` uses its own QuickTest
 runner and `settings/tests/` input, not the generic locker QML runner. Its wrapper

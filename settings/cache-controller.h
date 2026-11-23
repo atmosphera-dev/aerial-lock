@@ -1,5 +1,6 @@
 #pragma once
 #include "common/client/service-connection.h"
+#include "status-model.h"
 
 namespace Aerial::Settings {
 class CacheController : public QObject {
@@ -14,6 +15,7 @@ public:
     QVariantList activity() const;
     QVariantMap cleanup() const;
     QString error() const { return problem; }
+    StatusModel *statusModel() { return &statusProjection; }
     Q_INVOKABLE void fetchOrStop();
     Q_INVOKABLE void prepareCleanup();
     Q_INVOKABLE void confirmCleanup();
@@ -27,6 +29,7 @@ private:
     void prune(bool dryRun);
     QVariantMap transfer() const;
     Client::ServiceConnection &service;
+    StatusModel statusProjection;
     quint64 pending = 0, action = 0;
     QString jobPath, jobOwner, problem, cleanupState;
     QVariantMap pruneResult;

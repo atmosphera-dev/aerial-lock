@@ -203,8 +203,16 @@ private slots:
         f.cli({"config", "set", "sources", "[{\"id\":\"failed\",\"name\":\"Failed\",\"type\":\"community\",\"source\":\"http://127.0.0.1:1/list.json\"}]"});
         QTRY_COMPARE(sources->rows().size(), 1); f.service->refreshSources({"failed"});
         QTRY_VERIFY(sources->rows().first().toMap().value("canRetry").toBool());
+        const auto sourceNotice = [&] {
+            for (const auto &entry : f.controller->notices()->entries()) if (entry.toMap().value("id") == "source:failed") return entry.toMap();
+            return QVariantMap{};
+        };
+        QTRY_COMPARE(sourceNotice().value("actionId").toString(), QString("retry-source"));
+        QCOMPARE(sourceNotice().value("sourceId").toString(), QString("failed"));
+        QCOMPARE(sourceNotice().value("message"), sources->rows().first().toMap().value("description"));
         sources->toggle("failed", false); QTRY_VERIFY(!sources->rows().first().toMap().value("enabled").toBool());
         QVERIFY(!sources->rows().first().toMap().value("canRetry").toBool());
+        QTRY_VERIFY(sourceNotice().isEmpty());
         QVERIFY(sources->rows().first().toMap().value("description").toString().startsWith("Community pack"));
     }
     void missingSourceCannotRetargetAnOpenDraft()

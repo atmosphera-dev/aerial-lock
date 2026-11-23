@@ -66,20 +66,17 @@ UI.Page {
         observation: root.controller.systemd.idle.observation
         UI.Group {
             Layout.fillWidth: true
-            visible: root.controller.systemd.idle.message.length > 0
+            visible: Object.keys(root.controller.notices.idle).length > 0
             UI.SettingRow {
                 Layout.fillWidth: true
-                description: root.controller.systemd.idle.message
+                description: root.controller.notices.idle.message || ""
                 glyph: "info"
                 UI.Button {
                     objectName: "idle-action"
-                    visible: root.controller.systemd.idle.action.length > 0
+                    visible: (root.controller.notices.idle.actionId || "").length > 0
                     primary: true
-                    text: root.controller.systemd.idle.actionLabel
-                    onClicked: {
-                        if (root.controller.systemd.idle.action === "enableStart") idleSheet.open();
-                        else root.controller.systemd.operate("aerial-idle.service", root.controller.systemd.idle.action);
-                    }
+                    text: root.controller.notices.idle.actionLabel || ""
+                    onClicked: root.controller.dispatchAction(root.controller.notices.idle.actionId)
                 }
             }
         }
@@ -140,7 +137,11 @@ UI.Page {
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }
             UI.Button { text: "Cancel"; onClicked: idleSheet.close() }
-            UI.Button { objectName: "idle-turn-on"; text: "Turn on"; primary: true; onClicked: { root.controller.systemd.operate("aerial-idle.service", "enableStart"); idleSheet.close(); } }
+            UI.Button { objectName: "idle-turn-on"; text: "Turn on"; primary: true; onClicked: { root.controller.confirmIdleEnable(); idleSheet.close(); } }
         }
+    }
+    Connections {
+        target: root.controller
+        function onIdleConfirmationRequested() { idleSheet.open(); }
     }
 }

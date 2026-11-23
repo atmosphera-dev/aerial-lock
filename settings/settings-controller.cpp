@@ -29,8 +29,13 @@ QString shortError(const QString &error)
 }
 SettingsController::SettingsController(Client::ServiceConnection &service, QObject *parent)
     : QObject(parent), service(service), portalClient(QDBusConnection::sessionBus()), sourceController(service, portalClient),
-      cacheController(service), themeCatalog(service), systemdController(QDBusConnection::sessionBus())
+      cacheController(service), themeCatalog(service), systemdController(QDBusConnection::sessionBus()),
+      noticesModel(service, sourceController, systemdController, *cacheController.statusModel())
 {
+    connect(this, &SettingsController::changed, this, [this] {
+        const auto automatic = controls().value("automatic").toMap();
+        statusModel()->setAutomaticIntent(automatic.value("on").toBool(), automatic.value("pending").toBool());
+    });
     connect(&service, &Client::ServiceConnection::changed, this, &SettingsController::sampled);
     connect(&service, &Client::ServiceConnection::mutationFinished, this, [this](quint64 id, const QVariant &result, const QString &error) {
         auto it = intents.find(id);
@@ -130,7 +135,7 @@ QString SettingsController::panel() const
 }
 QString SettingsController::diagnostic() const
 {
-    if (!service.ready()) return service.errorName().isEmpty() ? "Connecting to aerial..." : "Couldn't connect: " + service.errorName().section('.', -1);
+    if (!service.ready()) return NoticesModel::connectionDiagnostic(service);
     QStringList lines;
     for (const auto &entry : service.snapshot().properties.value("SettingsDiagnostics").toList()) {
         const auto item = entry.toMap();
@@ -143,27 +148,10 @@ QString SettingsController::diagnostic() const
 }
 QString StatusFormatter::summary(const Client::ServiceConnection::Snapshot &snapshot)
 {
-    const auto reason = snapshot.properties.value("DeferReason").toString();
-    if (reason == "StorageError") return "Cache needs attention";
-    if (reason == "InvalidConfig") return "Settings need attention";
-    for (const auto &entry : snapshot.jobs) {
-        const auto job = entry.toMap();
-        if (!job.value("Cancellable").toBool() || job.value("State").toString() != "downloading") continue;
-        const auto details = job.value("Details").toMap();
-        QString text = "Downloading " + details.value("assetTitle", "video").toString();
-        const auto total = job.value("TotalBytes").toULongLong();
-        if (job.value("TotalKnown").toBool() && total) text += ", " + QString::number(int(qMin(100.L, 100.L * job.value("ReceivedBytes").toULongLong() / total))) + "%";
-        return text;
-    }
-    if (!leaf(snapshot.effective, "acquisition.automatic.enabled").toBool()) return "Paused";
-    const QMap<QString, QString> reasons{{"Metered", "metered connection"}, {"ConnectionTypeDisallowed", "connection not allowed"},
-        {"PowerDisallowed", "power source not allowed"}, {"Offline", "offline"}, {"Initializing", "checking connections"},
-        {"NoAllowedResolution", "no quality allowed"}, {"NoRemoteSources", "no online sources"}, {"CacheFull", "cache full"}, {"PlaybackProtected", "videos in use"}};
-    if (!reason.isEmpty() && reason != "None") return "Waiting: " + reasons.value(reason, reason);
-    return "Up to date, " + ready(snapshot.properties.value("ReadyClips").toULongLong());
+    return StatusModel::project(snapshot).value("summary").toString();
 }
-QString StatusFormatter::ready(qulonglong count) { return QString::number(count) + (count == 1 ? " video ready" : " videos ready"); }
-QString SettingsController::status() const { return service.ready() ? StatusFormatter::summary(service.snapshot()) : "Service not running"; }
+QString StatusFormatter::ready(qulonglong count) { Client::ServiceConnection::Snapshot snapshot; snapshot.properties["ReadyClips"] = QVariant::fromValue(count); return StatusModel::project(snapshot).value("ready").toString(); }
+QString SettingsController::status() const { return cacheController.facts().value("summary").toString(); }
 QString SettingsController::connectionObservation() const
 {
     const auto facts = service.snapshot().properties.value("Observations").toMap();
@@ -208,6 +196,31 @@ void SettingsController::dispatchEdit()
     intents[id] = {key, sent, false, {}}; latest[key] = id;
 }
 void SettingsController::retry() { service.refresh(); }
+void SettingsController::dispatchAction(const QString &id, const QString &sourceId)
+{
+    const auto facts = statusModel()->facts();
+    if (!id.isEmpty() && id == facts.value("primaryActionId")) { cacheController.fetchOrStop(); return; }
+    if (!id.isEmpty() && id == facts.value("secondaryActionId")) { edit("automatic", id == "resume-downloads"); return; }
+    if (id == "open-sources" || id == "open-about") { emit pageRequested(id.mid(5)); return; }
+    if (id == "retry-service") { retry(); return; }
+    if (id == "start-service") { systemdController.operate("aerial.service", "start"); return; }
+    if (id == "restart-service") { systemdController.operate("aerial.service", "restart"); return; }
+    if (id == "open-settings-folder") { openSettingsFolder(); return; }
+    if (id == "open-cache-folder") { openCacheFolder(); return; }
+    if (id == "clean-up" && panel() == "settings") { cacheController.prepareCleanup(); return; }
+    for (const auto &entry : noticesModel.entries()) {
+        const auto notice = entry.toMap();
+        if (id.isEmpty() || notice.value("actionId") != id || notice.value("sourceId").toString() != sourceId) continue;
+        if (id == "turn-on-idle") emit idleConfirmationRequested();
+        else if (id == "start-idle" || id == "restart-idle") systemdController.operate("aerial-idle.service", id == "start-idle" ? "start" : "restart");
+        else if (id == "retry-source" && panel() == "settings") sourceController.retry(sourceId);
+        return;
+    }
+}
+void SettingsController::confirmIdleEnable()
+{
+    if (noticesModel.idle().value("actionId") == "turn-on-idle") systemdController.operate("aerial-idle.service", "enableStart");
+}
 QVariantMap SettingsController::about() const
 {
     const auto p = service.snapshot().properties;
@@ -241,6 +254,8 @@ void registerTypes()
     qmlRegisterUncreatableType<SettingsController>("AerialLock.Settings", 1, 0, "SettingsController", "Owned by the application");
     qmlRegisterUncreatableType<SourcesController>("AerialLock.Settings", 1, 0, "SourcesController", "Owned by the application");
     qmlRegisterUncreatableType<CacheController>("AerialLock.Settings", 1, 0, "CacheController", "Owned by the application");
+    qmlRegisterUncreatableType<StatusModel>("AerialLock.Settings", 1, 0, "StatusModel", "Owned by the application");
+    qmlRegisterUncreatableType<NoticesModel>("AerialLock.Settings", 1, 0, "NoticesModel", "Owned by the application");
     qmlRegisterUncreatableType<ThemeCatalog>("AerialLock.Settings", 1, 0, "ThemeCatalog", "Owned by the application");
     qmlRegisterUncreatableType<PortalClient>("AerialLock.Settings", 1, 0, "PortalClient", "Owned by the application");
     qmlRegisterUncreatableType<SystemdController>("AerialLock.Settings", 1, 0, "SystemdController", "Owned by the application");

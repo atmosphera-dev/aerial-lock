@@ -106,7 +106,7 @@ def units(owned, output):
         tested = as_user([probe, source, result_file, mode], capture_output=True, text=True, timeout=120, check=False)
         publish(output / (name + ".log"), tested.stdout + tested.stderr)
         assert tested.returncode == 0, (name, tested.returncode, tested.stdout + tested.stderr)
-        require_quiet(tested.stdout + tested.stderr, qt_version())
+        require_quiet(tested.stdout + tested.stderr, qt_version(owned.paths["build"]))
         receipt = json.loads(as_user(["cat", result_file], capture_output=True, text=True).stdout)
         captures = []
         for image in receipt.get("captures", []):

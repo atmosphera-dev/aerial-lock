@@ -1,6 +1,7 @@
 #include "window-controller.h"
 #include "settings-controller.h"
 #include "interactive-runtime.h"
+#include "appearance-bridge.h"
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QTimer>
@@ -19,6 +20,7 @@ void WindowController::open(const QVariantMap &platform, int page)
     if (!engine) {
         engine = std::make_unique<QQmlApplicationEngine>();
         configureInterActive(*engine);
+        new AppearanceBridge(*engine);
         engine->setInitialProperties({{"controller", QVariant::fromValue(&settings)}});
         engine->load(QUrl("qrc:/settings/qml/Main.qml"));
         if (engine->rootObjects().isEmpty()) { engine.reset(); emit closed(); return; }

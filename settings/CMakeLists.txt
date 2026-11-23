@@ -18,6 +18,7 @@ endif()
 add_library(aerial-settings-core STATIC settings-controller.cpp settings-controller.h window-controller.cpp window-controller.h
     sources-controller.cpp sources-controller.h cache-controller.cpp cache-controller.h theme-catalog.cpp theme-catalog.h
     portal-client.cpp portal-client.h systemd-controller.cpp systemd-controller.h
+    status-model.cpp status-model.h notices-model.cpp notices-model.h appearance-bridge.cpp appearance-bridge.h
     tray-types.cpp tray-types.h menu-exporter.cpp menu-exporter.h tray-controller.cpp tray-controller.h)
 set_target_properties(aerial-settings-core PROPERTIES AUTOMOC ON CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(aerial-settings-core PUBLIC aerial-client Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2

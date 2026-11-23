@@ -45,9 +45,14 @@ def require_quiet(text, version):
         raise RuntimeError("unexpected native probe log: " + text)
 
 
-def qt_version():
-    text = subprocess.check_output(["/usr/lib/qt6/bin/qtpaths", "--qt-version"], text=True, timeout=10)
-    return tuple(map(int, text.strip().split(".")))
+def parse_qt_version(text):
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", text):
+        raise ValueError("expected a numeric Qt major.minor.patch version")
+    return tuple(map(int, text.split(".")))
+
+
+def qt_version(build):
+    return parse_qt_version((build / "settings-qt-version.txt").read_text().strip())
 
 
 def journal_cursor(text):
@@ -82,7 +87,7 @@ def inspect_journal(entries, version):
 class NativeLogGate:
     def __init__(self, root, case):
         self.root, self.case = root, case
-        self.version = qt_version()
+        self.version = qt_version(root / "build/debug/aerial-tests")
         self.before = {p: p.stat().st_mtime_ns for p in (root / "results").rglob("*.log")}
         cursor = subprocess.check_output(["sudo", "journalctl", "-n", "0", "--show-cursor", "--no-pager"], text=True, timeout=10)
         self.cursor = journal_cursor(cursor)

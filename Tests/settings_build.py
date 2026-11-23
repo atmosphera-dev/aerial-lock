@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from owned_instance import digest
 
+BASE_PROBES = ("settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe",
+               "settings-appearance-probe", "virtual-pointer-probe", "interactive-runtime-probe")
 
 def source_identity(root, freeze):
     files = freeze["files"]
@@ -21,7 +23,7 @@ def source_identity(root, freeze):
 
 def binary_paths(root):
     source, build = root / "src/aerial-lock", root / "build/debug/aerial-tests"
-    probes = ["settings-client-probe", "settings-quick-probe", "settings-visual-probe", "settings-model-probe", "virtual-pointer-probe", "interactive-runtime-probe"]
+    probes = list(BASE_PROBES)
     for name in ("desktop", "pages", "tray", "units"):
         if (source / ("settings/tests/" + name + ".cpp")).is_file():
             probes.append("settings-" + name + "-probe")

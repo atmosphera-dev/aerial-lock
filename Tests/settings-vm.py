@@ -27,8 +27,10 @@ def run(argv, **kwargs):
     return subprocess.run(argv, check=True, timeout=30, **kwargs)
 
 
-def probe_command(source, *arguments):
-    return [sys.executable, str(source / "Tests/run-settings-test.py"), *map(str, arguments)]
+def probe_command(owned, *arguments):
+    version = ".".join(map(str, qt_version(owned.paths["build"])))
+    return [sys.executable, str(owned.paths["source"] / "Tests/run-settings-test.py"),
+            "--qt-version", version, "--", *map(str, arguments)]
 
 
 def prepare(args):
@@ -89,6 +91,7 @@ def native(args):
     env.pop("QT_QPA_PLATFORM", None)
     owned.check_session(owned.record["session"], env)
     source = owned.paths["source"]
+    version = qt_version(owned.paths["build"])
     binary = owned.check_binary(source / "settings/aerial-settings")
     output = args.root / "results" / ("settings-" + args.case + "-" + str(time.time_ns()))
     output.mkdir(mode=0o700)
@@ -146,7 +149,7 @@ def native(args):
             time.sleep(.5)
             first = capture(window, "downloads")
             forwarded = run([str(binary)], env=env, capture_output=True, text=True)
-            require_quiet(forwarded.stderr, qt_version())
+            require_quiet(forwarded.stderr, version)
             assert len([w for w in windows() if w["pid"] == app.pid]) == 1
             visual = owned.check_binary(owned.paths["build"] / "settings-visual-probe")
             peer = spawn([str(visual), "--focus-peer"], "focus-peer", env)
@@ -205,21 +208,21 @@ def native(args):
             assert daemon.poll() is None, "closing settings stopped service"
             for handle in handles:
                 handle.flush()
-            require_quiet((output / "app.log").read_text(), qt_version())
+            require_quiet((output / "app.log").read_text(), version)
             captures = [first, second, unavailable, recovered]
             if args.case == "visuals":
                 for palette in ("dark", "light"):
                     visual = owned.check_binary(owned.paths["build"] / "settings-visual-probe")
                     path = output / ("downloads-" + palette + ".png")
-                    probe = run(probe_command(source, visual, palette, path), env=env, capture_output=True, text=True)
+                    probe = run(probe_command(owned, visual, palette, path), env=env, capture_output=True, text=True)
                     publish(output / ("visual-" + palette + ".log"), probe.stdout + probe.stderr)
-                    require_quiet(probe.stdout + probe.stderr, qt_version())
+                    require_quiet(probe.stdout + probe.stderr, version)
                     assert path.is_file()
                     captures.append(str(path))
                     pages = output / ("pages-" + palette); pages.mkdir()
-                    probe = run(probe_command(source, visual, "--pages", palette, pages), env=env, capture_output=True, text=True)
+                    probe = run(probe_command(owned, visual, "--pages", palette, pages), env=env, capture_output=True, text=True)
                     publish(output / ("visual-pages-" + palette + ".log"), probe.stdout + probe.stderr)
-                    require_quiet(probe.stdout + probe.stderr, qt_version())
+                    require_quiet(probe.stdout + probe.stderr, version)
                     captures += sorted(str(p) for p in pages.glob("*.png"))
             result = {"window": window, "forwarded": True, "raised_from_peer": True, "natural_exit": 0, "service_survives": True, "captures": captures, "source_identity": owned.record["current_source_identity"]}
             publish(output / "result.json", json.dumps(result, indent=2))
@@ -268,9 +271,11 @@ def main():
                 # Native QuickTest drives the actual production controls and
                 # checks CLI readback, source drag, drafts, outage and repair.
                 test_inputs = quick_test_inputs(owned.paths["source"], owned.record["source_files"])
-                commands = [probe_command(owned.paths["source"], owned.paths["build"] / "settings-quick-probe", "-input", owned.paths["source"] / "settings/tests", "-import", owned.paths["source"])]
+                commands = [probe_command(owned, owned.paths["build"] / "settings-quick-probe", "-input", owned.paths["source"] / "settings/tests", "-import", owned.paths["source"])]
+                if args.case == "controls":
+                    commands.append(probe_command(owned, owned.paths["build"] / "settings-appearance-probe"))
                 if args.case == "failure-recovery":
-                    commands += [probe_command(owned.paths["source"], owned.paths["build"] / name) for name in ("settings-model-probe", "settings-pages-probe")]
+                    commands += [probe_command(owned, owned.paths["build"] / name) for name in ("settings-model-probe", "settings-pages-probe")]
                 for index, command in enumerate(commands):
                     # Qt 6.12's v3 input context warns on QuickTest synthetic
                     # clicks even without Aerial. See the QuickTest item in

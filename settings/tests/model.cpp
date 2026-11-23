@@ -1,6 +1,7 @@
 #include "fixture.h"
 #include <QSaveFile>
 #include <QDBusReply>
+#include <limits>
 using namespace Aerial;
 using namespace Aerial::Settings;
 using namespace Aerial::Settings::Test;
@@ -37,6 +38,47 @@ private slots:
         QTRY_COMPARE(observed.size(), 6);
         QVERIFY(observed[0].isEmpty()); QCOMPARE(observed[2], observed[1]);
         QVERIFY(observed[3].isEmpty()); QCOMPARE(observed[5], observed[4]);
+    }
+    void sharedProjectionAndSemanticActions()
+    {
+        Fixture fixture; QVERIFY(fixture.start()); auto &settings = *fixture.controller;
+        QCOMPARE(settings.statusModel()->facts(), settings.cache()->facts());
+        QCOMPARE(settings.status(), settings.statusModel()->facts().value("summary").toString());
+        QCOMPARE(settings.statusModel()->facts().value("secondaryActionId").toString(), QString("resume-downloads"));
+        settings.dispatchAction("pause-downloads"); // A stale opposite action cannot toggle state.
+        QVERIFY(!fixture.control("automatic").value("pending").toBool());
+        settings.dispatchAction("resume-downloads");
+        QTRY_COMPARE(settings.statusModel()->facts().value("secondaryActionId").toString(), QString("pause-downloads"));
+        QTRY_VERIFY(!fixture.control("automatic").value("pending").toBool());
+        QVERIFY(QJsonDocument::fromJson(fixture.cli({"config", "show", "--json"})).object().value("acquisition").toObject().value("automatic").toObject().value("enabled").toBool());
+        QSignalSpy navigation(&settings, &SettingsController::pageRequested);
+        settings.dispatchAction("open-sources"); QCOMPARE(navigation.takeFirst().first().toString(), QString("sources"));
+        settings.sources()->begin(); settings.sources()->field("name", "Unsaved source");
+        // The private test bus has no systemd peer. Wait for discovery rather
+        // than sampling its initial state against a later service outage.
+        QTRY_VERIFY(!settings.systemd()->error().isEmpty());
+        const auto idle = settings.notices()->idle(); QVERIFY(!idle.value("message").toString().isEmpty());
+        fixture.daemon.terminate(); QVERIFY(fixture.daemon.waitForFinished(5000));
+        QTRY_COMPARE(settings.panel(), QString("unavailable"));
+        QVERIFY(settings.statusModel()->facts().value("primaryActionId").toString().isEmpty());
+        QVERIFY(settings.sources()->sheetOpen()); QCOMPARE(settings.sources()->draft().value("name").toString(), QString("Unsaved source"));
+        bool serviceNotice = false;
+        for (const auto &entry : settings.notices()->entries()) serviceNotice |= entry.toMap().value("id") == "service";
+        QVERIFY(serviceNotice); QCOMPARE(settings.notices()->idle(), idle);
+    }
+    void projectionUnknownAndExactStorage()
+    {
+        Client::ServiceConnection::Snapshot snapshot;
+        snapshot.effective = {{"acquisition", QJsonObject{{"automatic", QJsonObject{{"enabled", true}}}}}};
+        snapshot.properties = {{"ReadyClips", QVariant::fromValue(9007199254740993ULL)}, {"NextCheck", 1},
+            {"ManagedBytes", QVariant::fromValue(std::numeric_limits<qulonglong>::max())}, {"ReservedBytes", QVariant::fromValue(10ULL)}, {"UsageKnown", true}};
+        snapshot.jobs = {QVariantMap{{"State", "downloading"}, {"Cancellable", true}, {"TotalKnown", false}, {"TotalBytes", 100}, {"ReceivedBytes", 50}}};
+        const auto facts = StatusModel::project(snapshot);
+        QCOMPARE(facts.value("readyCount").toULongLong(), 9007199254740993ULL);
+        QVERIFY(!facts.value("progressKnown").toBool()); QCOMPARE(facts.value("progress").toDouble(), 0.);
+        QVERIFY(!facts.value("detail").toString().contains("left"));
+        QCOMPARE(facts.value("segments"), CacheController::storageFacts(snapshot.properties).value("segments"));
+        QCOMPARE(facts.value("nextCheckText").toString(), QDateTime::fromSecsSinceEpoch(1).toLocalTime().toString("ddd h:mm AP"));
     }
     void downloadsRoundTrips()
     {
@@ -136,6 +178,12 @@ private slots:
         const QByteArray invalid = "{\"sources\":[],\"acquisition\":{\"checkIntervalSeconds\":-1,\"automatic\":{\"enabled\":false}}}";
         QSaveFile file(fixture.paths.config); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(invalid); QVERIFY(file.commit());
         QTRY_VERIFY(fixture.control("acquisition.checkIntervalSeconds").value("error").toString().contains("service default"));
+        bool found = false;
+        for (const auto &entry : fixture.controller->notices()->entries()) {
+            const auto notice = entry.toMap();
+            if (notice.value("id").toString().startsWith("config:")) { found = true; QCOMPARE(notice.value("actionId").toString(), QString("open-settings-folder")); QVERIFY(notice.value("message").toString().contains("acquisition.checkIntervalSeconds")); }
+        }
+        QVERIFY(found);
         QCOMPARE(fixture.controller->panel(), QString("settings"));
         QVERIFY(fixture.control("acquisition.checkIntervalSeconds").value("inherited").toBool());
         QCOMPARE(fixture.control("acquisition.checkIntervalSeconds").value("value").toInt(), 3600);
