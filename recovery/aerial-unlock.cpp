@@ -10,8 +10,8 @@
  *   2  inconclusive (neither locked nor finished within the timeout)
  *   3  refused (a live client holds the lock)
  *
- * After refusal, --purge asks the supervisor to stop its confirmed locker
- * for this compositor, then retries takeover.
+ * --purge asks the supervisor to stop its confirmed locker for this
+ * compositor before trying takeover.
  */
 #include <cstdio>
 #include <cstdlib>
@@ -173,7 +173,7 @@ static void usage(const char *argv0)
     fprintf(stderr,
             "usage: %s [--purge]\n"
             "  Take over a stuck session lock and release it.\n"
-            "  --purge   stop only this session's confirmed locker if takeover is refused\n",
+            "  --purge   stop this session's confirmed locker before takeover\n",
             argv0);
 }
 
@@ -302,27 +302,29 @@ int main(int argc, char **argv)
     const Endpoint socket(path);
     fprintf(stderr, "aerial-unlock: trying %s\n", path.c_str());
     const auto budget = std::chrono::milliseconds(RecoveryChannel::takeoverTimeoutMs);
-    int rc = takeover(socket, Clock::now() + budget);
     HolderReply reply;
-    if (rc == 3) {
-        reply = confirmedHolder(socket, purge);
-        if (purge && reply.requested) {
-            if (reply.holder > 0) {
-                fprintf(stderr, "aerial-unlock: supervisor is stopping confirmed holder pid %d\n", reply.holder);
-            } else {
-                fprintf(stderr, "aerial-unlock: no purge acknowledgement; stop outcome unknown, retrying takeover\n");
-            }
-            const auto deadline = Clock::now() + budget;
-            do {
-                rc = takeover(socket, deadline);
-                if (rc != 3) break;
-                usleep(50000);
-            } while (Clock::now() < deadline);
+    if (purge) {
+        // Some compositors permit replacement before the current child exits.
+        // Stop the confirmed child through its supervisor first, otherwise a
+        // successful takeover could still leave that episode free to respawn.
+        reply = confirmedHolder(socket, true);
+        if (reply.holder > 0) {
+            fprintf(stderr, "aerial-unlock: supervisor is stopping confirmed holder pid %d\n", reply.holder);
+        } else if (reply.requested) {
+            fprintf(stderr, "aerial-unlock: no purge acknowledgement; stop outcome unknown, trying takeover\n");
         }
     }
+    int rc;
+    const auto deadline = Clock::now() + budget;
+    do {
+        rc = takeover(socket, deadline);
+        if (rc != 3 || !purge || !reply.requested || Clock::now() >= deadline) break;
+        usleep(50000);
+    } while (Clock::now() < deadline);
     if (rc == 0) {
         fprintf(stderr, "aerial-unlock: recovered — took over the lock and released it\n");
     } else if (rc == 3) {
+        if (!purge) reply = confirmedHolder(socket, false);
         fprintf(stderr, "aerial-unlock: compositor refused takeover.\n");
         if (reply.holder > 0 && !purge)
             fprintf(stderr, "  confirmed holder: pid %d\n  retry with: aerial-unlock --purge\n", reply.holder);

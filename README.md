@@ -573,8 +573,9 @@ locker cannot handle release, use:
 WAYLAND_DISPLAY=wayland-N aerial-unlock --purge
 ```
 
-This stops only the confirmed locker for that socket, suppresses supervisor
-respawns, and tries to take over and release the compositor lock. If the
+This stops only the confirmed locker for that socket before attempting
+takeover, so the supervisor cannot respawn it even on compositors that allow
+replacing a live client. It then tries to release the compositor lock. If the
 supervisor is unavailable or cannot confirm ownership (including older or
 third-party lockers), it will not guess which process to stop.
 
