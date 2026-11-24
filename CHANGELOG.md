@@ -3,7 +3,7 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-24
 
 ### Added
 
@@ -14,6 +14,18 @@ Notable user-facing changes are recorded here, following
 - An optional tray icon with download status, Fetch now/Stop, Pause/Resume and
   Open Aerial. It is off until turned on in About.
 - Video sources can be switched off without removing them or their cache.
+
+### Changed
+
+- The settings app needs Qt 6.12 or newer. The lock, the `aerial` service and
+  `aerialctl` still build on Qt 6.11 with `make BUILD_SETTINGS=0`.
+
+### Fixed
+
+- Pressing Enter on an empty password field no longer starts an
+  authentication attempt or shows the raw PAM prompt as feedback.
+- `aerial-unlock` lists and stops only processes that really hold the lock,
+  never unrelated programs whose command line mentions it.
 
 ## [0.3.0] - 2026-11-19
 
