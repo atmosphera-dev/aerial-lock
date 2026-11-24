@@ -29,9 +29,8 @@ Scope {
     }
 
     // d43: the response accepted from the shared draft, queued for PAM's
-    // first prompt. null = no queued response (distinct from an empty
-    // answer: an empty initial submit starts PAM without queueing, while
-    // an empty answer to an already-active prompt is submitted). Cleared
+    // first prompt. null = no queued response. Empty initial submissions
+    // don't start PAM; empty answers to active prompts go straight to PAM. Cleared
     // before pam.respond, and on failure, abort and teardown.
     property var acceptedResponse: null
     // True exactly while a PAM call is in flight (start/respond until its
@@ -777,8 +776,7 @@ Scope {
                     root.enterAuthenticating()
                     endpoint.respond(response)
                 } else {
-                    // Phase 2: PAM wants something else (or the initial
-                    // submit was empty) — show its own message, or the
+                    // Phase 2: PAM wants something else — show its own message, or the
                     // translated prompt when it sends none, and wait for the
                     // user. Echo mode follows responseVisible via the context.
                     root.enterPrompting(endpoint.message)
@@ -894,6 +892,12 @@ Scope {
             return
         }
 
+        // Check after the editor's authority-checked flush, before consumption
+        // changes response-scoped input state or status. Do not trim passwords.
+        const answeringPrompt = root.pamEndpoint.responseRequired
+        if (!answeringPrompt && lockContext.auth.input.text.length === 0)
+            return
+
         // Snapshot and consume the shared draft exactly once; the consume
         // invalidates stale view publications (all mirrors clear).
         var submission = lockContext.auth.input.consumeSubmission(writer, generation)
@@ -901,7 +905,7 @@ Scope {
             return
         var draft = submission.text
 
-        if (root.pamEndpoint.responseRequired) {
+        if (answeringPrompt) {
             logger.d("Lock", "tryUnlock: calling pam.respond")
             root.acceptedResponse = null
             root.enterAuthenticating()
@@ -910,9 +914,8 @@ Scope {
             logger.d("Lock", "tryUnlock: calling pam.start")
             root.attemptCancelled = false
             // Reserve the response before the (possibly synchronous) first
-            // PAM prompt. An empty initial submit starts PAM and exposes its
-            // prompt WITHOUT queueing an empty first answer.
-            root.acceptedResponse = draft.length > 0 ? ({ "text": draft }) : null
+            // PAM prompt so it never becomes feedback on this attempt.
+            root.acceptedResponse = ({ "text": draft })
             root.enterAuthenticating()
             if (!root.pamEndpoint.start()) {
                 watchdog.stop()

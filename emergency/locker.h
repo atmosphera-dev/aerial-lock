@@ -67,7 +67,7 @@ struct locker {
     size_t report_offset, command_size;
     char command[8];
     int64_t auth_deadline, error_until, release_deadline, pulse_at;
-    bool locked, releasing, done, busy, queued, prompted, retiring;
+    bool locked, releasing, done, busy, prompted, retiring;
     bool rtl, pulse, memory_locked, control_connecting;
 };
 

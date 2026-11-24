@@ -528,7 +528,7 @@ class Session:
         config = self.output / "config/aerial-lock"
         config.mkdir(parents=True, exist_ok=True)
         (config / "config.json").write_text(json.dumps({"sources": [], "pamWatchdogTimeoutMs": 800}))
-        fixtures = (("lock-lifecycle-shell.qml", "LOCK_LIFECYCLE_OUTCOME assertions=59 failed=false", "prompt-state.log"),
+        fixtures = (("lock-lifecycle-shell.qml", "LOCK_LIFECYCLE_OUTCOME assertions=66 failed=false", "prompt-state.log"),
                     ("lock-password-limit-shell.qml", "PASSWORD_LIMIT_OUTCOME assertions=14 failed=false", "password-limit.log"))
         for filename, outcome, logfile in fixtures:
             shutil.copyfile(self.root / "src/aerial-lock/Tests" / filename, shell / "Tests" / filename)

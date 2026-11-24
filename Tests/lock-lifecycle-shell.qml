@@ -46,6 +46,11 @@ ShellRoot {
         signal completed(int result)
         signal error(int error)
         function prompt() {
+            message = "Password:"
+            responseRequired = true
+            pamMessage()
+        }
+        function challenge() {
             message = ""
             responseRequired = true
             pamMessage()
@@ -65,8 +70,8 @@ ShellRoot {
         function respond(answer) {
             responses++
             lastResponse = answer
-            if (respondMode === "prompt") prompt()
-            else if (respondMode === "async-prompt") Qt.callLater(endpoint.prompt)
+            if (respondMode === "prompt") challenge()
+            else if (respondMode === "async-prompt") Qt.callLater(endpoint.challenge)
             else if (respondMode === "error") { active = false; responseRequired = false; error(1) }
             else {
                 active = false
@@ -137,16 +142,19 @@ ShellRoot {
                     check(false, "editor rejection callback exists")
                 }
                 draft("")
-                lock.context.auth.submit() // empty initial response: expose prompt, never queue an answer
-                check(endpoint.starts === 1 && endpoint.responses === 0, "empty initial starts without queued answer")
-                check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "synchronous empty request visibly prompting")
-                check(lock.statusMessage.length > 0, "empty PAM message uses translated fallback")
-                endpoint.abort()
+                const idleStatus = lock.context.auth.status
+                const revision = lock.context.auth.input.revision
+                lock.context.auth.submit()
+                check(endpoint.starts === 0 && endpoint.responses === 0, "empty initial does not start PAM")
+                check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "empty initial leaves auth state unchanged")
+                check(lock.context.auth.status === idleStatus && lock.context.auth.input.revision === revision,
+                      "empty initial leaves status and draft revision unchanged")
                 draft("synthetic-prefix")
                 lock.context.auth.submit()
                 check(endpoint.responses === 1 && endpoint.lastResponse === "synthetic-prefix", "queued answer existed before synchronous first prompt")
                 check(lock.acceptedResponse === null, "queued answer removed before respond")
                 check(lock.authState === lock.authPrompting && !lock.unlockInProgress, "synchronous next prompt not overwritten in queued respond")
+                check(lock.statusMessage === lock.context.labels.prompt, "empty second PAM message uses translated fallback")
                 check(lock.context.auth.input.text === "", "accepted draft consumed exactly once")
                 lock.context.auth.submit() // active empty answer is meaningful
                 check(endpoint.responses === 2 && endpoint.lastResponse === "", "active empty answer sent unchanged")
@@ -164,6 +172,7 @@ ShellRoot {
                 check(lock.acceptedResponse === null && lock.context.auth.input.text === "", "queued completion consumes only accepted draft")
                 endpoint.startMode = "async"
                 endpoint.respondMode = "prompt"
+                draft("synthetic-async-start")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "async start awaits explicit prompt")
                 phase = 1
@@ -177,16 +186,20 @@ ShellRoot {
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "failed start cleanup settles once")
                 check(lock.context.auth.input.text === "", "rejected accepted draft does not resurrect")
                 endpoint.startMode = "error"
+                draft("synthetic-start-error")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline start error not overwritten")
                 endpoint.abort()
                 endpoint.startMode = "complete"
+                draft("synthetic-start-complete")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authSuccess && !lock.unlockInProgress, "inline start completion not overwritten")
                 endpoint.abort()
                 endpoint.startMode = "inline"
-                endpoint.respondMode = "error"
+                endpoint.respondMode = "prompt"
+                draft("synthetic-then-direct-error")
                 lock.context.auth.submit()
+                endpoint.respondMode = "error"
                 draft("synthetic-direct-error")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline direct respond error not overwritten")
@@ -196,8 +209,10 @@ ShellRoot {
                 lock.context.auth.submit()
                 check(lock.authState === lock.authError && !lock.unlockInProgress && lock.acceptedResponse === null, "inline queued respond error not overwritten")
                 endpoint.abort()
-                endpoint.respondMode = "async-prompt"
+                endpoint.respondMode = "prompt"
+                draft("synthetic-then-async")
                 lock.context.auth.submit()
+                endpoint.respondMode = "async-prompt"
                 draft("synthetic-async-direct")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "async direct respond awaits explicit prompt")
@@ -234,6 +249,7 @@ ShellRoot {
                 check(endpoint.active && !lock.attemptCancelled, "prompt awaiting the user is not aborted")
                 endpoint.abort()
                 endpoint.startMode = "silent"
+                draft("synthetic-timeout")
                 lock.context.auth.submit()
                 check(lock.authState === lock.authAuthenticating && lock.unlockInProgress, "silent PAM call in flight")
                 phase = 5

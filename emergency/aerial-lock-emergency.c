@@ -49,7 +49,7 @@ void locker_stop(struct locker *app,int result,const char *reason) {
 void locker_cancel(struct locker *app) {
     secret_clear(app->secret); input_reset_all(app);
     if (app->auth) { auth_client_abort(app->auth); app->retiring=true; }
-    app->queued=false; app->prompted=false; app->busy=app->auth!=NULL;
+    app->prompted=false; app->busy=app->auth!=NULL;
     locker_changed(app);
 }
 static void release_done(void *data,struct wl_callback *callback,uint32_t serial) {
@@ -69,17 +69,15 @@ void locker_release(struct locker *app,const char *reason) {
 static bool send_draft(struct locker *app) {
     if (!secret_utf8(app->secret->draft,app->secret->length,NULL) ||
         !auth_client_respond(app->auth,app->secret->draft,app->secret->length)) return false;
-    secret_clear(app->secret); app->queued=false; app->busy=true;
+    secret_clear(app->secret); app->busy=true;
     input_reset_all(app); app->auth_deadline=monotonic_ms()+app->watchdog;
     lock_log("auth-busy"); locker_changed(app); return true;
 }
 void locker_submit(struct locker *app) {
+    /* Only the initial hidden PAM prompt is supported here and it is always
+     * answered from a queued draft. Extra prompts fail closed in auth_step. */
+    if (app->auth || !app->secret->length) return;
     input_reset_all(app);
-    if (app->auth) {
-        if (app->retiring || app->busy) return;
-        if (!send_draft(app)) { locker_error(app,"helper-response-error"); locker_cancel(app); }
-        return;
-    }
     if (!app->service || !*app->service) { locker_error(app,"auth-service-unavailable"); secret_clear(app->secret); return; }
     app->auth=auth_client_create();
     if (!app->auth) { locker_error(app,"helper-allocation-failed"); secret_clear(app->secret); return; }
@@ -87,7 +85,7 @@ void locker_submit(struct locker *app) {
     if (!auth_client_start(app->auth,AERIAL_LOCK_AUTH_HELPER,app->service,app->user,"/etc/pam.d")) {
         locker_error(app,"helper-start-failed"); locker_cancel(app); return;
     }
-    app->queued=app->secret->length!=0; app->prompted=false; app->busy=true;
+    app->busy=true;
     app->auth_deadline=monotonic_ms()+app->watchdog;
     app->pulse_at=monotonic_ms()+350;
     lock_log("auth-busy"); locker_changed(app);
@@ -97,6 +95,7 @@ static void auth_step(struct locker *app,int64_t now) {
     if (app->retiring) {
         if (auth_client_reap(app->auth) && auth_client_destroy(app->auth)) {
             app->auth=NULL; app->retiring=false; app->busy=false; locker_changed(app);
+            if (!app->releasing && !app->done) lock_log("auth-ready");
         }
         return;
     }
@@ -110,9 +109,7 @@ static void auth_step(struct locker *app,int64_t now) {
                     locker_error(app,"auth-unsupported-prompt"); locker_cancel(app); return;
                 }
                 app->prompted=true; input_reset_all(app);
-                if (app->queued) {
-                    if (!send_draft(app)) { locker_error(app,"helper-response-error"); locker_cancel(app); return; }
-                } else { app->busy=false; lock_log("auth-prompt"); locker_changed(app); }
+                if (!send_draft(app)) { locker_error(app,"helper-response-error"); locker_cancel(app); return; }
             }
         }
     } while (event==AUTH_MESSAGE);

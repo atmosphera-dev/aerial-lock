@@ -91,16 +91,20 @@ def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial
         rejected = locker.wait_line(lambda line: "lock-state: auth-failed" in line, 20)
         assert locker.process.poll() is None
         assert not any(".unlock_and_destroy()" in line for _, line in tuple(locker.lines))
-        # Wait until the failed owned worker has retired, not just its error log.
-        # An empty Return opens a fresh prompt; following text must answer it.
-        subprocess.run(["wtype", "-s", "150", "-k", "Return"], env=env, check=True, timeout=10)
-        prompt = locker.wait_line(lambda line: "lock-state: auth-prompt" in line)
+        # Let the failed worker retire, then send a separate empty Return.
+        # Exactly two auth-busy events per nonempty submission (start/answer)
+        # below also catch a brief, incorrectly started empty conversation.
+        assert locker.wait_for(lambda line: "lock-state: auth-ready" in line, after=rejected) is not None
+        subprocess.run(["wtype", "-k", "Return"], env=env, check=True, timeout=10)
         submit(password)
         authenticated = locker.wait_line(lambda line: "lock-state: auth-success" in line, 20)
         locker.wait_line(lambda line: ".unlock_and_destroy()" in line)
         confirmed = locker.wait_line(lambda line: "lock-state: release-confirmed" in line)
-        assert rejected < prompt < authenticated < confirmed
+        assert rejected < authenticated < confirmed
         assert locker.finish(10) == 0
+        lines = [line for _, line in locker.lines]
+        assert sum("lock-state: auth-busy" in line for line in lines) == 4
+        assert not any("lock-state: auth-prompt" in line for line in lines)
         assert not any(".error(" in line for _, line in tuple(locker.lines))
         if desktop_probe:
             probe = driver.ObservedProcess([str(desktop_probe)], env, root / "results/desktop.log")
@@ -108,7 +112,7 @@ def run_session(root, service, password, binary="/usr/libexec/aerial-lock/aerial
             subprocess.run(["wtype", "-k", "F12"], env=env, check=True, timeout=10)
             probe.wait_line(lambda line: "DESKTOP_INPUT_RECEIVED" in line)
             assert probe.finish(5) == 0
-        outcome = dict(status="PASS", real_pam=True, rejected=True, empty_return_prompt=True,
+        outcome = dict(status="PASS", real_pam=True, rejected=True, empty_return_noop=True,
                        unlock_and_destroy=True, sync_confirmed=True, natural_exit=0,
                        desktop_input=bool(desktop_probe), seconds=time.monotonic() - start)
         (root / "results/outcome.json").write_text(json.dumps(outcome, indent=2) + "\n")

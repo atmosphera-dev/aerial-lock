@@ -41,8 +41,6 @@ class LockStateLog(unittest.TestCase):
         expected = [
             "auth idle -> prompting reason=initial-prompt",
             "auth prompting -> authenticating reason=submit",
-            "auth authenticating -> prompting reason=pam-prompt",
-            "auth prompting -> authenticating reason=submit",
             "auth authenticating -> failed reason=pam-failed",
             "auth failed -> authenticating reason=submit",
             "auth authenticating -> success reason=pam-success",

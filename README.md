@@ -526,8 +526,8 @@ its attempt limit. Killing the supervisor leaves the lock without respawns. Use 
 or `Release()` on the supervisor to unlock without a password, as with swaylock and hyprlock.
 
 **Emergency UI.** Every output shows only a centered input box, masking dots
-and a geometric arrow (left in RTL locales). Return submits; Backspace removes
-one Unicode scalar; Ctrl-U/Escape clears. Checking pauses typing and pulses the
+and a geometric arrow (left in RTL locales). Return submits a nonempty draft;
+Backspace removes one Unicode scalar; Ctrl-U/Escape clears. Checking pauses typing and pulses the
 arrow; rejection clears the dots and briefly flashes the border red. The client
 uses the configured PAM service through the same exec helper, not a weaker
 fallback stack. XKB layouts, AltGr and Compose work; platform IME, clipboard,

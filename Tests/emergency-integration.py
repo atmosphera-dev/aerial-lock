@@ -264,16 +264,19 @@ class RecoveryProbe:
             rejected = self.wait("lock-state: auth-failed")
             if self.capture: self.capture('wrong')
             self.retained()
-            # The prompt log, not a sleep, establishes helper retirement/readiness.
-            key(self.env, "-s", "150", "-k", "Return")
-            self.wait("lock-state: auth-prompt", after=rejected)
+            self.wait("lock-state: auth-ready", after=rejected)
+            key(self.env, "-k", "Return")  # empty: must not start another conversation
         # Join the transition witness injector before authenticated unlock can
         # legitimately return desktop focus; it ran throughout all crash gaps.
         self.finish_flood()
         if self.frames: self.frame_summary = self.frames.finish()
         self.submit(password)
         self.wait("lock-state: auth-success")
-        return self.complete(authenticated=True, rejected=wrong)
+        result = self.complete(authenticated=True, rejected=wrong)
+        lines = [line for _, line in self.locker.lines]
+        assert sum("lock-state: auth-busy" in line for line in lines) == (4 if wrong else 2)
+        assert not any("lock-state: auth-prompt" in line for line in lines)
+        return result
 
     def complete(self, authenticated, rejected=False):
         unlocked = self.wait(".unlock_and_destroy()")

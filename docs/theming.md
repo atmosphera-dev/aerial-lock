@@ -183,7 +183,7 @@ request. Reserve styled text for literal theme-owned markup only.
 | `responseVisible` | bool | The active PAM prompt requests visible input. False outside a live response request, including retries after failure or timeout. |
 | `maxResponseSize` | int | PAM response limit; cap input at `maxResponseSize - 1` (AuthField does) |
 | `dismissAvailable` | bool | Debug dismiss is enabled in this build (build-gated) |
-| `submit()` | function | The authenticated submission path — submits the shared draft held in `auth.input` (zero arguments; a widget never supplies a password) |
+| `submit()` | function | Submits the shared draft held in `auth.input` (zero arguments; a widget never supplies a password). An empty draft does nothing unless PAM is already asking for a response. |
 | `dismiss()` | function | Debug dismiss — no-op unless `dismissAvailable` |
 
 ### `context.auth.input`
