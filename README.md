@@ -573,11 +573,12 @@ locker cannot handle release, use:
 WAYLAND_DISPLAY=wayland-N aerial-unlock --purge
 ```
 
-This stops only the confirmed locker for that socket before attempting
-takeover, so the supervisor cannot respawn it even on compositors that allow
-replacing a live client. It then tries to release the compositor lock. If the
-supervisor is unavailable or cannot confirm ownership (including older or
-third-party lockers), it will not guess which process to stop.
+This asks the supervisor to stop only the confirmed locker for that socket,
+then tries to take over and release the compositor lock. An acknowledged stop
+suppresses supervisor respawns, even on compositors that allow replacing a live
+client. If the stop is not acknowledged, takeover can still be attempted, but
+the supervisor may respawn the locker. The tool never guesses which process to
+stop when ownership cannot be confirmed.
 
 | Exit | Meaning |
 |---|---|
