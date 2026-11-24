@@ -173,13 +173,21 @@ static void bind_manager(struct wl_client *c,void *data,uint32_t version,uint32_
     struct wl_resource *r=wl_resource_create(c,&ext_session_lock_manager_v1_interface,(int)version,id);
     wl_resource_set_implementation(r,&manager_impl,data,NULL);
 }
+static void dispatch_peer(struct peer *p) {
+    if (strcmp(p->mode,"stalled-sync") || !p->unlocks) wl_display_flush_clients(p->display);
+    CHECK(wl_event_loop_dispatch(p->loop,5)>=0);
+}
 static void pump(struct peer *p,int ms) {
     int64_t end=now()+ms;
-    do {
-        if (strcmp(p->mode,"stalled-sync") || !p->unlocks) wl_display_flush_clients(p->display);
-        CHECK(wl_event_loop_dispatch(p->loop,5)>=0);
-    } while (now()<end);
+    do dispatch_peer(p); while (now()<end);
 }
+/* Advance on an observed request, not on elapsed time. The deadline only
+ * bounds failures. Keep the fixed observation windows for negative checks. */
+#define AWAIT_PEER(peer, condition) do { \
+    const int64_t deadline=now()+5000; \
+    while (!(condition) && now()<deadline) dispatch_peer(peer); \
+    CHECK(condition); \
+} while (0)
 static void press(struct peer *p,uint32_t key) {
     wl_keyboard_send_key(p->keyboard,++p->serial,1,key,WL_KEYBOARD_KEY_STATE_PRESSED);
     wl_keyboard_send_key(p->keyboard,++p->serial,2,key,WL_KEYBOARD_KEY_STATE_RELEASED);
@@ -229,18 +237,18 @@ static void run(const char *binary,const char *mode) {
         if (!strcmp(mode,"no-outputs")) {
             pump(&p,150); CHECK(!p.commits && !p.unlocks && !waitpid(pid,&status,WNOHANG));
             p.output=wl_global_create(p.display,&wl_output_interface,3,&p,bind_output);
-            pump(&p,100); CHECK(p.commits);
+            AWAIT_PEER(&p,p.commits);
         }
         struct surface *s=p.surfaces;
         /* A configure storm commits only matching latest geometry, at scale 2. */
         for (int i=0;i<20;++i) { s->width=800+i; s->height=600+i; s->serial=++p.serial; ext_session_lock_surface_v1_send_configure(s->role,s->serial,s->width,s->height); }
-        pump(&p,100); CHECK(s->commits>=2);
+        AWAIT_PEER(&p,s->commits>=2);
         if (!strcmp(mode,"busy-buffers")) {
             s->hold=true;
             for (int n=0;n<2;++n) {
                 s->width+=1; s->serial=++p.serial;
                 ext_session_lock_surface_v1_send_configure(s->role,s->serial,s->width,s->height);
-                pump(&p,100);
+                AWAIT_PEER(&p,s->held[n]);
             }
             unsigned before=p.commits;
             for (int n=0;n<100;++n) {
@@ -252,7 +260,8 @@ static void run(const char *binary,const char *mode) {
                 CHECK(s->held[n] && buffer_hash(s->held[n])==s->hashes[n]);
                 wl_buffer_send_release(s->held[n]); s->held[n]=NULL;
             }
-            s->hold=false; pump(&p,100); CHECK(p.commits>before);
+            s->hold=false;
+            AWAIT_PEER(&p,p.commits>before);
         }
         struct wl_array held; wl_array_init(&held); uint32_t *held_key=wl_array_add(&held,4); CHECK(held_key); *held_key=30;
         wl_keyboard_send_enter(p.keyboard,++p.serial,s->resource,&held); wl_array_release(&held);
@@ -268,10 +277,13 @@ static void run(const char *binary,const char *mode) {
             if (!strcmp(mode,"mixed-locale")) { press(&p,100); press(&p,40); press(&p,18); }
             else press(&p,30);
             if (!strcmp(mode,"hotplug")) {
-                pump(&p,50); wl_global_destroy(p.output); pump(&p,100);
-                CHECK(!s->resource && !p.unlocks); /* zero-output interval */
+                pump(&p,50); wl_global_destroy(p.output);
+                AWAIT_PEER(&p,!s->resource);
+                CHECK(!p.unlocks); /* zero-output interval */
+                const unsigned before=p.commits;
                 p.output=wl_global_create(p.display,&wl_output_interface,3,&p,bind_output);
-                pump(&p,100); s=p.surfaces; CHECK(s->resource && s->commits);
+                AWAIT_PEER(&p,p.commits>before);
+                s=p.surfaces; CHECK(s->resource && s->commits);
                 struct wl_array empty; wl_array_init(&empty);
                 wl_keyboard_send_enter(p.keyboard,++p.serial,s->resource,&empty); wl_array_release(&empty);
                 pump(&p,30);
