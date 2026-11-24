@@ -195,15 +195,24 @@ TestCase {
         tryCompare(secondary, "text", "Pause automatic downloads");
         Harness.externalEdit("acquisition.automatic.enabled", "false");
         tryCompare(secondary, "text", "Resume automatic downloads");
+        // The shared fixture retains earlier jobs. Equal timestamps do not
+        // order them, so follow the identity created by this click.
+        const previousPaths = new Set(Harness.cache.activity.map(row => row.path));
         mouseClick(findChild(overview, "overviewPrimary"));
-        tryVerify(() => Harness.cache.activity.length > 0 && Harness.cache.activity[0].error);
-        tryVerify(() => findChild(overview, "activity-" + Harness.cache.activity[0].path) !== null);
+        let failedJob;
+        tryVerify(() => {
+            failedJob = Harness.cache.activity.find(row => !previousPaths.has(row.path) && row.error);
+            return failedJob !== undefined;
+        });
+        compare(failedJob.label, "No online sources are enabled.");
+        const activityName = "activity-" + failedJob.path;
+        tryVerify(() => findChild(overview, activityName) !== null);
         verify(waitForPolish(test.Window.window));
-        const activity = findChild(overview, "activity-" + Harness.cache.activity[0].path);
+        const activity = findChild(overview, activityName);
         const action = findChild(activity, "activityAction");
         const viewport = overview.viewport;
         const center = () => action.mapToItem(viewport, action.width / 2, action.height / 2);
-        // The failing job is first in Recent activity, not necessarily at the end of the page.
+        // Scroll to this job, wherever it appears in Recent activity.
         viewport.contentY = Math.max(0, Math.min(viewport.contentHeight - viewport.height,
             viewport.contentY + center().y - viewport.height / 2));
         tryVerify(() => center().y >= 0 && center().y < viewport.height);
