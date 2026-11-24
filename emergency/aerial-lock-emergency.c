@@ -193,7 +193,8 @@ int main(int argc,char **argv) {
     signal(SIGUSR1,SIG_IGN); signal(SIGPIPE,SIG_IGN);
     sigset_t empty; sigemptyset(&empty); sigprocmask(SIG_SETMASK,&empty,NULL);
     struct locker app={.control=-1,.watchdog=60000,.result=2};
-    if (argc!=3) { lock_log("invalid-arguments"); return 2; }
+    if (argc!=3 && !(argc==4 && !strcmp(argv[3],"--ignore-leading-spaces"))) { lock_log("invalid-arguments"); return 2; }
+    app.ignore_leading_spaces=argc==4;
     app.service=argv[1];
     errno=0; char *end; long watchdog=strtol(argv[2],&end,10);
     if (errno || !*argv[2] || *end || watchdog<0 || watchdog>INT_MAX) { lock_log("invalid-watchdog"); return 2; }

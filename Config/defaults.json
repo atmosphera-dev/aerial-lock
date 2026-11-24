@@ -29,6 +29,7 @@
     "minFreeBytes": 0
   },
   "pamService": "aerial-lock",
+  "ignoreLeadingSpaces": false,
   "fallbackQuitMs": 3000,
   "pamWatchdogTimeoutMs": 60000,
   "powerActions": {

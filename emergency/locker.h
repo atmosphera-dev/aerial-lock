@@ -64,6 +64,7 @@ struct locker {
     struct auth_client *auth;
     const char *service, *user;
     int watchdog, control, result;
+    bool ignore_leading_spaces;
     size_t report_offset, command_size;
     char command[8];
     int64_t auth_deadline, error_until, release_deadline, pulse_at;
@@ -85,7 +86,7 @@ void input_seat_create(struct locker *, uint32_t name, uint32_t version);
 void input_seat_destroy(struct seat *);
 void input_repeat(struct locker *, int64_t now);
 void input_key(struct seat *, uint32_t key, bool repeat);
-bool secret_append(struct secret *, const char *, size_t);
+bool secret_append(struct secret *, const char *, size_t, bool ignore_leading_spaces);
 void secret_clear(struct secret *);
 void secret_backspace(struct secret *);
 bool secret_utf8(const char *, size_t, size_t *scalars);

@@ -110,6 +110,10 @@ Item {
         }
     }
 
+    function normalizeLeadingSpaces() {
+        rig.context.auth.input.normalizeDraft = draft => draft.replace(/^ +/, "")
+    }
+
     function newRig(policy, scope) {
         if (rig) {
             rig.destroy()

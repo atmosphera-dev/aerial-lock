@@ -97,6 +97,17 @@ PageScaffold {
     }
     SettingsSection {
         Layout.fillWidth: true
+        title: "Password"
+        PreferenceRow {
+            objectName: "ignoreLeadingSpaces"
+            label: "Ignore leading spaces"
+            description: "Spaces typed before the password are dropped. Turn off if your password starts with a space."
+            descriptor: root.controls.ignoreLeadingSpaces
+            onToggled: value => root.controller.edit("ignoreLeadingSpaces", value)
+        }
+    }
+    SettingsSection {
+        Layout.fillWidth: true
         title: "Locking"
         description: "Changes apply when aerial-idle restarts. " + (root.controller.systemd.idle.observation || "")
         IAStatusBanner {

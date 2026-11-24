@@ -193,6 +193,17 @@ TestCase {
         keyClick(Qt.Key_Escape); tryCompare(dialog, "visible", false);
         saved("idle.timeoutSeconds", 360);
     }
+    function test_ignoreLeadingSpacesSwitch() {
+        currentPage = "lock"; scroll(lock, 0.5);
+        const row = findChild(lock, "ignoreLeadingSpaces");
+        const toggle = findChild(row, "preferenceSwitch");
+        compare(row.label, "Ignore leading spaces");
+        compare(toggle.checked, false);
+        mouseClick(toggle); saved("ignoreLeadingSpaces", true);
+        tryCompare(toggle, "checked", true);
+        mouseClick(toggle); saved("ignoreLeadingSpaces", false);
+        tryCompare(toggle, "checked", false);
+    }
     function frame(name, popup, anchor) {
         if (popup) inside(popup, anchor);
         test.Window.window.update(); verify(waitForRendering(shell));

@@ -1518,6 +1518,22 @@ private slots:
         QVERIFY(presentation.value("SettingsDiagnostics").isArray()); QVERIFY(presentation.value("DefaultSources").isArray());
         QCOMPARE(presentation.value("DefaultSources").toArray().size(), 1); QVERIFY(presentation.contains("LastCheck"));
         QCOMPARE(cli(environment, {"config", "set", "cache.maxBytes", "-1"}).code, 1);
+        const auto getConfig = [&](bool effective) {
+            QStringList args{"config", "show", "--json"};
+            if (effective) args.append("--effective");
+            return QJsonDocument::fromJson(cli(environment, args).out).object();
+        };
+        const QString spaces = QStringLiteral("ignoreLeadingSpaces");
+        QCOMPARE(getConfig(true).value(spaces), QJsonValue(false));
+        QVERIFY(!getConfig(false).contains(spaces));
+        QCOMPARE(cli(environment, {"config", "set", spaces, "true"}).code, 0);
+        QCOMPARE(getConfig(false).value(spaces), QJsonValue(true));
+        QCOMPARE(getConfig(true).value(spaces), QJsonValue(true));
+        QCOMPARE(cli(environment, {"config", "set", spaces, "\"false\""}).code, 1);
+        QCOMPARE(getConfig(true).value(spaces), QJsonValue(true));
+        QCOMPARE(cli(environment, {"config", "reset", spaces}).code, 0);
+        QCOMPARE(getConfig(true).value(spaces), QJsonValue(false));
+        QVERIFY(!getConfig(false).contains(spaces));
         QCOMPARE(cli(environment, {"config", "set", "language", "\"fr\""}).code, 0);
         QCOMPARE(cli(environment, {"config", "reset", "language"}).code, 0);
         result = cli(environment, {"config", "show", "--json"}); QVERIFY(!QJsonDocument::fromJson(result.out).object().contains("language"));

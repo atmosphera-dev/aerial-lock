@@ -27,6 +27,40 @@ ShellRoot {
         }
         check(input.applyEdit(writer, input.revision, text, text.length, text.length), "fixture coherent synthetic draft")
     }
+    function checkLeadingSpaces() {
+        const input = lock.context.auth.input
+        const initialStarts = endpoint.starts
+        const initialResponses = endpoint.responses
+        fixtureConfig.data = Object.assign({}, fixtureConfig.data, { ignoreLeadingSpaces: true })
+        draft("   ")
+        lock.context.auth.submit()
+        check(input.text === "" && endpoint.starts === initialStarts, "spaces-only draft is an empty submission")
+
+        endpoint.startMode = "visible-first"
+        endpoint.respondMode = "complete"
+        draft("  synthetic password ")
+        check(input.text === "synthetic password ", "only the leading password spaces are discarded")
+        lock.context.auth.submit()
+        check(endpoint.responses === initialResponses && lock.context.auth.responseVisible, "echo-on first prompt gets no queued password")
+        endpoint.respondMode = "prompt"
+        draft("  synthetic name")
+        check(input.text === "  synthetic name", "visible prompt draft retains leading spaces")
+        // Reply to the username; its following hidden prompt gets the password.
+        endpoint.nextPromptIsPassword = true
+        lock.context.auth.submit()
+        check(endpoint.visibleAnswer === "  synthetic name", "visible prompt answer reaches PAM verbatim")
+        check(endpoint.responses === initialResponses + 2 && endpoint.lastResponse === "synthetic password ", "first hidden prompt gets the normalized password")
+        endpoint.respondMode = "complete"
+        draft("  synthetic OTP")
+        lock.context.auth.submit()
+        check(endpoint.lastResponse === "  synthetic OTP", "later hidden prompt answer reaches PAM verbatim")
+
+        fixtureConfig.data = Object.assign({}, fixtureConfig.data, { ignoreLeadingSpaces: false })
+        endpoint.startMode = "inline"
+        draft("  synthetic password")
+        lock.context.auth.submit()
+        check(endpoint.lastResponse === "  synthetic password", "off preserves the leading password spaces")
+    }
     Services.ConfigStore { id: fixtureConfig }
     QtObject {
         id: endpoint
@@ -42,10 +76,13 @@ ShellRoot {
         property int starts: 0
         property int responses: 0
         property string lastResponse: ""
+        property bool nextPromptIsPassword: false
+        property string visibleAnswer: ""
         signal pamMessage()
         signal completed(int result)
         signal error(int error)
         function prompt() {
+            responseVisible = false
             message = "Password:"
             responseRequired = true
             pamMessage()
@@ -60,6 +97,12 @@ ShellRoot {
             if (startMode === "reject") return false
             active = true
             if (startMode === "inline") prompt()
+            else if (startMode === "visible-first") {
+                message = "Username:"
+                responseRequired = true
+                responseVisible = true
+                pamMessage()
+            }
             else if (startMode === "error") error(1)
             else if (startMode === "complete") { active = false; completed(AuthContext.Success) }
             else if (startMode === "silent") {} // in flight, no PAM traffic at all
@@ -70,7 +113,11 @@ ShellRoot {
         function respond(answer) {
             responses++
             lastResponse = answer
-            if (respondMode === "prompt") challenge()
+            if (nextPromptIsPassword) {
+                nextPromptIsPassword = false
+                visibleAnswer = answer
+                prompt()
+            } else if (respondMode === "prompt") challenge()
             else if (respondMode === "async-prompt") Qt.callLater(endpoint.challenge)
             else if (respondMode === "error") { active = false; responseRequired = false; error(1) }
             else {
@@ -259,6 +306,7 @@ ShellRoot {
                       && lock.statusMessage === lock.context.labels.timedOut,
                       "in-flight PAM call without traffic times out")
                 check(!endpoint.active && lock.attemptCancelled, "timed-out PAM call aborted")
+                checkLeadingSpaces()
                 console.log("LOCK_LIFECYCLE_OUTCOME assertions=" + assertions + " failed=" + failed)
                 Qt.exit(failed ? 1 : 0)
             }

@@ -397,6 +397,11 @@ The companion alone writes application settings, through revisioned CLI/D-Bus
 transactions; the locker and idle daemon only read them.
 See [`docs/config.reference.md`](docs/config.reference.md) for available options.
 
+If you use Space to wake the display, enable **Ignore leading spaces** under
+**Lock screen > Password** in Aerial, or run `aerialctl config set ignoreLeadingSpaces true`.
+From the next lock, spaces at the start of the password are dropped, including
+when pasting. Leave this off (the default) if your password starts with a space.
+
 Override individual translated strings in
 `$XDG_CONFIG_HOME/aerial-lock/i18n/<lang>.json` (default `~/.config/...`), where
 `<lang>` is the configured `language`. Missing keys fall back to the bundled

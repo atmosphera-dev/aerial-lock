@@ -29,10 +29,12 @@ Scope {
     }
 
     // d43: the response accepted from the shared draft, queued for PAM's
-    // first prompt. null = no queued response. Empty initial submissions
+    // first password prompt (first prompt with leading-space filtering off).
+    // null = no queued response. Empty initial submissions
     // don't start PAM; empty answers to active prompts go straight to PAM. Cleared
     // before pam.respond, and on failure, abort and teardown.
     property var acceptedResponse: null
+    readonly property bool ignoreLeadingSpaces: root.config.data.ignoreLeadingSpaces === true
     // True exactly while a PAM call is in flight (start/respond until its
     // next prompt, completion or error). The PAM watchdog follows it: it never
     // runs while PAM waits for the user.
@@ -183,6 +185,7 @@ Scope {
         id: lockContext
 
         Component.onCompleted: {
+            auth.input.normalizeDraft = draft => root.normalizePasswordDraft(draft)
             submitRequested.connect(root.tryUnlock)
             dismissRequested.connect(root.dismissRequested)
             powerRequested.connect(root.requestPower)
@@ -766,7 +769,7 @@ Scope {
             logger.d("Lock", "PAM message: " + endpoint.message + " (error=" + endpoint.messageIsError + ")")
             if (endpoint.responseRequired) {
                 // PAM is asking for input.
-                if (root.acceptedResponse !== null) {
+                if (root.acceptedResponse !== null && !(root.ignoreLeadingSpaces && endpoint.responseVisible)) {
                     // Phase 1: the just-submitted response answers this
                     // prompt. Clear before respond so the property holds a
                     // value only across the async gap; the state is set
@@ -776,9 +779,8 @@ Scope {
                     root.enterAuthenticating()
                     endpoint.respond(response)
                 } else {
-                    // Phase 2: PAM wants something else — show its own message, or the
-                    // translated prompt when it sends none, and wait for the
-                    // user. Echo mode follows responseVisible via the context.
+                    // Let the user answer explicitly. If an echo-on prompt
+                    // preceded the password prompt, keep the password queued.
                     root.enterPrompting(endpoint.message)
                 }
             } else if (endpoint.message && endpoint.message.length > 0) {
@@ -883,6 +885,12 @@ Scope {
         }
     }
 
+    function normalizePasswordDraft(draft: string): string {
+        // Only the initial password draft is filtered, not answers to PAM's
+        // interactive prompts. Match literal Space, not other whitespace.
+        return root.ignoreLeadingSpaces && !root.pamEndpoint.active ? draft.replace(/^ +/, "") : draft
+    }
+
     function tryUnlock(writer, generation) {
         if (lockContext.power.interactionActive)
             return
@@ -893,9 +901,9 @@ Scope {
         }
 
         // Check after the editor's authority-checked flush, before consumption
-        // changes response-scoped input state or status. Do not trim passwords.
+        // changes response-scoped input state or status.
         const answeringPrompt = root.pamEndpoint.responseRequired
-        if (!answeringPrompt && lockContext.auth.input.text.length === 0)
+        if (!answeringPrompt && root.normalizePasswordDraft(lockContext.auth.input.text).length === 0)
             return
 
         // Snapshot and consume the shared draft exactly once; the consume
@@ -903,18 +911,17 @@ Scope {
         var submission = lockContext.auth.input.consumeSubmission(writer, generation)
         if (submission === null)
             return
-        var draft = submission.text
+        var draft = answeringPrompt ? submission.text : root.normalizePasswordDraft(submission.text)
 
         if (answeringPrompt) {
             logger.d("Lock", "tryUnlock: calling pam.respond")
-            root.acceptedResponse = null
             root.enterAuthenticating()
             root.pamEndpoint.respond(draft) // an empty answer to an active prompt is valid
         } else {
             logger.d("Lock", "tryUnlock: calling pam.start")
             root.attemptCancelled = false
             // Reserve the response before the (possibly synchronous) first
-            // PAM prompt so it never becomes feedback on this attempt.
+            // password prompt so it never becomes feedback on this attempt.
             root.acceptedResponse = ({ "text": draft })
             root.enterAuthenticating()
             if (!root.pamEndpoint.start()) {

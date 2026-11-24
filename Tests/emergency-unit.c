@@ -23,16 +23,23 @@ static void layout(struct seat *s,const char *name,const char *options) {
 }
 int main(void) {
     struct secret secret={0};
-    CHECK(secret_append(&secret,"a\xc3\xa9\xf0\x9f\x98\x80",7)); CHECK(secret.scalars==3);
+    CHECK(secret_append(&secret,"a\xc3\xa9\xf0\x9f\x98\x80",7,false)); CHECK(secret.scalars==3);
     secret_backspace(&secret); CHECK(secret.length==3 && secret.scalars==2);
     for (size_t i=3;i<sizeof(secret.draft);++i) CHECK(!secret.draft[i]);
     secret_backspace(&secret); CHECK(secret.length==1 && secret.scalars==1);
     secret_backspace(&secret); CHECK(!secret.length && !secret.scalars);
     const char *bad[]={"\0","\xc0\x80","\xed\xa0\x80","\xf4\x90\x80\x80","\xe2\x82"};
     size_t sizes[]={1,2,3,4,2};
-    for (unsigned i=0;i<5;++i) CHECK(!secret_append(&secret,bad[i],sizes[i]));
-    for (size_t i=0;i<PAM_MAX_RESP_SIZE-1;++i) CHECK(secret_append(&secret,"x",1));
-    CHECK(!secret_append(&secret,"a",1)); CHECK(secret.length==PAM_MAX_RESP_SIZE-1);
+    for (unsigned i=0;i<5;++i) CHECK(!secret_append(&secret,bad[i],sizes[i],false));
+    for (size_t i=0;i<PAM_MAX_RESP_SIZE-1;++i) CHECK(secret_append(&secret,"x",1,false));
+    CHECK(!secret_append(&secret,"a",1,false)); CHECK(secret.length==PAM_MAX_RESP_SIZE-1);
+    secret_clear(&secret);
+    CHECK(secret_append(&secret,"   ",3,true)); CHECK(secret.length==0 && secret.scalars==0);
+    CHECK(secret_append(&secret,"  a b",5,true));
+    CHECK(secret_append(&secret," ",1,true));
+    CHECK(secret.length==4 && secret.scalars==4 && !memcmp(secret.draft,"a b ",4));
+    secret_clear(&secret);
+    CHECK(secret_append(&secret,"  a b",5,false)); CHECK(secret.length==5 && !memcmp(secret.draft,"  a b",5));
     secret_clear(&secret);
     for (size_t i=0;i<sizeof(secret);++i) CHECK(!((unsigned char *)&secret)[i]);
 

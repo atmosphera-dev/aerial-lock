@@ -301,7 +301,9 @@ private:
             const auto settings = emergencySettings(m_lockerCommand);
             for (const auto &warning : settings.warnings) log(QStringLiteral("phase=emergency settings: ") + warning);
             m_child->setProgram(QStringLiteral(AERIAL_LOCK_DEFAULT_EMERGENCY));
-            m_child->setArguments({settings.service, QString::number(settings.watchdog)});
+            QStringList args{settings.service, QString::number(settings.watchdog)};
+            if (settings.ignoreLeadingSpaces) args.append(QStringLiteral("--ignore-leading-spaces"));
+            m_child->setArguments(args);
         }
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         // This episode's generation (including empty) outlives all normal

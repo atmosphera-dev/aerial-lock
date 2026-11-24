@@ -99,7 +99,7 @@ QVariantMap SettingsController::controls() const
         "acquisition.automatic.connectionTypes.cellular", "acquisition.automatic.connectionTypes.bluetooth", "acquisition.automatic.connectionTypes.vpn",
         "acquisition.automatic.connectionTypes.other", "acquisition.automatic.connectionTypes.unknown", "acquisition.automatic.power.ac",
         "acquisition.automatic.power.battery", "acquisition.automatic.power.unknown", "cache.maxBytes", "cache.rotationDays",
-        "theme", "backgroundColor", "powerActions.enabled", "idle.timeoutSeconds", "idle.respectInhibitors", "idle.lockOnSuspend", "idle.logindLockUnlock"};
+        "theme", "backgroundColor", "powerActions.enabled", "ignoreLeadingSpaces", "idle.timeoutSeconds", "idle.respectInhibitors", "idle.lockOnSuspend", "idle.logindLockUnlock"};
     for (const auto &key : keys) {
         const auto settingPath = key == "automatic" ? QString("acquisition.automatic.enabled") : key;
         QVariant value = leaf(snapshot.effective, settingPath).toVariant();

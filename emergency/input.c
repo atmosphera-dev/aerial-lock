@@ -32,7 +32,11 @@ bool secret_utf8(const char *text, size_t size, size_t *count) {
     return true;
 }
 void secret_clear(struct secret *s) { auth_wipe(s, sizeof(*s)); }
-bool secret_append(struct secret *s, const char *text, size_t size) {
+bool secret_append(struct secret *s, const char *text, size_t size, bool ignore_leading_spaces) {
+    if (ignore_leading_spaces && !s->length) {
+        while (size && *text==' ') { ++text; --size; }
+        if (!size) return true;
+    }
     size_t n;
     if (size > sizeof(s->draft)-1-s->length || !secret_utf8(text,size,&n)) return false;
     memcpy(s->draft+s->length,text,size); s->length+=size; s->scalars+=n;
@@ -87,7 +91,7 @@ void input_key(struct seat *s, uint32_t key, bool repeat) {
         if (n>0) {
             /* Control characters are commands, not password text. */
             if ((unsigned char)text[0]>=0x20 && (unsigned char)text[0]!=0x7f) {
-                if ((size_t)n>=sizeof(app->secret->scratch) || !secret_append(app->secret,text,(size_t)n))
+                if ((size_t)n>=sizeof(app->secret->scratch) || !secret_append(app->secret,text,(size_t)n,app->ignore_leading_spaces))
                     locker_error(app,"input-overflow");
                 locker_changed(app); repeatable=true;
             }

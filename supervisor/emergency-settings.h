@@ -8,11 +8,12 @@
 #include <cmath>
 #include <limits>
 
-// Read-only projection of ConfigStore's two authentication leaves. A broken
+// Read-only projection of ConfigStore's authentication leaves. A broken
 // theme/media field is deliberately not an authentication dependency here.
 struct EmergencySettings {
     QString service;
     int watchdog = 60000;
+    bool ignoreLeadingSpaces = false;
     QStringList warnings;
 };
 
@@ -53,6 +54,9 @@ inline EmergencySettings emergencySettings(const QString &bundle, const QString 
     if (std::isfinite(value) && value >= 0 && value <= double(std::numeric_limits<int>::max()))
         result.watchdog = int(value); // QML int conversion: conformance-covered.
     else result.warnings.append(QStringLiteral("auth-watchdog-invalid"));
+    const auto ignoreLeadingSpaces = user.value(QStringLiteral("ignoreLeadingSpaces"));
+    result.ignoreLeadingSpaces = ignoreLeadingSpaces.isBool() ? ignoreLeadingSpaces.toBool()
+        : defaults.value(QStringLiteral("ignoreLeadingSpaces")).toBool();
     return result;
 }
 

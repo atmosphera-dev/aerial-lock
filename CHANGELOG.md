@@ -3,6 +3,13 @@
 Notable user-facing changes are recorded here, following
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Optional **Ignore leading spaces** setting for the lock-screen password, so
+  pressing Space to wake the display does not add password characters.
+
 ## [0.4.0] - 2026-11-24
 
 ### Added

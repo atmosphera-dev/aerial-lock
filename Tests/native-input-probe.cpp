@@ -93,7 +93,7 @@ static void clicks(const char *keys) {
 // Public-API IME injection: direct object delivery (the route Qt's own
 // QQuickTextInput tests use). Does NOT prove the platform IM bridge.
 static void ime(const QString &preedit, const QString &commit,
-                int replaceFrom = 0, int replaceLen = 0) {
+                int replaceFrom = 0, int replaceLen = 0, int selectionStart = -1) {
     QObject *focus = focusInput();
     if (!focus) {
         printf("FAIL: no focus object for IME event\n");
@@ -104,6 +104,8 @@ static void ime(const QString &preedit, const QString &commit,
     if (!preedit.isEmpty())
         attrs << QInputMethodEvent::Attribute(QInputMethodEvent::Cursor,
                                               preedit.size(), 1, QVariant());
+    if (selectionStart >= 0)
+        attrs << QInputMethodEvent::Attribute(QInputMethodEvent::Selection, selectionStart, 0, QVariant());
     QInputMethodEvent ev(preedit, attrs);
     ev.setCommitString(commit, replaceFrom, replaceLen);
     QCoreApplication::sendEvent(focus, &ev);
@@ -388,6 +390,51 @@ int main(int argc, char **argv) {
     ime(QString(), QStringLiteral(" x"));
     expectStr(state()["text"].toString(), " x", "p3: IME commit payload kept verbatim");
     expect(state()["windowOpen"].toBool() == false, "p3: IME commit closes the window");
+
+    // A controller-supplied normalizer applies before publication, unlike
+    // the legacy theme key tunings. The writer must also restore its mirror.
+    call("newRig", 0, 0);
+    call("normalizeLeadingSpaces");
+    const auto originalRevision = state()["rev"].toInt();
+    QTest::keyClick(viewPtr, Qt::Key_Space);
+    keyDirect(QEvent::KeyPress, Qt::Key_Space, QStringLiteral(" "), true);
+    expect(state()["rev"].toInt() == originalRevision && fText().isEmpty(), "p3: leading keypresses never edit the field");
+    QGuiApplication::clipboard()->setText(QStringLiteral("   "));
+    QTest::keyClick(viewPtr, Qt::Key_V, Qt::ControlModifier);
+    settle();
+    expect(state()["rev"].toInt() == originalRevision && fText().isEmpty(), "p3: spaces-only paste leaves an empty editor and draft");
+    QGuiApplication::clipboard()->setText(QStringLiteral("  a b "));
+    QTest::keyClick(viewPtr, Qt::Key_V, Qt::ControlModifier);
+    settle();
+    expectStr(state()["text"].toString(), "a b ", "p3: paste drops only leading spaces");
+    expectStr(fText(), "a b ", "p3: native field mirrors the normalized paste");
+    expect(state()["cursor"].toInt() == 4, "p3: paste adjusts the caret by the removed prefix");
+    QTest::keyClick(viewPtr, Qt::Key_Space);
+    QTest::keyClick(viewPtr, Qt::Key_Return);
+    settle();
+    expectStr(state()["accepted"].toArray().first().toString(), "a b  ", "p3: interior and trailing spaces reach submission");
+    ime(QString(), QStringLiteral("  x"));
+    expectStr(state()["text"].toString(), "x", "p3: committed IME text drops only leading spaces");
+    expectStr(fText(), "x", "p3: native field mirrors the normalized IME commit");
+
+    call("newRig", 0, 0);
+    call("normalizeLeadingSpaces");
+    ime(QStringLiteral("k"), QStringLiteral("  x"));
+    expectStr(state()["text"].toString(), "x", "p3: combined IME event publishes only the normalized commit");
+    expect(fComposing(), "p3: normalization does not cancel the new live IME preedit");
+    ime(QString(), QStringLiteral("k"));
+    expectStr(state()["text"].toString(), "xk", "p3: next natural commit preserves both edits");
+    expectStr(fText(), "xk", "p3: editor reconciles when composition ends");
+
+    call("newRig", 0, 0);
+    call("normalizeLeadingSpaces");
+    ime(QStringLiteral("k"), QStringLiteral("  abc"));
+    ime(QString(), QString(), 0, 0, 3);
+    expectStr(state()["text"].toString(), "abc", "p3: cancelling only drops uncommitted preedit");
+    expectStr(fText(), "abc", "p3: editor also reconciles after cancellation without textEdited");
+    expect(state()["cursor"].toInt() == 1, "p3: cancellation keeps the latest native caret, adjusted for the removed spaces");
+    clicks("z");
+    expectStr(fText(), "azbc", "p3: typing after cancellation uses the new caret");
 
     // Modified Space is left to native handling (no insertion, window open).
     call("newRig", 2, 0);

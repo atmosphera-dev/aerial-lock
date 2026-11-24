@@ -156,6 +156,7 @@ Item {
     property bool _publishing: false
     property bool _releasedForHandoff: false
     property bool _selectionFlushPending: false
+    property bool _normalizedEditPending: false
     property bool _gestureActive: false
     property int _appliedRevision: -1
 
@@ -164,19 +165,29 @@ Item {
     function flush() {
         if (!_active || _syncing)
             return
-        var model = root.input
         var cursor = field.cursorPosition
         var anchor = cursor
         var ss = field.selectionStart
         var se = field.selectionEnd
         if (ss !== se)
             anchor = (cursor === ss) ? se : ss
+        publishEdit(cursor, anchor)
+    }
+
+    function publishEdit(cursor, anchor) {
+        var model = root.input
         root._publishing = true
         var accepted = model.applyEdit(_token, _appliedRevision, field.text, cursor, anchor)
         root._publishing = false
-        if (accepted)
-            _appliedRevision = model.revision
-        else
+        if (!accepted) {
+            pull()
+            return
+        }
+        _appliedRevision = model.revision
+        _normalizedEditPending = field.text !== model.text
+        // One IME event may commit text AND start the next preedit. A
+        // programmatic text assignment here would cancel that new preedit.
+        if (_normalizedEditPending && !field.inputMethodComposing)
             pull()
     }
 
@@ -192,6 +203,7 @@ Item {
         // select(anchor, cursor) preserves direction (checkpoint-1 finding 4).
         field.select(model.anchorPosition, model.cursorPosition)
         _appliedRevision = model.revision
+        _normalizedEditPending = false
         _syncing = false
     }
 
@@ -285,6 +297,10 @@ Item {
             // An authoritative change landed between turns; re-pull instead.
             if (model.revision !== _appliedRevision)
                 pull()
+            else if (_normalizedEditPending && !field.inputMethodComposing)
+                // Republish the settled native selection through the same
+                // coordinate mapping used for the original normalized edit.
+                flush()
             return
         }
         var cursor = field.cursorPosition
@@ -453,14 +469,7 @@ Item {
                 model.responseLimitRejected()
                 return
             }
-            root._publishing = true
-            var accepted = model.applyEdit(root._token, root._appliedRevision,
-                                           field.text, field.cursorPosition, field.cursorPosition)
-            root._publishing = false
-            if (accepted)
-                root._appliedRevision = model.revision
-            else
-                root.pull()
+            root.publishEdit(field.cursorPosition, field.cursorPosition)
         }
 
         // Selection-only moves: native bounds are stale inside per-edit
@@ -474,8 +483,12 @@ Item {
         }
         onInputMethodComposingChanged: {
             root.reportActivity()
-            if (!field.inputMethodComposing)
+            if (!field.inputMethodComposing) {
+                // This signal can precede textEdited for the final commit.
+                if (root._normalizedEditPending)
+                    root.scheduleSelectionFlush()
                 root.attemptRelease()
+            }
         }
 
         TapHandler {
@@ -503,9 +516,9 @@ Item {
                     root.submit()
                     event.accepted = true
                 }
-            } else if (event.key === Qt.Key_Space && event.modifiers === Qt.NoModifier) {
+            } else if (event.key === Qt.Key_Space && event.modifiers === Qt.NoModifier && !field.inputMethodComposing) {
                 // Unmodified Space presses run through the context-owned
-                // initial-space tuning; text is never trimmed or rewritten.
+                // initial-space policy before modifying the native editor.
                 if (root._active
                         && root.input.filterInitialSpace(root._token, event.isAutoRepeat))
                     event.accepted = true

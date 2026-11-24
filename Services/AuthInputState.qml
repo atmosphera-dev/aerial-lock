@@ -50,6 +50,8 @@ QtObject {
     readonly property int selectionStart: Math.min(cursorPosition, anchorPosition)
     readonly property int selectionEnd: Math.max(cursorPosition, anchorPosition)
     property int revision: 0
+    // The controller may normalize committed edits for a particular prompt.
+    property var normalizeDraft: draft => draft
 
     // ---- Writer registration / authority (data-only tokens; no Items) ----
     property int activeWriter: -1
@@ -197,11 +199,13 @@ QtObject {
     function applyEdit(token, baseRevision, newText, cursor, anchor) {
         if (token !== activeWriter || baseRevision !== revision)
             return false
+        var normalized = root.normalizeDraft(newText)
+        var removed = newText.length - normalized.length
         // Accepted TEXT INSERTION closes the initial-input window (and
         // never reopens it). A content-preserving publish — the flush a
         // core performs at submission or handoff — is not an insertion.
-        var contentChanged = newText !== text
-        _publish(newText, cursor, anchor)
+        var contentChanged = normalized !== text
+        _publish(normalized, cursor - removed, anchor - removed)
         if (contentChanged)
             initialWindowOpen = false
         return true
@@ -235,10 +239,12 @@ QtObject {
 
     // Called by the active core for an unmodified Space key PRESS.
     // Returns true when the event must be consumed (never reaches the
-    // TextInput). Text is never trimmed or rewritten here.
+    // TextInput).
     function filterInitialSpace(token, isAutoRepeat) {
         if (token !== activeWriter)
             return false
+        if (text.length === 0 && root.normalizeDraft(" ") === "")
+            return true
         if (effectivePolicy === policyPreserve)
             return false
         if (effectivePolicy === policyIgnoreFirst) {

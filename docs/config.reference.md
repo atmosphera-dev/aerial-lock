@@ -48,6 +48,7 @@ final compare/rename; atomic replacement is not filesystem compare-and-swap.
 | `pamService`       | string  | `"aerial-lock"`  | PAM config under `/etc/pam.d/`                 |
 | `fallbackQuitMs`   | number  | `3000`           | Retry the explicit quit after unlock if the first deferred quit does not complete. |
 | `pamWatchdogTimeoutMs` | number | `60000`       | Abort a PAM call that shows no activity for this interval; keep the lock engaged and allow a fresh attempt. Time spent waiting for the user at a prompt never counts. |
+| `ignoreLeadingSpaces` | boolean | `false` | Drop literal spaces at the start of the initial password draft, including pasted text. Spaces after the first other character and answers to interactive PAM prompts are unchanged. Also applies to the emergency locker. |
 
 ### `sources` (array)
 
@@ -383,7 +384,7 @@ exit `2`, or `3` for emergency refusal/unavailability and guard/startup failure.
 Logs distinguish the phase and previous confirmation from an unknown screen
 state. Manual last resort remains `aerial-unlock` from a TTY.
 
-Emergency authentication uses the same `pamService` and computation-only
+Emergency authentication uses the same `pamService`, `ignoreLeadingSpaces` and computation-only
 `pamWatchdogTimeoutMs`. A nonempty `AERIAL_LOCK_PAM_SERVICE` wins; otherwise a
 valid user field wins over the selected bundle, per field. Empty service uses
 `aerial-lock` only where the normal configuration does. A missing/broken bundle

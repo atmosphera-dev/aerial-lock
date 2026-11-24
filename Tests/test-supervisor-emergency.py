@@ -54,6 +54,10 @@ with tempfile.TemporaryDirectory(prefix="emergency-supervisor-") as directory:
             bundle = case / "bundle"
             (bundle / "Config").mkdir(parents=True)
             (bundle / "Config/defaults.json").write_text(json.dumps(dict(pamService="custom literal service", pamWatchdogTimeoutMs=987)))
+            user_config = case / "empty-config/aerial-lock"
+            user_config.mkdir(parents=True)
+            ignore_spaces = name == "start72"
+            (user_config / "config.json").write_text(json.dumps({"ignoreLeadingSpaces": ignore_spaces}))
             counter = case / "emergency-count"
             arguments = case / "arguments.json"
             env = {key: value for key, value in os.environ.items() if key not in (
@@ -72,7 +76,10 @@ with tempfile.TemporaryDirectory(prefix="emergency-supervisor-") as directory:
             assert output.count("EMERGENCY_STUB_STDERR") == emergency_count, output
             if emergency_count:
                 assert int(counter.read_text()) == emergency_count
-                assert json.loads(arguments.read_text())["argv"] == ["custom literal service", "987"]
+                expected_args = ["custom literal service", "987"]
+                if ignore_spaces:
+                    expected_args.append("--ignore-leading-spaces")
+                assert json.loads(arguments.read_text())["argv"] == expected_args
                 transition = output.index("switching to phase=emergency")
                 assert "launching locker, attempt" not in output[transition:], output
             listener.close()

@@ -26,7 +26,8 @@ int main(int argc,char **argv)
     const QList<QByteArray> users={"{}","{\"pamService\":\"custom\",\"pamWatchdogTimeoutMs\":890}",
         "{\"pamService\":null,\"pamWatchdogTimeoutMs\":\"wrong\"}","{\"pamService\":\"\"}",
         "{\"pamService\":12,\"pamWatchdogTimeoutMs\":false}","{\"pamWatchdogTimeoutMs\":0}",
-        "{\"pamWatchdogTimeoutMs\":10.8}","{\"pamWatchdogTimeoutMs\":2147483647}","broken", "null", "[]"};
+        "{\"pamWatchdogTimeoutMs\":10.8}","{\"pamWatchdogTimeoutMs\":2147483647}","broken", "null", "[]",
+        "{\"ignoreLeadingSpaces\":true}","{\"ignoreLeadingSpaces\":false}","{\"ignoreLeadingSpaces\":\"true\"}"};
     unsigned count=0;
     for (const auto &bytes:users) for (const QString &override: {QString(),QString("env-custom")}) {
         write(user,bytes);
@@ -37,6 +38,7 @@ int main(int argc,char **argv)
         QString service=override.isEmpty()?merged.value("pamService").toString():override;
         if (service.isEmpty()) service="aerial-lock";
         CHECK(settings.service==service);
+        CHECK(settings.ignoreLeadingSpaces==merged.value("ignoreLeadingSpaces").toBool());
         conversion->setProperty("source",merged.value("pamWatchdogTimeoutMs").toDouble());
         if (settings.watchdog!=conversion->property("value").toInt()) qFatal("watchdog conversion mismatch: %s native=%d qml=%d",bytes.constData(),settings.watchdog,conversion->property("value").toInt());
         CHECK(read(user)==bytes); ++count;
