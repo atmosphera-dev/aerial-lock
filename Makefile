@@ -140,7 +140,7 @@ $(OBJDIR)/aerial-unlock-proto.o: recovery/ext-session-lock-v1-protocol.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< \
 		$$(pkg-config --cflags wayland-client) -o $@
 
-$(OBJDIR)/aerial-unlock-main.o: recovery/aerial-unlock.cpp recovery/ext-session-lock-v1-client.h
+$(OBJDIR)/aerial-unlock-main.o: recovery/aerial-unlock.cpp recovery/ext-session-lock-v1-client.h native/recovery-channel.h
 	@mkdir -p $(@D)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -Irecovery \
 		$$(pkg-config --cflags wayland-client) -o $@

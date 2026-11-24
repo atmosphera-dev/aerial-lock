@@ -1,34 +1,32 @@
 /*
  * aerial-unlock - native takeover-release for a stuck session lock
  *
- * One binary, two roles: manual recovery from a TTY, and the supervisor's
- * L2 escalation (d26b execs it after failed respawns). Native
- * C++/wayland-client only — zero shared runtime with aerial-lock, so a
+ * Manual recovery from a TTY. Native C++/wayland-client only: a
  * Quickshell-side crash cannot take it down too.
  *
  * Exit codes:
  *   0  recovered (took over the lock and released it)
  *   1  no Wayland socket / environment (fatal, with guidance)
  *   2  inconclusive (neither locked nor finished within the timeout)
- *   3  refused (a LIVE client holds the lock; reports the PID + --purge hint)
+ *   3  refused (a live client holds the lock)
  *
- * --purge first kills stale aerial-lock processes by explicit PID (/proc
- * discovery, never pattern matching), then proceeds identically.
+ * After refusal, --purge asks the supervisor to stop its confirmed locker
+ * for this compositor, then retries takeover.
  */
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
-#include <csignal>
+#include <chrono>
 #include <string>
 #include <vector>
 #include <dirent.h>
-#include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <wayland-client.h>
 #include "ext-session-lock-v1-client.h"
+#include "../native/recovery-channel.h"
 
 static struct ext_session_lock_manager_v1 *lock_manager = nullptr;
 static struct ext_session_lock_v1 *lock_obj = nullptr;
@@ -77,6 +75,11 @@ static const struct wl_registry_listener registry_listener = {
 static std::string find_socket()
 {
     const char *xdg = getenv("XDG_RUNTIME_DIR");
+    const char *explicit_display = getenv("WAYLAND_DISPLAY");
+    if (explicit_display && *explicit_display) {
+        if (explicit_display[0] == '/') return explicit_display;
+        if (xdg && *xdg) return std::string(xdg) + "/" + explicit_display;
+    }
     if (!xdg || !*xdg) {
         fprintf(stderr,
                 "aerial-unlock: XDG_RUNTIME_DIR is not set.\n"
@@ -111,69 +114,26 @@ static std::string find_socket()
         return "";
     }
 
-    const char *explicit_display = getenv("WAYLAND_DISPLAY");
-    if (explicit_display && *explicit_display) {
-        std::string path = std::string(xdg) + "/" + explicit_display;
-        struct stat st;
-        if (stat(path.c_str(), &st) == 0)
-            return path;
-    }
     return sockets.front();
 }
 
-/* ---- /proc discovery ---- */
-
-static std::vector<int> find_aerial_lockers()
+static pid_t confirmedHolder(const std::string &socket, bool purge)
 {
-    std::vector<int> pids;
-    const int self = getpid();
-    DIR *proc = opendir("/proc");
-    if (!proc) return pids;
-    struct dirent *ent;
-    while ((ent = readdir(proc)) != nullptr) {
-        if (ent->d_name[0] < '0' || ent->d_name[0] > '9') continue;
-        int pid = atoi(ent->d_name);
-        if (pid <= 0 || pid == self) continue;
-        char path[256];
-        snprintf(path, sizeof path, "/proc/%d/cmdline", pid);
-        int fd = open(path, O_RDONLY);
-        if (fd < 0) continue;
-        char buf[4096];
-        ssize_t n = read(fd, buf, sizeof buf - 1);
-        close(fd);
-        if (n <= 0) continue;
-        buf[n] = '\0';
-        // NUL-separated args -> spaces for a single readable string
-        for (ssize_t i = 0; i < n - 1; ++i)
-            if (buf[i] == '\0') buf[i] = ' ';
-        // skip if this is the tool itself (its own name in cmdline)
-        if (strstr(buf, "aerial-unlock") != nullptr) continue;
-        if (strstr(buf, "aerial-lock") != nullptr)
-            pids.push_back(pid);
+    sockaddr_un addr {};
+    const socklen_t len = RecoveryChannel::address(socket.c_str(), addr);
+    if (!len) return 0;
+    const int fd = RecoveryChannel::openSocket();
+    if (fd < 0) return 0;
+    // SO_PASSCRED autobinds a private abstract reply address on connect.
+    pid_t holder = 0;
+    const char request = purge ? RecoveryChannel::purge : RecoveryChannel::query;
+    if (connect(fd, reinterpret_cast<sockaddr *>(&addr), len) == 0 && send(fd, &request, 1, 0) == 1) {
+        pollfd reply {fd, POLLIN, 0};
+        if (poll(&reply, 1, 1000) <= 0 || !RecoveryChannel::receive(fd, &holder, sizeof(holder)))
+            holder = 0;
     }
-    closedir(proc);
-    return pids;
-}
-
-static bool purge_aerial_lockers()
-{
-    std::vector<int> pids = find_aerial_lockers();
-    if (pids.empty()) return false;
-    fprintf(stderr, "aerial-unlock: --purge found %d stale aerial-lock process(es):\n",
-            static_cast<int>(pids.size()));
-    for (int pid : pids) {
-        fprintf(stderr, "  pid %d: SIGTERM\n", pid);
-        kill(pid, SIGTERM);
-    }
-    usleep(500000);
-    for (int pid : pids) {
-        if (kill(pid, 0) == 0) {
-            fprintf(stderr, "  pid %d: SIGKILL\n", pid);
-            kill(pid, SIGKILL);
-        }
-    }
-    usleep(300000);
-    return true;
+    close(fd);
+    return holder;
 }
 
 /* ---- main ---- */
@@ -183,8 +143,93 @@ static void usage(const char *argv0)
     fprintf(stderr,
             "usage: %s [--purge]\n"
             "  Take over a stuck session lock and release it.\n"
-            "  --purge   kill stale aerial-lock processes first (explicit PIDs)\n",
+            "  --purge   stop only this session's confirmed locker if takeover is refused\n",
             argv0);
+}
+
+using Clock = std::chrono::steady_clock;
+
+// Bound every sync/dispatch, including against an unresponsive compositor.
+static bool dispatchUntil(wl_display *display, const int &ready, const int &refused,
+                          Clock::time_point deadline)
+{
+    while (!ready && !refused) {
+        if (wl_display_dispatch_pending(display) < 0) return false;
+        if (ready || refused) return true;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        if (remaining.count() <= 0) return false;
+        if (wl_display_prepare_read(display) != 0) continue;
+        const int flushed = wl_display_flush(display);
+        if (flushed < 0 && errno != EAGAIN) {
+            wl_display_cancel_read(display);
+            return false;
+        }
+        pollfd p {wl_display_get_fd(display), short(POLLIN | (flushed < 0 ? POLLOUT : 0)), 0};
+        const int result = poll(&p, 1, int(remaining.count()));
+        if (result > 0 && p.revents & POLLIN) {
+            if (wl_display_read_events(display) < 0) return false;
+        } else {
+            wl_display_cancel_read(display);
+            if (result <= 0 || p.revents & (POLLERR | POLLHUP | POLLNVAL)) return false;
+        }
+    }
+    return true;
+}
+
+static void syncDone(void *data, wl_callback *cb, uint32_t)
+{
+    *static_cast<int *>(data) = 1;
+    wl_callback_destroy(cb);
+}
+
+static bool sync(wl_display *display, Clock::time_point deadline)
+{
+    int done = 0;
+    static const wl_callback_listener listener {.done = syncDone};
+    wl_callback *callback = wl_display_sync(display);
+    wl_callback_add_listener(callback, &listener, &done);
+    const bool synced = dispatchUntil(display, done, 0, deadline);
+    if (!done) wl_callback_destroy(callback);
+    return synced;
+}
+
+static int takeover(const std::string &socket, Clock::time_point deadline)
+{
+    lock_manager = nullptr;
+    got_locked = got_finished = 0;
+    struct wl_display *display = wl_display_connect(socket.c_str());
+    if (!display) {
+        fprintf(stderr, "aerial-unlock: failed to connect to %s\n", socket.c_str());
+        return 1;
+    }
+    struct wl_registry *registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &registry_listener, nullptr);
+    int rc = 2;
+    if (!sync(display, deadline)) {
+        // Inconclusive; we could not query the compositor's registry.
+    } else if (!lock_manager) {
+        fprintf(stderr,
+                "aerial-unlock: ext_session_lock_manager_v1 not available on this "
+                "compositor\n  (cannot take over a lock that isn't exposed)\n");
+        rc = 1;
+    } else {
+        lock_obj = ext_session_lock_manager_v1_lock(lock_manager);
+        ext_session_lock_v1_add_listener(lock_obj, &lock_listener, nullptr);
+        if (dispatchUntil(display, got_locked, got_finished, deadline)) {
+            if (got_locked) {
+                ext_session_lock_v1_unlock_and_destroy(lock_obj);
+                if (sync(display, deadline)) rc = 0;
+            } else {
+                ext_session_lock_v1_destroy(lock_obj);
+                rc = 3;
+            }
+        }
+        ext_session_lock_manager_v1_destroy(lock_manager);
+    }
+
+    wl_registry_destroy(registry);
+    wl_display_disconnect(display);
+    return rc;
 }
 
 int main(int argc, char **argv)
@@ -199,79 +244,37 @@ int main(int argc, char **argv)
         }
     }
 
-    if (purge) purge_aerial_lockers();
-
-    std::string socket = find_socket();
+    const std::string socket = find_socket();
     if (socket.empty()) return 1;
-
-    // connect to the chosen socket explicitly (wl_display_connect honours
-    // WAYLAND_DISPLAY for the name; set it to the absolute path)
-    setenv("WAYLAND_DISPLAY", socket.c_str(), 1);
-    struct wl_display *display = wl_display_connect(nullptr);
-    if (!display) {
-        fprintf(stderr, "aerial-unlock: failed to connect to %s\n", socket.c_str());
-        return 1;
-    }
-    fprintf(stderr, "aerial-unlock: connected to %s\n", socket.c_str());
-
-    struct wl_registry *registry = wl_display_get_registry(display);
-    wl_registry_add_listener(registry, &registry_listener, nullptr);
-    wl_display_roundtrip(display);
-
-    if (!lock_manager) {
-        fprintf(stderr,
-                "aerial-unlock: ext_session_lock_manager_v1 not available on this "
-                "compositor\n  (cannot take over a lock that isn't exposed)\n");
-        wl_registry_destroy(registry);
-        wl_display_disconnect(display);
-        return 1;
-    }
-
-    lock_obj = ext_session_lock_manager_v1_lock(lock_manager);
-    ext_session_lock_v1_add_listener(lock_obj, &lock_listener, nullptr);
-
-    // event loop with a hard timeout — roundtrip is fast; if nothing
-    // arrives, the answer is inconclusive, not "hang forever"
-    struct timeval start, now;
-    gettimeofday(&start, nullptr);
-    while (!got_locked && !got_finished) {
-        if (wl_display_dispatch(display) < 0) break;
-        gettimeofday(&now, nullptr);
-        long elapsed = (now.tv_sec - start.tv_sec) * 1000 +
-                       (now.tv_usec - start.tv_usec) / 1000;
-        if (elapsed > TIMEOUT_MS) break;
-    }
-
-    int rc;
-    if (got_locked) {
-        ext_session_lock_v1_unlock_and_destroy(lock_obj);
-        wl_display_roundtrip(display);
-        fprintf(stderr, "aerial-unlock: recovered — took over the lock and released it\n");
-        rc = 0;
-    } else if (got_finished) {
-        // refusal: a live client already holds the lock
-        fprintf(stderr,
-                "aerial-unlock: refused — a live client already holds the lock.\n");
-        std::vector<int> pids = find_aerial_lockers();
-        if (!pids.empty()) {
-            fprintf(stderr, "  likely holder(s):");
-            for (int pid : pids) fprintf(stderr, " pid %d", pid);
-            fprintf(stderr, "\n  retry with: aerial-unlock --purge\n");
-        } else {
-            fprintf(stderr,
-                    "  no aerial-lock process found; the holder is another client.\n"
-                    "  kill that client, then retry.\n");
+    // libwayland gives an inherited fd priority over the explicit path. The
+    // selected socket must be the same one we use for holder lookup.
+    unsetenv("WAYLAND_SOCKET");
+    fprintf(stderr, "aerial-unlock: trying %s\n", socket.c_str());
+    const auto budget = std::chrono::milliseconds(TIMEOUT_MS);
+    int rc = takeover(socket, Clock::now() + budget);
+    pid_t holder = 0;
+    if (rc == 3) {
+        holder = confirmedHolder(socket, purge);
+        if (purge && holder > 0) {
+            fprintf(stderr, "aerial-unlock: supervisor is stopping confirmed holder pid %d\n", holder);
+            const auto deadline = Clock::now() + budget;
+            do {
+                rc = takeover(socket, deadline);
+                if (rc != 3) break;
+                usleep(50000);
+            } while (Clock::now() < deadline);
         }
-        rc = 3;
-    } else {
-        fprintf(stderr,
-                "aerial-unlock: inconclusive — no locked/finished within %d ms.\n"
-                "  compositor did not answer; retry or check it directly.\n",
-                TIMEOUT_MS);
-        rc = 2;
     }
-
-    wl_registry_destroy(registry);
-    wl_display_disconnect(display);
+    if (rc == 0) {
+        fprintf(stderr, "aerial-unlock: recovered — took over the lock and released it\n");
+    } else if (rc == 3) {
+        fprintf(stderr, "aerial-unlock: compositor refused takeover.\n");
+        if (holder > 0 && !purge)
+            fprintf(stderr, "  confirmed holder: pid %d\n  retry with: aerial-unlock --purge\n", holder);
+        else if (holder <= 0)
+            fprintf(stderr, "  no confirmed Aerial holder for this session; no process was stopped.\n");
+    } else if (rc == 2) {
+        fprintf(stderr, "aerial-unlock: inconclusive — compositor did not confirm takeover and release.\n");
+    }
     return rc;
 }

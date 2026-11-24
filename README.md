@@ -564,19 +564,26 @@ ls -la $XDG_RUNTIME_DIR/wayland-*
 WAYLAND_DISPLAY=wayland-N aerial-unlock
 ```
 
-Then switch back to that session's TTY. If a *live* locker still holds the
-lock, the tool reports the PID and suggests:
+Then switch back to that session's TTY. If takeover is refused and this
+session's supervisor confirms its child holds the lock, the tool reports the
+child PID. Prefer the supervisor's graceful SIGUSR1 release above. If the
+locker cannot handle release, use:
 
 ```
-aerial-unlock --purge    # kill stale aerial-lock processes, then recover
+WAYLAND_DISPLAY=wayland-N aerial-unlock --purge
 ```
+
+This stops only the confirmed locker for that socket, suppresses supervisor
+respawns, and tries to take over and release the compositor lock. If the
+supervisor is unavailable or cannot confirm ownership (including older or
+third-party lockers), it will not guess which process to stop.
 
 | Exit | Meaning |
 |---|---|
 | 0 | recovered — lock taken over and released |
 | 1 | no Wayland socket / environment (guidance printed) |
 | 2 | inconclusive — compositor didn't answer within 5 s |
-| 3 | refused — a live client holds the lock (PID + `--purge` hint) |
+| 3 | takeover refused (PID + `--purge` hint only for confirmed Aerial holder) |
 
 **Compositor notes.** Dead-locker recovery is compositor policy:
 

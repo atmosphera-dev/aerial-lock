@@ -159,6 +159,13 @@ physical display, multi-output, IME or suspend coverage. The full VM drivers
 remain separate. To reproduce, use the exact image build and smoke container
 commands from `.github/workflows/qmllint.yml` inside a disposable test VM.
 
+`test-unlock-recovery.py` starts a private headless Sway compositor and checks
+the installed recovery tool with a live supervisor-confirmed locker, a live
+unreported locker and a dead locker. It checks SIGUSR1 release, forced takeover
+without respawn, and that a decoy with lock-like arguments is never suggested
+or stopped. Run with `dbus-run-session` and a disk-backed TMPDIR as an
+unprivileged user in the disposable VM.
+
 CI still excludes `media-fallback-render` (needs a video-rendering
 platform), `owned-instance` (requires an operator-prepared VM manifest), and
 the real-session drivers below: remediation, staged/nested launch, surface

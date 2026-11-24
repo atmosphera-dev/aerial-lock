@@ -6,10 +6,8 @@
  * exhaustion or a known startup failure transitions to the emergency client;
  * emergency failure never unlocks automatically. An explicit Release() call
  * on the user's session bus or SIGUSR1 requests a graceful locker release,
- * bypassing PAM and disabling further respawns. The shelved auto-release work (Takeover::run as a
- * supervisor call path, the escalation gate, probe-based state detection)
- * lives on the `shelved/auto-release` branch; the manual `aerial-unlock`
- * binary is unchanged as the ops/TTY tool.
+ * bypassing PAM and disabling further respawns. Manual aerial-unlock can
+ * query the confirmed child or ask us to stop it without respawning.
  *
  * Compositor death is checked first; an explicit pending release prevents any
  * restart or transition. Normal clean exit 0 retains its established meaning.
@@ -62,6 +60,7 @@
 #include <wayland-client.h>
 
 #include "../native/session-identity.h"
+#include "../native/recovery-channel.h"
 #include "../native/shell-dir.h"
 #include "../common/config-document.h"
 #include "../common/content-snapshot.h"
@@ -319,6 +318,10 @@ private:
         env.remove(QString::fromLatin1(ENGAGEMENT_SOCKET_ENV));
         if (m_listenFd >= 0)
             env.insert(QString::fromLatin1(ENGAGEMENT_SOCKET_ENV), m_channelPath);
+        // An inherited Wayland fd takes priority over WAYLAND_DISPLAY, and
+        // cannot be identified unambiguously by the recovery tool's path.
+        m_recoveryAddressLength = env.contains(QStringLiteral("WAYLAND_SOCKET")) ? 0
+            : RecoveryChannel::address(QFile::encodeName(m_sessionSocket).constData(), m_recoveryAddress);
         m_child->setProcessEnvironment(env);
         QProcess *const child = m_child;
         connect(m_child, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -642,6 +645,7 @@ private:
             if (m_reportBuffer == ENGAGEMENT_LOCKED_REPORT) {
                 m_episodeEngaged = true;
                 log(QStringLiteral("attempt %1: the locker confirmed the session lock").arg(m_attempt));
+                openRecovery();
                 setState(LockState::Locked, QStringLiteral("compositor-confirmed"));
                 deliverRelease();
                 if (m_reportFd < 0) return;
@@ -659,6 +663,13 @@ private:
 
     void closeReport()
     {
+        if (m_recoveryFd >= 0) {
+            m_recoveryNotifier->setEnabled(false);
+            m_recoveryNotifier->deleteLater();
+            m_recoveryNotifier = nullptr;
+            ::close(m_recoveryFd);
+            m_recoveryFd = -1;
+        }
         if (m_releaseNotifier) {
             m_releaseNotifier->setEnabled(false);
             m_releaseNotifier->deleteLater();
@@ -672,6 +683,45 @@ private:
         ::close(m_reportFd);
         m_reportFd = -1;
         m_reportBuffer.clear();
+    }
+
+    void openRecovery()
+    {
+        if (!m_recoveryAddressLength) return;
+        const int fd = RecoveryChannel::openSocket();
+        if (fd < 0) return;
+        if (::bind(fd, reinterpret_cast<sockaddr *>(&m_recoveryAddress), m_recoveryAddressLength) != 0) {
+            ::close(fd);
+            return;
+        }
+        m_recoveryFd = fd;
+        m_recoveryNotifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
+        connect(m_recoveryNotifier, &QSocketNotifier::activated, this, [this] { recoverChild(); });
+    }
+
+    void recoverChild()
+    {
+        char request;
+        sockaddr_un peer {};
+        socklen_t len = sizeof(peer);
+        if (!RecoveryChannel::receive(m_recoveryFd, &request, sizeof(request), &peer, &len)
+            || (request != RecoveryChannel::query && request != RecoveryChannel::purge)) return;
+        if (len <= offsetof(sockaddr_un, sun_path) + 1 || peer.sun_family != AF_UNIX || peer.sun_path[0]) return;
+        if (m_state != LockState::Locked || m_releaseRequested || !m_child || m_reportFd < 0) return;
+        // Check the report hasn't been withdrawn but not yet dispatched.
+        char next;
+        if (::recv(m_reportFd, &next, 1, MSG_PEEK | MSG_DONTWAIT) != -1 || errno != EAGAIN) return;
+        const pid_t holder = pid_t(m_child->processId());
+        if (holder <= 0 || ::sendto(m_recoveryFd, &holder, sizeof(holder), MSG_NOSIGNAL,
+                                   reinterpret_cast<sockaddr *>(&peer), len) != sizeof(holder)) return;
+        if (request == RecoveryChannel::purge) {
+            // Signal only our current direct child, never a PID supplied over
+            // IPC. Prevent retries before stopping it; the compositor still
+            // owns the lock until aerial-unlock explicitly takes it over.
+            m_releaseRequested = true;
+            log(QStringLiteral("purge requested for confirmed locker"));
+            m_child->kill();
+        }
     }
 
     // The compositor connection is the ordering guard's source of truth:
@@ -813,6 +863,10 @@ private:
     QSocketNotifier *m_listenNotifier = nullptr;
     bool m_reportAccepted = false;
     int m_reportFd = -1;
+    int m_recoveryFd = -1;
+    sockaddr_un m_recoveryAddress {};
+    socklen_t m_recoveryAddressLength = 0;
+    QSocketNotifier *m_recoveryNotifier = nullptr;
     QSocketNotifier *m_reportNotifier = nullptr;
     QByteArray m_reportBuffer;
     bool m_releaseRequested = false;

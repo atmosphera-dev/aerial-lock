@@ -10,3 +10,6 @@ export TMPDIR=/work/tmp MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2
 timeout 5m make install DEBUG_DISMISS=0 DEBUG_VERBOSE=0
 timeout 2m python3 Tests/ci-lock-smoke.py
 timeout 2m python3 Tests/ci-emergency-smoke.py
+runuser -u aerial-emergency-ci -- mkdir -p /work/emergency/tmp
+runuser -u aerial-emergency-ci -- env TMPDIR=/work/emergency/tmp \
+    timeout 40s dbus-run-session -- python3 Tests/test-unlock-recovery.py
