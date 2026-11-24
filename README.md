@@ -582,7 +582,7 @@ third-party lockers), it will not guess which process to stop.
 |---|---|
 | 0 | recovered — lock taken over and released |
 | 1 | no Wayland socket / environment (guidance printed) |
-| 2 | inconclusive — compositor didn't answer within 5 s |
+| 2 | inconclusive - compositor did not confirm takeover within 5 s or release within another 1 s |
 | 3 | takeover refused (PID + `--purge` hint only for confirmed Aerial holder) |
 
 **Compositor notes.** Dead-locker recovery is compositor policy:

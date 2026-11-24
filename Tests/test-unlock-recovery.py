@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -18,6 +20,29 @@ def wait_for(probe, description):
             return result
         time.sleep(0.02)
     raise AssertionError(description)
+
+
+def stalled_connect(binary, env, root):
+    path = str(root / "stalled")
+    with socket.socket(socket.AF_UNIX) as listener, socket.socket(socket.AF_UNIX) as queued:
+        listener.bind(path)
+        listener.listen(0)
+        queued.connect(path)  # fill the sole backlog slot; never accept
+        result = subprocess.run([binary], env=dict(env, WAYLAND_DISPLAY=path),
+                                capture_output=True, text=True, timeout=7)
+        assert result.returncode == 2 and "inconclusive" in result.stderr, result.stderr
+
+
+def reap(process, terminate=False):
+    if process is None:
+        return
+    if terminate:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def main():
@@ -46,6 +71,7 @@ def main():
                             "private Sway did not start")
             env["WAYLAND_DISPLAY"] = str(sock)
             binary = str(args.bindir.resolve() / "aerial-unlock")
+            stalled_connect(binary, env, root)
 
             def unlock(*opts):
                 return subprocess.run([binary, *opts], env=env, capture_output=True, text=True, timeout=12)
@@ -96,15 +122,19 @@ def main():
         finally:
             # This compositor and both fixtures are private to the test. Close
             # Wayland before reaping an outstanding supervisor/locker pair.
-            compositor.terminate()
-            compositor.wait(timeout=5)
-            if decoy.poll() is None:
-                decoy.terminate()
-            decoy.wait(timeout=5)
-            if unreported is not None:
-                unreported.wait(timeout=5)
-            if supervisor is not None:
-                supervisor.wait(timeout=10)
+            failed = sys.exc_info()[0] is not None
+            cleanup_errors = []
+            for proc, terminate in ((compositor, True), (decoy, True), (unreported, False), (supervisor, False)):
+                try:
+                    reap(proc, terminate)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    cleanup_errors.append(str(error))
+            if cleanup_errors:
+                message = "fixture cleanup: " + "; ".join(cleanup_errors)
+                if failed:
+                    print(message, file=sys.stderr)
+                else:
+                    raise RuntimeError(message)
 
 
 if __name__ == "__main__":

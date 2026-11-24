@@ -387,6 +387,22 @@ private:
             return;
         }
 
+        if (m_purgeRequested) {
+            log("confirmed locker stopped for manual takeover; no respawn");
+            setState(LockState::Ended, QStringLiteral("purged"));
+            if (isHyprland()) {
+                // Hyprland refuses recovery of a dead lock once the restore
+                // flag is cleared. Keep it enabled for the recovery tool's
+                // entire bounded handoff, including a lost acknowledgement.
+                constexpr int handoffMs = RecoveryChannel::replyTimeoutMs +
+                    RecoveryChannel::takeoverTimeoutMs + RecoveryChannel::releaseTimeoutMs;
+                QTimer::singleShot(handoffMs, this, [this] { finishEpisode(2); });
+            } else {
+                finishEpisode(2);
+            }
+            return;
+        }
+
         if (m_releaseRequested) {
             if (exitCode == 0 && status == QProcess::NormalExit) {
                 log("released locker exited cleanly — done");
@@ -719,6 +735,7 @@ private:
             // IPC. Prevent retries before stopping it; the compositor still
             // owns the lock until aerial-unlock explicitly takes it over.
             m_releaseRequested = true;
+            m_purgeRequested = true;
             log(QStringLiteral("purge requested for confirmed locker"));
             m_child->kill();
         }
@@ -870,6 +887,7 @@ private:
     QSocketNotifier *m_reportNotifier = nullptr;
     QByteArray m_reportBuffer;
     bool m_releaseRequested = false;
+    bool m_purgeRequested = false;
     bool m_releaseDelivered = false;
     qsizetype m_releaseOffset = 0;
     QSocketNotifier *m_releaseNotifier = nullptr;

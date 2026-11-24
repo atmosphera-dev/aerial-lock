@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include <dirent.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -32,8 +33,6 @@ static struct ext_session_lock_manager_v1 *lock_manager = nullptr;
 static struct ext_session_lock_v1 *lock_obj = nullptr;
 static int got_locked = 0;
 static int got_finished = 0;
-
-static const int TIMEOUT_MS = 5000;
 
 /* ---- listeners ---- */
 
@@ -117,23 +116,54 @@ static std::string find_socket()
     return sockets.front();
 }
 
-static pid_t confirmedHolder(const std::string &socket, bool purge)
+// Pin the socket inode, not just the name: a stale path must never redirect a
+// purge or its takeover to a replacement compositor. Linux connects through
+// the O_PATH handle even if the filesystem entry is renamed after checking.
+struct Endpoint {
+    const std::string path;
+    const int handle;
+    struct stat identity {};
+
+    explicit Endpoint(const std::string &socket)
+        : path(socket), handle(open(socket.c_str(), O_PATH | O_CLOEXEC))
+    {
+        if (handle >= 0) fstat(handle, &identity);
+    }
+    ~Endpoint() { if (handle >= 0) close(handle); }
+    Endpoint(const Endpoint &) = delete;
+    Endpoint &operator=(const Endpoint &) = delete;
+
+    bool current() const
+    {
+        struct stat st {};
+        return S_ISSOCK(identity.st_mode) && stat(path.c_str(), &st) == 0 &&
+            st.st_dev == identity.st_dev && st.st_ino == identity.st_ino;
+    }
+};
+
+struct HolderReply {
+    bool requested = false;
+    pid_t holder = 0;
+};
+
+static HolderReply confirmedHolder(const Endpoint &socket, bool purge)
 {
     sockaddr_un addr {};
-    const socklen_t len = RecoveryChannel::address(socket.c_str(), addr);
-    if (!len) return 0;
+    const socklen_t len = RecoveryChannel::address(socket.identity, addr);
+    if (!len || !socket.current()) return {};
     const int fd = RecoveryChannel::openSocket();
-    if (fd < 0) return 0;
+    if (fd < 0) return {};
     // SO_PASSCRED autobinds a private abstract reply address on connect.
-    pid_t holder = 0;
+    HolderReply result;
     const char request = purge ? RecoveryChannel::purge : RecoveryChannel::query;
     if (connect(fd, reinterpret_cast<sockaddr *>(&addr), len) == 0 && send(fd, &request, 1, 0) == 1) {
+        result.requested = true;
         pollfd reply {fd, POLLIN, 0};
-        if (poll(&reply, 1, 1000) <= 0 || !RecoveryChannel::receive(fd, &holder, sizeof(holder)))
-            holder = 0;
+        if (poll(&reply, 1, RecoveryChannel::replyTimeoutMs) <= 0 ||
+            !RecoveryChannel::receive(fd, &result.holder, sizeof(result.holder))) result.holder = 0;
     }
     close(fd);
-    return holder;
+    return result;
 }
 
 /* ---- main ---- */
@@ -193,13 +223,33 @@ static bool sync(wl_display *display, Clock::time_point deadline)
     return synced;
 }
 
-static int takeover(const std::string &socket, Clock::time_point deadline)
+static int takeover(const Endpoint &socket, Clock::time_point deadline)
 {
     lock_manager = nullptr;
     got_locked = got_finished = 0;
-    struct wl_display *display = wl_display_connect(socket.c_str());
+    if (Clock::now() >= deadline) return 2;
+    if (!socket.current()) {
+        fprintf(stderr, "aerial-unlock: Wayland socket unavailable or changed: %s\n", socket.path.c_str());
+        return 1;
+    }
+    sockaddr_un addr {};
+    addr.sun_family = AF_UNIX;
+    const auto len = snprintf(addr.sun_path, sizeof(addr.sun_path), "/proc/self/fd/%d", socket.handle);
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return 1;
+    if (connect(fd, reinterpret_cast<sockaddr *>(&addr), offsetof(sockaddr_un, sun_path) + len + 1) != 0) {
+        const int error = errno;
+        close(fd);
+        // Linux reports EAGAIN (not EINPROGRESS) when an AF_UNIX stream
+        // listen queue is full. Do not block behind a wedged compositor.
+        if (error == EAGAIN || error == EINTR) return 2;
+        fprintf(stderr, "aerial-unlock: failed to connect to %s: %s\n", socket.path.c_str(), strerror(error));
+        return 1;
+    }
+    // libwayland takes ownership of fd, even on failure.
+    struct wl_display *display = wl_display_connect_to_fd(fd);
     if (!display) {
-        fprintf(stderr, "aerial-unlock: failed to connect to %s\n", socket.c_str());
+        fprintf(stderr, "aerial-unlock: failed to initialize Wayland connection\n");
         return 1;
     }
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -218,7 +268,10 @@ static int takeover(const std::string &socket, Clock::time_point deadline)
         if (dispatchUntil(display, got_locked, got_finished, deadline)) {
             if (got_locked) {
                 ext_session_lock_v1_unlock_and_destroy(lock_obj);
-                if (sync(display, deadline)) rc = 0;
+                // Takeover may be confirmed just as its deadline expires.
+                // Once we hold the lock, reserve a separate bounded flush
+                // and sync window so the release is not left in a buffer.
+                if (sync(display, Clock::now() + std::chrono::milliseconds(RecoveryChannel::releaseTimeoutMs))) rc = 0;
             } else {
                 ext_session_lock_v1_destroy(lock_obj);
                 rc = 3;
@@ -244,19 +297,21 @@ int main(int argc, char **argv)
         }
     }
 
-    const std::string socket = find_socket();
-    if (socket.empty()) return 1;
-    // libwayland gives an inherited fd priority over the explicit path. The
-    // selected socket must be the same one we use for holder lookup.
-    unsetenv("WAYLAND_SOCKET");
-    fprintf(stderr, "aerial-unlock: trying %s\n", socket.c_str());
-    const auto budget = std::chrono::milliseconds(TIMEOUT_MS);
+    const std::string path = find_socket();
+    if (path.empty()) return 1;
+    const Endpoint socket(path);
+    fprintf(stderr, "aerial-unlock: trying %s\n", path.c_str());
+    const auto budget = std::chrono::milliseconds(RecoveryChannel::takeoverTimeoutMs);
     int rc = takeover(socket, Clock::now() + budget);
-    pid_t holder = 0;
+    HolderReply reply;
     if (rc == 3) {
-        holder = confirmedHolder(socket, purge);
-        if (purge && holder > 0) {
-            fprintf(stderr, "aerial-unlock: supervisor is stopping confirmed holder pid %d\n", holder);
+        reply = confirmedHolder(socket, purge);
+        if (purge && reply.requested) {
+            if (reply.holder > 0) {
+                fprintf(stderr, "aerial-unlock: supervisor is stopping confirmed holder pid %d\n", reply.holder);
+            } else {
+                fprintf(stderr, "aerial-unlock: no purge acknowledgement; stop outcome unknown, retrying takeover\n");
+            }
             const auto deadline = Clock::now() + budget;
             do {
                 rc = takeover(socket, deadline);
@@ -269,9 +324,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "aerial-unlock: recovered — took over the lock and released it\n");
     } else if (rc == 3) {
         fprintf(stderr, "aerial-unlock: compositor refused takeover.\n");
-        if (holder > 0 && !purge)
-            fprintf(stderr, "  confirmed holder: pid %d\n  retry with: aerial-unlock --purge\n", holder);
-        else if (holder <= 0)
+        if (reply.holder > 0 && !purge)
+            fprintf(stderr, "  confirmed holder: pid %d\n  retry with: aerial-unlock --purge\n", reply.holder);
+        else if (!purge || !reply.requested)
             fprintf(stderr, "  no confirmed Aerial holder for this session; no process was stopped.\n");
     } else if (rc == 2) {
         fprintf(stderr, "aerial-unlock: inconclusive — compositor did not confirm takeover and release.\n");

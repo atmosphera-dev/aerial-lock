@@ -16,11 +16,13 @@ namespace RecoveryChannel {
 
 constexpr char query = 'q';
 constexpr char purge = 'p';
+constexpr int replyTimeoutMs = 1000;
+constexpr int takeoverTimeoutMs = 5000;
+constexpr int releaseTimeoutMs = 1000;
 
-inline socklen_t address(const char *path, sockaddr_un &addr)
+inline socklen_t address(const struct stat &st, sockaddr_un &addr)
 {
-    struct stat st {};
-    if (stat(path, &st) != 0 || !S_ISSOCK(st.st_mode)) return 0;
+    if (!S_ISSOCK(st.st_mode)) return 0;
     addr = {};
     addr.sun_family = AF_UNIX;
     int n = snprintf(addr.sun_path + 1, sizeof(addr.sun_path) - 1,
@@ -28,6 +30,12 @@ inline socklen_t address(const char *path, sockaddr_un &addr)
                      uintmax_t(st.st_dev), uintmax_t(st.st_ino));
     if (n < 0 || size_t(n) >= sizeof(addr.sun_path) - 1) return 0;
     return offsetof(sockaddr_un, sun_path) + 1 + n;
+}
+
+inline socklen_t address(const char *path, sockaddr_un &addr)
+{
+    struct stat st {};
+    return stat(path, &st) == 0 ? address(st, addr) : 0;
 }
 
 inline int openSocket()
