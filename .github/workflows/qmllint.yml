@@ -43,7 +43,7 @@ jobs:
 
   build-and-test:
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 85
+    timeout-minutes: 105
     steps:
       - name: Checkout repository
         timeout-minutes: 2
@@ -61,17 +61,19 @@ jobs:
             --cpu-period=100000 --cpu-quota=200000 -t aerial-lock-ci:ci .devcontainer
 
       - name: Build and run portable suites offline
-        timeout-minutes: 50
+        timeout-minutes: 60
         run: |
-          timeout 49m sudo podman run --rm --pull=never --network=none \
+          # test.sh: 15m build + 35m CTest + 2m Node + 5m QML, plus setup/cleanup.
+          timeout 59m sudo podman run --rm --pull=never --network=none \
             --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
             aerial-lock-ci:ci bash .devcontainer/test.sh
 
       - name: Main and emergency session-lock PAM smoke offline
-        timeout-minutes: 8
+        timeout-minutes: 16
         run: |
-          timeout 7m sudo podman run --rm --pull=never --network=none \
+          # lock-smoke.sh: 9m build/install + 2m main + 2m emergency + 40s recovery.
+          timeout 15m sudo podman run --rm --pull=never --network=none \
             --memory=4g --memory-swap=4g --pids-limit=256 --cpus=2 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" -w "$GITHUB_WORKSPACE" \
             aerial-lock-ci:ci bash .devcontainer/lock-smoke.sh

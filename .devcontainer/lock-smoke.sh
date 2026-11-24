@@ -7,7 +7,10 @@ mkdir -p /work/src /work/tmp
 cp -a . /work/src/
 cd /work/src
 export TMPDIR=/work/tmp MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2
-timeout 5m make install DEBUG_DISMISS=0 DEBUG_VERBOSE=0
+printf 'Building and installing production targets (9-minute budget)\n'
+build_start=$SECONDS
+timeout --verbose --kill-after=10s 9m make install DEBUG_DISMISS=0 DEBUG_VERBOSE=0
+printf 'Production targets built and installed in %ss\n' "$((SECONDS - build_start))"
 timeout 2m python3 Tests/ci-lock-smoke.py
 timeout 2m python3 Tests/ci-emergency-smoke.py
 runuser -u aerial-emergency-ci -- mkdir -p /work/emergency/tmp

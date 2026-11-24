@@ -116,12 +116,22 @@ runs the portable CTest/Python cases offscreen, the Node suites, and every
 no network and bounded memory, processes, CPU and run time. The checkout is
 read-only; `.devcontainer/test.sh` copies it to the container's writable layer.
 
+Production `make`, test configuration and test compilation share one 15-minute
+deadline, independent of the existing test execution deadlines. In 17 Checks
+attempts on November 24, 2026, the 16 completed test builds took 134-197 seconds
+from Ninja's first to last step. The combined build's completed-run p95 was
+5m22s, but the interrupted release run had already spent 9m12s across all three
+commands when the old five-minute Ninja cap cut it off. Use the elapsed build
+line in future Checks logs to recalibrate after major build graph changes.
+
 ### Real-lock CI smoke
 
 The same job then runs `.devcontainer/lock-smoke.sh` in a fresh offline container
-with the same resource caps and a seven-minute timeout. It builds and installs
-the production targets (debug dismiss and verbose logging off), starts Sway with
-its headless backend/pixman renderer, and launches the real installed `aerial-lock`
+with the same resource caps and a 15-minute container deadline. It gets nine
+minutes to build and install the production targets (debug dismiss and verbose
+logging off), over twice the roughly 4m13s spent on the portable production
+build and test configuration in the slow release run. It starts Sway with its
+headless backend/pixman renderer and launches the real installed `aerial-lock`
 as a new unprivileged throwaway user on a private D-Bus session. No KVM, privileged
 container, host display socket or graphics device is needed.
 The image removes Arch Sway's scheduler file capability; the smoke uses the

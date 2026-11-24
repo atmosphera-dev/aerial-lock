@@ -12,9 +12,17 @@ export QT_QPA_PLATFORM=offscreen QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1
 export QML_IMPORT_PATH="$PWD/Tests/imports"
 export CMAKE_BUILD_PARALLEL_LEVEL=2 MAKEFLAGS=-j2
 
-timeout 5m make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
-timeout 2m cmake -S Tests -B /work/build -G Ninja -DAERIAL_LOCK_SOURCE="$PWD"
-timeout 5m cmake --build /work/build
+# Budget the whole cold build, so a slow test compile can use spare time from
+# the production build. Keep the test execution budgets separate.
+printf 'Building production and portable test targets (15-minute budget)\n'
+build_start=$SECONDS
+timeout --verbose --kill-after=10s 15m bash -euc '
+    make DEBUG_DISMISS=0 DEBUG_VERBOSE=0
+    cmake -S Tests -B /work/build -G Ninja -DAERIAL_LOCK_SOURCE=/work/src
+    cmake --build /work/build
+'
+printf 'Production and portable test targets built in %ss\n' "$((SECONDS - build_start))"
+
 # The render-failure case needs a real rendering platform. Owned-instance is
 # not registered without an operator-supplied VM manifest. The settings build
 # fixtures repeat compiler and private-runtime/install layouts at two CPUs.
