@@ -127,7 +127,7 @@ line in future Checks logs to recalibrate after major build graph changes.
 ### Real-lock CI smoke
 
 The same job then runs `.devcontainer/lock-smoke.sh` in a fresh offline container
-with the same resource caps and a 15-minute container deadline. It gets nine
+with the same resource caps and a 20-minute container deadline. It gets nine
 minutes to build and install the production targets (debug dismiss and verbose
 logging off), over twice the roughly 4m13s spent on the portable production
 build and test configuration in the slow release run. It starts Sway with its
